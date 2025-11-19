@@ -366,7 +366,7 @@ def main():
                      	  values = [0.0, 0.0],
                      	  time_values = [0.0, tc_equilibrium.t_final])
 
-    side_burden = 10.0*ut.MPa
+    side_burden = 20.3*ut.MPa
     bc_east = momBC.NeumannBC(boundary_name = "East",
                         direction = 2,
                         density = salt_density,
@@ -383,7 +383,7 @@ def main():
                         time_values = [0.0,            tc_equilibrium.t_final],
                         g = g_vec[2])
 
-    over_burden = 10.0*ut.MPa
+    over_burden = 20.3*ut.MPa
     bc_top = momBC.NeumannBC(boundary_name = "Top",
                         direction = 2,
                         density = 0.0,
@@ -392,7 +392,7 @@ def main():
                         time_values = [0.0,            tc_equilibrium.t_final],
                         g = g_vec[2])
 
-    gas_density = 0.082
+    gas_density = 0.089 #Hydrogen density in g/L
     p_gas = 10.0*ut.MPa
     bc_cavern = momBC.NeumannBC(boundary_name = "Cavern",
                         direction = 2,
