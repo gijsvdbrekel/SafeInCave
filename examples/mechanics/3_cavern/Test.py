@@ -263,7 +263,7 @@ def main():
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_linear_10days")
+    output_folder = os.path.join("output", "case_sinus_1day")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -460,7 +460,7 @@ def main():
     mom_eq.set_material(mat) 
 
         # ==================== OPERATION STAGE ====================
-    OPERATION_DAYS  = 10                  # <— set how many days you want
+    OPERATION_DAYS  = 1                  # <— set how many days you want
     SCHEDULE_MODE   = "repeat"           # "repeat" or "stretch"
     dt_hours        = 0.1666666                # time resolution
 
@@ -468,7 +468,7 @@ def main():
                                      final_time=OPERATION_DAYS*24.0,
                                      time_unit="hour")
 
-    PRESSURE_SCENARIO = "linear"      # "linear" | "sinus" | "irregular"
+    PRESSURE_SCENARIO = "sinus"      # "linear" | "sinus" | "irregular"
 
     if PRESSURE_SCENARIO == "linear":
         # base 1-day pattern (hours, MPa) — your original
@@ -483,7 +483,7 @@ def main():
 
     elif PRESSURE_SCENARIO == "sinus":
         p_mean = 10.0 * ut.MPa
-        p_ampl =  3.0 * ut.MPa
+        p_ampl =  5.0 * ut.MPa
         t_pressure, p_pressure = build_sinus_schedule_multi(
             tc_operation,
             p_mean=p_mean, p_ampl=p_ampl,

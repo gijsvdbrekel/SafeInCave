@@ -8,6 +8,9 @@ from matplotlib.widgets import Slider
 import meshio
 import json
 
+GEOMETRY_TYPE = "tilted"  # kies "regular" of "irregular" of "tilted"  # <-- ADD "tilted" option
+
+
 hour = 60*60
 day = 24*hour
 MPa = 1e6
@@ -128,6 +131,139 @@ class WallProfileData():
             area += R*d
             volume += A*d
         return volume
+
+
+# ============================================================================
+# NEW FUNCTION 1: Detect geometry type automatically
+# ============================================================================
+def detect_geometry_type(wall_profile: WallProfileData):
+    """
+    Detect if cavern is vertical or tilted based on wall profile.
+    Returns: "tilted" or "vertical"
+    """
+    pts = wall_profile.wall_points
+    x_range = pts[:, 0].max() - pts[:, 0].min()
+    y_range = pts[:, 1].max() - pts[:, 1].min()
+    
+    # If x or y varies significantly along the axis, it's tilted
+    if x_range > 5.0 or y_range > 5.0:  # 5m threshold
+        print(f"Detected TILTED geometry (x_range={x_range:.2f}m, y_range={y_range:.2f}m)")
+        return "tilted"
+    else:
+        print(f"Detected VERTICAL geometry (x_range={x_range:.2f}m, y_range={y_range:.2f}m)")
+        return "vertical"
+
+
+# ============================================================================
+# NEW FUNCTION 2: Offset probes radially for tilted caverns
+# ============================================================================
+def offset_probes_into_salt(probes, wall_profile, offset_distance=0.15):
+    """
+    Move probe points radially outward into the salt.
+    For tilted caverns, calculates perpendicular direction to axis.
+    
+    Parameters:
+    - probes: (N, 3) array of probe coordinates
+    - wall_profile: WallProfileData object
+    - offset_distance: distance in meters to move into salt
+    
+    Returns:
+    - Modified probes array
+    """
+    pts = wall_profile.wall_points
+    n_probes = probes.shape[0]
+    
+    # Calculate cavern axis direction (tilt vector)
+    axis_start = pts[0]   # top (lowest z after sorting)
+    axis_end = pts[-1]    # bottom (highest z)
+    axis_vec = axis_end - axis_start
+    axis_length = np.linalg.norm(axis_vec)
+    
+    if axis_length > 1e-6:
+        axis_vec = axis_vec / axis_length  # normalize
+    else:
+        print("Warning: Wall profile axis has zero length!")
+        return probes
+    
+    print(f"Cavern axis direction: {axis_vec}")
+    
+    # Offset each probe (except top and bottom)
+    for k in range(n_probes):
+        if 0 < k < n_probes - 1:  # skip top and bottom
+            # Find closest point on wall profile to this probe
+            distances = np.linalg.norm(pts - probes[k], axis=1)
+            closest_idx = np.argmin(distances)
+            closest_point = pts[closest_idx]
+            
+            # Vector from axis point to probe
+            probe_to_axis = probes[k] - closest_point
+            
+            # Project onto plane perpendicular to axis
+            projection = np.dot(probe_to_axis, axis_vec) * axis_vec
+            radial_vec = probe_to_axis - projection
+            
+            # Normalize and offset
+            radial_length = np.linalg.norm(radial_vec)
+            if radial_length > 1e-6:
+                radial_vec = radial_vec / radial_length
+                probes[k] += offset_distance * radial_vec
+                print(f"  Probe {k}: offset by {offset_distance}m in direction {radial_vec}")
+            else:
+                # Probe is exactly on axis, offset in +x direction as fallback
+                probes[k, 0] += offset_distance
+                print(f"  Probe {k}: on axis, offsetting in +x direction")
+    
+    return probes
+
+
+def auto_generate_probes(wall_profile: WallProfileData, n_bend_probes: int):
+    """Genereer probe-punten op basis van de cavernwand."""
+    pts = wall_profile.wall_points  # (N, 3), gesorteerd op z
+    x = pts[:, 0]
+    z = pts[:, 2]
+
+    # --- basisprobes: top, mid, bottom ---
+    idx_bottom = np.argmin(z)
+    idx_top    = np.argmax(z)
+    z_mid      = 0.5 * (z[idx_bottom] + z[idx_top])
+    idx_mid    = np.argmin(np.abs(z - z_mid))
+
+    probes_idx = [idx_top, idx_mid, idx_bottom]
+
+    # --- kromming (bochten) ---
+    if n_bend_probes > 0:  # <-- Only compute curvature if needed
+        dx  = np.gradient(x)
+        dz_ = np.gradient(z)
+        ddx = np.gradient(dx)
+        ddz = np.gradient(dz_)
+
+        denom = (dx*dx + dz_*dz_)**1.5
+        denom[denom == 0.0] = np.inf
+        curvature = np.abs(dx * ddz - dz_ * ddx) / denom
+        curvature[np.isnan(curvature)] = 0.0
+
+        # Sorteer indices op aflopende kromming
+        idx_all = np.argsort(curvature)[::-1]
+
+        # helper om "te dicht bij" te vermijden (in index-ruimte)
+        def too_close(new_i, existing_idx, min_gap=5):
+            return any(abs(new_i - ei) < min_gap for ei in existing_idx)
+
+        # kies n_bend_probes extra punten
+        for i in idx_all:
+            if len(probes_idx) >= 3 + n_bend_probes:
+                break
+            if i in probes_idx:
+                continue
+            if too_close(i, probes_idx):
+                continue
+            probes_idx.append(i)
+
+    # maak array met probe-coördinaten in volgorde van z (optioneel)
+    probes_idx = sorted(probes_idx, key=lambda k: z[k], reverse=True)  # van top naar bottom
+    probes = pts[probes_idx]
+
+    return probes
 
 
 def plot_cavern_shape(ax, wall: WallProfileData, t_step: int):
@@ -254,50 +390,31 @@ class StressPath():
             self.q_probes[i,:] = self.q_elems[:,idx]/MPa
 
 
-
-
 def plot_dilatancy_boundary(ax,
                             D1=0.683, D2=0.512, m=0.75, T0=1.5,
                             sigma_ref=1.0,     # MPa
-                            p_min=0.01, p_max=80.0, npts=400):
-    """
-    Plot the RD dilation boundary in p–q space (MPa) for both triaxial
-    compression (psi = -30°) and extension (psi = +30°).
-
-    Parameters are from Moss Bluff salt by default:
-      D1=0.683, D2=0.512, m=0.75, T0=1.5 MPa, sigma_ref=1 MPa
-    """
-
-    # mean stress p axis in MPa (positive in compression as in your plots)
+                            p_min=0.01, p_max=120.0, npts=400):
+    """Plot the RD dilation boundary in p–q space (MPa)."""
     p = np.linspace(p_min, p_max, npts)          # MPa
     I1 = 3.0 * p                                 # MPa
 
-    # helper to compute q(MPa) from a given Lode angle psi (radians)
     def q_from_I1(I1_MPa, psi_rad):
-        # sign(I1) ensures the base of the power is positive, as in the paper
         sgn = np.sign(I1_MPa)
         sgn[sgn == 0.0] = 1.0
-        # denominator (√3 cosψ − D2 sinψ)
         denom = (np.sqrt(3.0) * np.cos(psi_rad) - D2 * np.sin(psi_rad))
-        # √J2_dil (MPa)
         sqrtJ2 = D1 * ((I1_MPa / (sgn * sigma_ref)) ** m) / denom + T0
-        # q = √3 * √J2 (MPa)
         return np.sqrt(3.0) * sqrtJ2
 
-    # triaxial compression and extension branches (ψ = ∓30°)
     psi_c = -np.pi/6.0   # compression
     psi_e =  np.pi/6.0   # extension
 
     q_c = q_from_I1(I1, psi_c)
     q_e = q_from_I1(I1, psi_e)
 
-    # plot
     ax.plot(p, q_c, "-", color="gold",  linewidth=1.5, alpha=0.9, label="RD – compression")
     ax.plot(p, q_e, "-", color="turquoise", linewidth=1.5, alpha=0.9, label="RD – extension")
-    # (optional) make room for legend only once per axes
     if not ax.get_legend():
         ax.legend(loc="best", fontsize=8, frameon=True, fancybox=True)
-
 
 
 COLORS = ["deepskyblue", "tomato", "orange", "steelblue", "purple", "magenta"]
@@ -315,25 +432,79 @@ def plot_probes(ax, probes):
         ax.scatter(probe[0], probe[2], c=COLORS[i], edgecolors="black", zorder=10000, s=100)
 
 
+# ============================================================================
+# MAIN FUNCTION - THIS IS WHERE THE LOGIC CHANGES
+# ============================================================================
 def main():
     fig, ax_logo, ax_info_1, ax_info_2, ax_info_3, ax0, ax00, ax01, ax02, ax10, ax11, ax12, ax30, ax31, ax32 = create_layout()
 
     # Specify folder to load the results from (operation stage)
-    output_folder = os.path.join("output", "case_sinus_week")
+    output_folder = os.path.join("output", "case_sinus_1day")
     operation_folder = os.path.join(output_folder, "operation")
 
-    # Probe points around the cavern wall
-    probes = np.array([
-        [0, 0, 430],
-        [42.8, 0, 393.4],
-        [45, 0, 345],
-        [57.62, 0, 301.3],
-        [74.63, 0, 267.4],
-        [0, 0, 205.1],
-    ])
-
+    # Load wall profile and subsidence
     wall_profile = WallProfileData(operation_folder, scale=1)
     subsidence_data = SubsidenceData(operation_folder)
+
+    # ========================================================================
+    # GEOMETRY-AWARE PROBE GENERATION - THIS IS THE KEY CHANGE!
+    # ========================================================================
+    
+    # Option 1: Use manual GEOMETRY_TYPE setting
+    if GEOMETRY_TYPE == "tilted":
+        print("Using MANUAL geometry type: tilted")
+        geometry_type = "tilted"
+    elif GEOMETRY_TYPE == "irregular":
+        print("Using MANUAL geometry type: irregular")
+        geometry_type = "vertical"  # irregular is still vertical
+    elif GEOMETRY_TYPE == "regular":
+        print("Using MANUAL geometry type: regular")
+        geometry_type = "vertical"
+    else:
+        # Option 2: Auto-detect geometry type
+        geometry_type = detect_geometry_type(wall_profile)
+    
+    # Choose number of bend probes based on geometry type
+    if geometry_type == "tilted":
+        n_bend_probes = 0    # For tilted: only top, mid, bottom (3 probes)
+        print(f"Tilted geometry detected: using {n_bend_probes} bend probes")
+    elif GEOMETRY_TYPE == "irregular":
+        n_bend_probes = 3    # For irregular: top + mid + bottom + 3 bends = 6 probes
+        print(f"Irregular geometry detected: using {n_bend_probes} bend probes")
+    else:  # regular
+        n_bend_probes = 1    # For regular: top + mid + bottom + 1 bend = 4 probes
+        print(f"Regular geometry detected: using {n_bend_probes} bend probes")
+    
+    # Generate probes
+    probes = auto_generate_probes(wall_profile, n_bend_probes=n_bend_probes)
+    print(f"Generated {len(probes)} probes at positions:")
+    for i, p in enumerate(probes):
+        print(f"  Probe {i}: x={p[0]:.2f}, y={p[1]:.2f}, z={p[2]:.2f}")
+    
+    # Apply offset into salt (geometry-aware)
+    OFFSET_R = 0.15  # [m] - 15 cm into the salt
+    
+    if geometry_type == "tilted":
+        # Use radial offset for tilted caverns
+        print(f"Applying RADIAL offset of {OFFSET_R}m for tilted geometry")
+        probes = offset_probes_into_salt(probes, wall_profile, offset_distance=OFFSET_R)
+    else:
+        # Use simple x-offset for vertical caverns (original method)
+        print(f"Applying X-DIRECTION offset of {OFFSET_R}m for vertical geometry")
+        n_probes = probes.shape[0]
+        for k in range(n_probes):
+            if 0 < k < n_probes - 1:  # Skip top and bottom
+                probes[k, 0] += OFFSET_R
+    
+    print(f"Final probe positions after offset:")
+    for i, p in enumerate(probes):
+        print(f"  Probe {i}: x={p[0]:.2f}, y={p[1]:.2f}, z={p[2]:.2f}")
+    
+    # ========================================================================
+    # REST OF THE PLOTTING CODE (unchanged)
+    # ========================================================================
+    
+    # Stress paths for these probes
     stress_path = StressPath(operation_folder, probes)
 
     n_steps = stress_path.time_list.size
@@ -345,13 +516,21 @@ def main():
     plot_convergence(ax31, wall_profile, t_step=0)
     plot_subsidence(ax32, subsidence_data, t_step=0)
     plot_pressure_schedule(ax30, output_folder)
-    plot_stress_paths(ax00, stress_path, i=0, t_step=0)
-    plot_stress_paths(ax01, stress_path, i=1, t_step=0)
-    plot_stress_paths(ax02, stress_path, i=2, t_step=0)
-    plot_stress_paths(ax10, stress_path, i=3, t_step=0)
-    plot_stress_paths(ax11, stress_path, i=4, t_step=0)
-    plot_stress_paths(ax12, stress_path, i=5, t_step=0)
     plot_probes(ax0, probes)
+
+    # Lijst van beschikbare assen voor stress paths
+    stress_axes = [ax00, ax01, ax02, ax10, ax11, ax12]
+    n_probes = probes.shape[0]
+    n_axes = len(stress_axes)
+    n_use = min(n_probes, n_axes)
+
+    # Plot alleen zoveel probes als er assen zijn
+    for i in range(n_use):
+        plot_stress_paths(stress_axes[i], stress_path, i=i, t_step=0)
+
+    # Overige assen uitzetten als er minder probes dan assen zijn
+    for j in range(n_use, n_axes):
+        stress_axes[j].axis("off")
 
     def update_plot(val):
         t_step = int(val)
@@ -370,7 +549,9 @@ def main():
         ax32.set_xlim(xmin,xmax)
         ax32.set_ylim(ymin,ymax)
 
-        for i, ax in enumerate([ax00, ax01, ax02, ax10, ax11, ax12]):
+        # Stress paths updaten alleen voor de gebruikte probes
+        for i in range(n_use):
+            ax = stress_axes[i]
             xmin,xmax = ax.get_xlim()
             ymin,ymax = ax.get_ylim()
             ax.cla()

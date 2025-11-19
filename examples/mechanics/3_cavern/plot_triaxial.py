@@ -13,7 +13,7 @@ hour = 60 * 60
 MPa  = 1e6
 
 GEOMETRY_TYPE = "irregular"  # or "regular"
-PROBE_INDEX   = 4            # which auto-probe to use (0..N-1)
+PROBE_INDEX   = 0            # which auto-probe to use (0..N-1)
 
 
 
@@ -222,7 +222,7 @@ def build_layout():
 def main():
     global PROBE_INDEX
 
-    output_folder    = os.path.join("output", "case_linear_10days")
+    output_folder    = os.path.join("output", "case_sinus_1day")
     operation_folder = os.path.join(output_folder, "operation")
 
     # --- auto probes, same as in cavern plots ---
