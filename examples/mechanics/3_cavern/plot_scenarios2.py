@@ -381,7 +381,7 @@ def main():
     fig, ax_logo, ax_info_1, ax_info_2, ax_info_3, ax0, ax00, ax01, ax02, ax10, ax11, ax12, ax30, ax31, ax32 = create_layout()
 
     # Specify folder to load the results from (operation stage)
-    output_folder = os.path.join("output", "case_sinus_50days")
+    output_folder = os.path.join("output", "case_linear_10days")
     operation_folder = os.path.join(output_folder, "operation")
 
     # Eerst wand en subsidence inladen
@@ -399,7 +399,7 @@ def main():
 
     # --- OPTIONAL: move mid & bend probes a bit into the salt ---
     # Assumption: x is radial, salt is at larger x, cavern interior at smaller x.
-    OFFSET_R = 0.05  # [m] → 5 cm inside the salt
+    OFFSET_R = 0.15  # [m] → 5 cm inside the salt
 
     # Probes zijn gesorteerd op z van top naar bottom in auto_generate_probes:
     # index 0      = top

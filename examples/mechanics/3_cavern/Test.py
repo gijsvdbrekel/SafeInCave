@@ -168,28 +168,45 @@ def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode, resam
     """Linear (piecewise) schedule over multiple days."""
     if mode not in ("repeat", "stretch"):
         raise ValueError("mode must be 'repeat' or 'stretch'")
+
     if mode == "repeat":
+        # repeat both times *and* pressures, skipping duplicate at day boundaries
         t_h = _repeat_hours(times_h, days)
-    else:  # stretch
+        p_h = []
+        for d in range(int(days)):
+            start = 0 if d == 0 else 1
+            p_h.extend(pressures_MPa[start:])
+    else:  # stretch: just stretch the base pattern over the full duration
         t_h = _stretch_hours(times_h, days)
-    # ensure covers [0, total_hours]
+        p_h = list(pressures_MPa)
+
     total_h = days * DAY_H
+
+    # ensure coverage over [0, total_h] and keep lengths in sync
     if t_h[0] > 0.0:
         t_h.insert(0, 0.0)
-        pressures_MPa = [pressures_MPa[0]] + pressures_MPa
+        p_h.insert(0, p_h[0])
+
     if t_h[-1] < total_h:
         t_h.append(total_h)
-        pressures_MPa = pressures_MPa + [pressures_MPa[-1]]
-    # to seconds
+        p_h.append(p_h[-1])
+
+    # sanity: times and pressures must match
+    assert len(t_h) == len(p_h), f"len(t_h)={len(t_h)} != len(p_h)={len(p_h)}"
+
+    # convert to solver units (seconds, Pa)
     knots_t = np.array([h * ut.hour for h in t_h], dtype=float)
-    knots_p = np.array([p * ut.MPa  for p in pressures_MPa], dtype=float)
+    knots_p = np.array([p * ut.MPa  for p in p_h], dtype=float)
+
     if resample_at_dt:
         t_vals = _sample_at_dt(tc)
         p_vals = np.interp(t_vals, knots_t, knots_p).tolist()
     else:
         t_vals = knots_t.tolist()
         p_vals = knots_p.tolist()
+
     return t_vals, p_vals
+
 
 def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
                                    days, mode, smooth=0.25,
@@ -246,7 +263,7 @@ def main():
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_sinus_50days")
+    output_folder = os.path.join("output", "case_linear_10days")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -443,15 +460,15 @@ def main():
     mom_eq.set_material(mat) 
 
         # ==================== OPERATION STAGE ====================
-    OPERATION_DAYS  = 50                  # <— set how many days you want
-    SCHEDULE_MODE   = "stretch"           # "repeat" or "stretch"
-    dt_hours        = 1                # time resolution
+    OPERATION_DAYS  = 10                  # <— set how many days you want
+    SCHEDULE_MODE   = "repeat"           # "repeat" or "stretch"
+    dt_hours        = 0.1666666                # time resolution
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
                                      final_time=OPERATION_DAYS*24.0,
                                      time_unit="hour")
 
-    PRESSURE_SCENARIO = "sinus"      # "linear" | "sinus" | "irregular"
+    PRESSURE_SCENARIO = "linear"      # "linear" | "sinus" | "irregular"
 
     if PRESSURE_SCENARIO == "linear":
         # base 1-day pattern (hours, MPa) — your original
