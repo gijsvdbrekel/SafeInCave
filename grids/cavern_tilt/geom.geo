@@ -1,166 +1,217 @@
-SetFactory("OpenCASCADE");
+//////////////////////////////////////////////////////////////
+// TILTED CAVERN - 8 degree tilt from vertical
+// SCALED to 1.4M m³ volume
+// Full 3D geometry (no symmetry)
+//////////////////////////////////////////////////////////////
 
-// ------------------------------------------------------------
-// Mesh sizes
-// ------------------------------------------------------------
 size_coarse = 65;
 size_fine   = 4.5;
 
-// ------------------------------------------------------------
-// Domain box
-// ------------------------------------------------------------
-Lx = 450;
-Ly = 450;
 Lz = 660;
+Ly = 450;
+Lx = 450;
 
-// salt block
-Box(1) = {0, 0, 0, Lx, Ly, Lz};
+// Geometry parameters (SCALED by 0.9392)
+h_bottom = 205.189718;     // bottom elevation of cavern
+H_cavern = 187.8;          // total cavern height (was 200.0)
+R = 47.0;                  // cavern radius (was 50.0)
 
-// ------------------------------------------------------------
-// Cylindrical cavern with a small angle
-// ------------------------------------------------------------
+// Tilt parameters
+tilt_angle = 8.0;          // degrees from vertical
+tilt_rad = tilt_angle * Pi / 180.0;
+horizontal_shift = H_cavern * Tan(tilt_rad);  // ~26.4m for 187.8m height, 8° tilt
 
-// Cavern parameters
-R_cav  = 54.42210251952307; // radius
-L_cav  = 230;               // length of cavern axis (3D)
-alpha  = 5*Pi/180;          // tilt angle from vertical (~5°)
+// Cavern center positions (tilted in x-direction)
+x_bottom = Lx/2 - horizontal_shift/2;   // center shifted back at bottom
+y_center = Ly/2;                         // centered in y
+x_top = Lx/2 + horizontal_shift/2;      // center shifted forward at top
 
-// Start point of cavern axis (in the middle of the block)
-xc0 = Lx/2;
-yc0 = Ly/2;
-zc0 = 380;      // depth of top of cavern axis
+//////////////////////////////
+// OUTER BOX (FULL 3D)
+//////////////////////////////
 
-// Direction vector of the axis: a bit in +x, mostly downward in -z
-dx =  L_cav*Sin(alpha);
-dy =  0;
-dz = -L_cav*Cos(alpha);
+Point(1) = {0,  0,  0,  size_coarse};
+Point(2) = {Lx, 0,  0,  size_coarse};
+Point(3) = {Lx, Ly, 0,  size_coarse};
+Point(4) = {0,  Ly, 0,  size_coarse};
 
-// Cylinder along tilted axis
-// Cylinder(tag) = {x0, y0, z0, dx, dy, dz, R, angle};
-Cylinder(2) = {xc0, yc0, zc0, dx, dy, dz, R_cav, 2*Pi};
+Point(5) = {0,  0,  Lz, size_coarse};
+Point(6) = {Lx, 0,  Lz, size_coarse};
+Point(7) = {Lx, Ly, Lz, size_coarse};
+Point(8) = {0,  Ly, Lz, size_coarse};
 
-// ------------------------------------------------------------
-// Boolean difference: salt MINUS cavern
-// ------------------------------------------------------------
-BooleanDifference(3) = { Volume{1}; Delete; }{ Volume{2}; Delete; };
+//////////////////////////////
+// CAVERN GEOMETRY - BOTTOM BULB
+//////////////////////////////
 
-// The result volume ID is 3
-SaltVol = 3;
+Point(100) = {x_bottom, y_center, h_bottom,     size_fine};      // bottom tip
+Point(101) = {x_bottom, y_center, h_bottom+R,   size_coarse};    // bottom center
 
-// ------------------------------------------------------------
-// Helper line: cavern axis (wall profile)
-// ------------------------------------------------------------
-Point(100) = {xc0,        yc0,        zc0,        size_fine};
-Point(101) = {xc0 + dx,   yc0 + dy,   zc0 + dz,   size_fine};
-Line(200)  = {100, 101};
+Point(102) = {x_bottom+R, y_center,   h_bottom+R, size_fine};    // +x
+Point(103) = {x_bottom-R, y_center,   h_bottom+R, size_fine};    // -x
+Point(104) = {x_bottom,   y_center+R, h_bottom+R, size_fine};    // +y
+Point(105) = {x_bottom,   y_center-R, h_bottom+R, size_fine};    // -y
 
-// ------------------------------------------------------------
-// Surface Selection
-// ------------------------------------------------------------
+//////////////////////////////
+// CAVERN GEOMETRY - TOP BULB
+//////////////////////////////
 
-// Get all surfaces of the resulting volume
-allSurfaces[] = Surface{:};
+Point(110) = {x_top, y_center, h_bottom+H_cavern+R, size_fine};      // top tip
+Point(111) = {x_top, y_center, h_bottom+H_cavern,   size_coarse};    // top center
 
-// Initialize arrays
-tops[] = {};
-bottoms[] = {};
-souths[] = {};
-norths[] = {};
-wests[] = {};
-easts[] = {};
-cavs[] = {};
+Point(112) = {x_top+R, y_center,   h_bottom+H_cavern, size_fine};    // +x
+Point(113) = {x_top-R, y_center,   h_bottom+H_cavern, size_fine};    // -x
+Point(114) = {x_top,   y_center+R, h_bottom+H_cavern, size_fine};    // +y
+Point(115) = {x_top,   y_center-R, h_bottom+H_cavern, size_fine};    // -y
 
-// Loop through all surfaces and classify by center-of-mass
-For i In {0 : #allSurfaces[]-1}
-    surf = allSurfaces[i];
-    bbox[] = BoundingBox Surface{surf};
-    
-    // bbox format: {xmin, ymin, zmin, xmax, ymax, zmax}
-    xcenter = (bbox[0] + bbox[3]) / 2;
-    ycenter = (bbox[1] + bbox[4]) / 2;
-    zcenter = (bbox[2] + bbox[5]) / 2;
-    
-    tol = 1.0;
-    
-    // Check if it's on one of the box faces
-    If (Fabs(zcenter - Lz) < tol)
-        tops[] += {surf};
-    EndIf
-    If (Fabs(zcenter - 0) < tol)
-        bottoms[] += {surf};
-    EndIf
-    If (Fabs(ycenter - 0) < tol)
-        souths[] += {surf};
-    EndIf
-    If (Fabs(ycenter - Ly) < tol)
-        norths[] += {surf};
-    EndIf
-    If (Fabs(xcenter - 0) < tol)
-        wests[] += {surf};
-    EndIf
-    If (Fabs(xcenter - Lx) < tol)
-        easts[] += {surf};
-    EndIf
-    
-    // If not on any box face, it's probably the cavern
-    If (Fabs(zcenter - Lz) > tol && Fabs(zcenter - 0) > tol &&
-        Fabs(ycenter - 0) > tol && Fabs(ycenter - Ly) > tol &&
-        Fabs(xcenter - 0) > tol && Fabs(xcenter - Lx) > tol)
-        cavs[] += {surf};
-    EndIf
-EndFor
+//////////////////////////////
+// OUTER BOX EDGES
+//////////////////////////////
 
-// ------------------------------------------------------------
-// Physical groups
-// ------------------------------------------------------------
-Physical Volume("Salt", 28) = {SaltVol};
+Line(1)  = {1,2};
+Line(2)  = {2,3};
+Line(3)  = {3,4};
+Line(4)  = {4,1};
+Line(5)  = {5,6};
+Line(6)  = {6,7};
+Line(7)  = {7,8};
+Line(8)  = {8,5};
+Line(9)  = {1,5};
+Line(10) = {2,6};
+Line(11) = {3,7};
+Line(12) = {4,8};
 
-If (#tops[] > 0)
-    Physical Surface("Top", 22) = {tops[]};
-EndIf
-If (#bottoms[] > 0)
-    Physical Surface("Bottom", 27) = {bottoms[]};
-EndIf
-If (#souths[] > 0)
-    Physical Surface("South", 23) = {souths[]};
-EndIf
-If (#norths[] > 0)
-    Physical Surface("North", 24) = {norths[]};
-EndIf
-If (#wests[] > 0)
-    Physical Surface("West", 26) = {wests[]};
-EndIf
-If (#easts[] > 0)
-    Physical Surface("East", 25) = {easts[]};
-EndIf
-If (#cavs[] > 0)
-    Physical Surface("Cavern", 29) = {cavs[]};
-EndIf
+//////////////////////////////
+// CAVERN CONNECTION LINES
+//////////////////////////////
 
-Physical Curve("Wall_profile", 30) = {200};
+Line(20) = {102, 112};  // +x side
+Line(21) = {103, 113};  // -x side
+Line(22) = {104, 114};  // +y side
+Line(23) = {105, 115};  // -y side
 
-// ------------------------------------------------------------
-// Mesh refinement ONLY near cavern wall (like original)
-// ------------------------------------------------------------
+//////////////////////////////
+// CIRCLE ARCS - BOTTOM BULB
+//////////////////////////////
 
-// Refine near cavern axis (=> near cavern wall)
-Field[1] = Distance;
-Field[1].CurvesList = {200};   // axis line
-Field[1].Sampling = 100;
+Circle(30) = {100, 101, 102};
+Circle(31) = {100, 101, 104};
+Circle(32) = {100, 101, 103};
+Circle(33) = {100, 101, 105};
 
-Field[2] = Threshold;
-Field[2].InField  = 1;
-Field[2].SizeMin  = size_fine;     // fine near cavern (4.5 m)
-Field[2].SizeMax  = size_coarse;   // coarse far away (65 m)
-Field[2].DistMin  = R_cav;         // up to radius ~54 m: fine
-Field[2].DistMax  = 3*R_cav;       // gradual transition up to ~163 m
+Circle(34) = {102, 101, 104};
+Circle(35) = {104, 101, 103};
+Circle(36) = {103, 101, 105};
+Circle(37) = {105, 101, 102};
 
-// Set this as the background field
-Background Field = 2;
+//////////////////////////////
+// CIRCLE ARCS - TOP BULB
+//////////////////////////////
 
-// Override mesh size constraints
-Mesh.CharacteristicLengthMin = size_fine;
-Mesh.CharacteristicLengthMax = size_coarse;
-Mesh.CharacteristicLengthFromPoints     = 0;
-Mesh.CharacteristicLengthFromCurvature  = 0;
-Mesh.CharacteristicLengthExtendFromBoundary = 0;
+Circle(40) = {110, 111, 112};
+Circle(41) = {110, 111, 114};
+Circle(42) = {110, 111, 113};
+Circle(43) = {110, 111, 115};
+
+Circle(44) = {112, 111, 114};
+Circle(45) = {114, 111, 113};
+Circle(46) = {113, 111, 115};
+Circle(47) = {115, 111, 112};
+
+//////////////////////////////
+// CAVERN SURFACES
+//////////////////////////////
+
+// Bottom bulb surfaces
+Curve Loop(101) = {30, 34, -31};
+Surface(101) = {101};
+
+Curve Loop(102) = {31, 35, -32};
+Surface(102) = {102};
+
+Curve Loop(103) = {32, 36, -33};
+Surface(103) = {103};
+
+Curve Loop(104) = {33, 37, -30};
+Surface(104) = {104};
+
+// Side wall surfaces (connecting bottom to top)
+Curve Loop(105) = {34, 22, -44, -20};
+Surface(105) = {105};
+
+Curve Loop(106) = {35, 21, -45, -22};
+Surface(106) = {106};
+
+Curve Loop(107) = {36, 23, -46, -21};
+Surface(107) = {107};
+
+Curve Loop(108) = {37, 20, -47, -23};
+Surface(108) = {108};
+
+// Top bulb surfaces
+Curve Loop(109) = {40, 44, -41};
+Surface(109) = {109};
+
+Curve Loop(110) = {41, 45, -42};
+Surface(110) = {110};
+
+Curve Loop(111) = {42, 46, -43};
+Surface(111) = {111};
+
+Curve Loop(112) = {43, 47, -40};
+Surface(112) = {112};
+
+//////////////////////////////
+// OUTER BOX SURFACES
+//////////////////////////////
+
+// Bottom (z=0)
+Curve Loop(1) = {1, 2, 3, 4};
+Plane Surface(1) = {1};
+
+// Top (z=Lz)
+Curve Loop(2) = {5, 6, 7, 8};
+Plane Surface(2) = {2};
+
+// South (y=0)
+Curve Loop(3) = {1, 10, -5, -9};
+Plane Surface(3) = {3};
+
+// North (y=Ly)
+Curve Loop(4) = {3, 12, -7, -11};
+Plane Surface(4) = {4};
+
+// West (x=0)
+Curve Loop(5) = {4, 9, -8, -12};
+Plane Surface(5) = {5};
+
+// East (x=Lx)
+Curve Loop(6) = {2, 11, -6, -10};
+Plane Surface(6) = {6};
+
+//////////////////////////////
+// VOLUME
+//////////////////////////////
+
+// Cavern surface loop
+Surface Loop(200) = {101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112};
+
+// Salt volume (box minus cavern)
+Surface Loop(201) = {1, 2, 3, 4, 5, 6};
+Volume(1) = {201, 200};
+
+//////////////////////////////
+// PHYSICAL GROUPS
+//////////////////////////////
+
+Physical Surface("Bottom", 27) = {1};
+Physical Surface("Top",    22) = {2};
+Physical Surface("South",  23) = {3};
+Physical Surface("North",  24) = {4};
+Physical Surface("West",   26) = {5};
+Physical Surface("East",   25) = {6};
+
+Physical Surface("Cavern", 29) = {101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112};
+Physical Volume("Salt",    28) = {1};
+
+Physical Curve("Wall_profile", 30) = {40, 20, 30};

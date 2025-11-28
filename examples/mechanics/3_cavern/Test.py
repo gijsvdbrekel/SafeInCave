@@ -259,11 +259,11 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 def main():
     # Read grid
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_tilt")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_sinus_1day")
+    output_folder = os.path.join("output", "case_sin_50days_tilt")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -461,8 +461,8 @@ def main():
 
         # ==================== OPERATION STAGE ====================
     OPERATION_DAYS  = 1                  # <— set how many days you want
-    SCHEDULE_MODE   = "repeat"           # "repeat" or "stretch"
-    dt_hours        = 0.1666666                # time resolution
+    SCHEDULE_MODE   = "stretch"           # "repeat" or "stretch"
+    dt_hours        = 0.1                # time resolution
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
                                      final_time=OPERATION_DAYS*24.0,
@@ -483,7 +483,7 @@ def main():
 
     elif PRESSURE_SCENARIO == "sinus":
         p_mean = 10.0 * ut.MPa
-        p_ampl =  5.0 * ut.MPa
+        p_ampl =  3.0 * ut.MPa
         t_pressure, p_pressure = build_sinus_schedule_multi(
             tc_operation,
             p_mean=p_mean, p_ampl=p_ampl,

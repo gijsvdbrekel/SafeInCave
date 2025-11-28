@@ -392,7 +392,7 @@ def main():
     fig, ax_logo, ax_info_1, ax_info_2, ax_info_3, ax0, ax00, ax01, ax02, ax10, ax11, ax12, ax30, ax31, ax32 = create_layout()
 
     # Specify folder to load the results from (operation stage)
-    output_folder = os.path.join("output", "case_sinus_1day")
+    output_folder = os.path.join("output", "case_sinus_70days_tilt")
     operation_folder = os.path.join(output_folder, "operation")
 
     # Eerst wand en subsidence inladen
@@ -513,7 +513,9 @@ def main():
     playing = False  # local state in main
 
     # timer that will advance the slider
-    timer = fig.canvas.new_timer(interval=150)  # ms per frame (~6-7 fps)
+    timer = fig.canvas.new_timer(interval=60)  # ms per frame (~6-7 fps)
+
+    PLAY_STEP = 20   # or 5, or 10 ...
 
     def advance_frame():
         nonlocal playing
@@ -521,13 +523,13 @@ def main():
             return
         k = int(time_slider.val)
         if k < n_steps - 1:
-            time_slider.set_val(k + 1)
+            new_k = min(k + PLAY_STEP, n_steps - 1)
+            time_slider.set_val(new_k)
         else:
-            # stop automatically at the end
             playing = False
             return
-        # schedule next step
         timer.start()
+
 
     timer.add_callback(advance_frame)
 
@@ -542,8 +544,8 @@ def main():
         playing = False
 
     # add buttons
-    ax_play  = fig.add_axes([0.86, 0.02, 0.05, 0.03])
-    ax_pause = fig.add_axes([0.92, 0.02, 0.05, 0.03])
+    ax_play  = fig.add_axes([0.88, 0.02, 0.05, 0.03])
+    ax_pause = fig.add_axes([0.93, 0.02, 0.05, 0.03])
     btn_play  = Button(ax_play,  "Play")
     btn_pause = Button(ax_pause, "Pause")
 

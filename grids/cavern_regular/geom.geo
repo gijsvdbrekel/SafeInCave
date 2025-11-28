@@ -1,3 +1,6 @@
+// Regular Cavern - SCALED to 1.4M m³ volume
+// Scaling factor: 0.928318
+
 size_coarse = 65;
 size_fine = 4.5;
 
@@ -5,8 +8,8 @@ Lz = 660;
 Ly = 450;
 
 h = 205.189718;
-H = 115.96607696095386;
-R = 54.42210251952307;
+H = 107.653;              // was 115.96607696095386, scaled by 0.928318
+R = 50.521;               // was 54.42210251952307, scaled by 0.928318
 
 Point(1) = {0.0, 0.0, 0.0, size_coarse};
 Point(2) = {Ly, 0.0, 0.0, size_coarse};
