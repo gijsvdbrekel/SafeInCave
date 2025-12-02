@@ -392,7 +392,7 @@ def main():
     fig, ax_logo, ax_info_1, ax_info_2, ax_info_3, ax0, ax00, ax01, ax02, ax10, ax11, ax12, ax30, ax31, ax32 = create_layout()
 
     # Specify folder to load the results from (operation stage)
-    output_folder = os.path.join("output", "case_sinus_70days_tilt")
+    output_folder = os.path.join("output", "case_sinus_1day_hourglass")
     operation_folder = os.path.join(output_folder, "operation")
 
     # Eerst wand en subsidence inladen
@@ -513,9 +513,9 @@ def main():
     playing = False  # local state in main
 
     # timer that will advance the slider
-    timer = fig.canvas.new_timer(interval=60)  # ms per frame (~6-7 fps)
+    timer = fig.canvas.new_timer(interval=12)  # ms per frame (~6-7 fps)
 
-    PLAY_STEP = 20   # or 5, or 10 ...
+    PLAY_STEP = 50   # or 5, or 10 ...
 
     def advance_frame():
         nonlocal playing

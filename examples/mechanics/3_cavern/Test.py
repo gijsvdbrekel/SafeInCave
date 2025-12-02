@@ -259,11 +259,11 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 def main():
     # Read grid
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_tilt")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_asymmetric")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_sin_50days_tilt")
+    output_folder = os.path.join("output", "case_sin_1day_asymmetric")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -483,7 +483,7 @@ def main():
 
     elif PRESSURE_SCENARIO == "sinus":
         p_mean = 10.0 * ut.MPa
-        p_ampl =  3.0 * ut.MPa
+        p_ampl =  1.0 * ut.MPa
         t_pressure, p_pressure = build_sinus_schedule_multi(
             tc_operation,
             p_mean=p_mean, p_ampl=p_ampl,
