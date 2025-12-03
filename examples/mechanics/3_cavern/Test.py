@@ -259,11 +259,11 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 def main():
     # Read grid
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_asymmetric")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_teardrop")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_sin_1day_asymmetric")
+    output_folder = os.path.join("output", "case_sin_100days_teardrop")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -460,9 +460,9 @@ def main():
     mom_eq.set_material(mat) 
 
         # ==================== OPERATION STAGE ====================
-    OPERATION_DAYS  = 1                  # <— set how many days you want
+    OPERATION_DAYS  = 100                  # <— set how many days you want
     SCHEDULE_MODE   = "stretch"           # "repeat" or "stretch"
-    dt_hours        = 0.1                # time resolution
+    dt_hours        = 2                # time resolution
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
                                      final_time=OPERATION_DAYS*24.0,
@@ -483,7 +483,7 @@ def main():
 
     elif PRESSURE_SCENARIO == "sinus":
         p_mean = 10.0 * ut.MPa
-        p_ampl =  1.0 * ut.MPa
+        p_ampl =  3.0 * ut.MPa
         t_pressure, p_pressure = build_sinus_schedule_multi(
             tc_operation,
             p_mean=p_mean, p_ampl=p_ampl,
@@ -495,7 +495,7 @@ def main():
     elif PRESSURE_SCENARIO == "irregular":
         # Waypoints that define the *shape for one day* (hours, MPa).
         base_waypoints_h    = [0,  1.0,  2.0,  3.2,  4.0,  5.0,  6.4,  7.1,  9.0, 11.5, 13.0, 16.0, 18.0, 21.0, 24.0]
-        base_pressures_MPa  = [9.0,12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4, 9.3, 10.7, 8.9, 11.6, 9.5, 10.2, 11.0]
+        base_pressures_MPa  = [10.0,12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4, 9.3, 10.7, 8.9, 11.6, 9.5, 10.2, 11.0]
         # Choose smoothing: None (piecewise linear), 0.0 (Catmull–Rom), 0.1–0.4 gentle smoothing
         t_pressure, p_pressure = build_irregular_schedule_multi(
             tc_operation,

@@ -262,11 +262,11 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 def main():
     # Read grid
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_hourglass")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_regular")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_sinus_1day_hourglass")
+    output_folder = os.path.join("output", "case_sinus_70days_regular")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -402,9 +402,9 @@ def main():
     mat.add_to_non_elastic(desai)
     mom_eq.set_material(mat)
 
-    OPERATION_DAYS = 1
+    OPERATION_DAYS = 70
     SCHEDULE_MODE = "stretch" # "repeat" or "stretch"
-    dt_hours = 0.1
+    dt_hours = 2
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
                                      final_time=OPERATION_DAYS*24.0,
