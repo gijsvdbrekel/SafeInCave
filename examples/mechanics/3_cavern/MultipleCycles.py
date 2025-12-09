@@ -350,7 +350,7 @@ def main():
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_sinus2x_10days_regular")
+    output_folder = os.path.join("output", "case_sinus(2)_14days_regular")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -477,7 +477,7 @@ def main():
     m = -0.5 * to.ones(mom_eq.n_elems)
     gamma = 0.095 * to.ones(mom_eq.n_elems)
     alpha_0 = 0.0022 * to.ones(mom_eq.n_elems)
-    sigma_t = 1.5 * to.ones(mom_eq.n_elems)
+    sigma_t = 5.0 * to.ones(mom_eq.n_elems)
     desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n, beta_1, beta, m, gamma, sigma_t, alpha_0, "desai")
 
     stress_to = ut.numpy2torch(mom_eq.sig.x.array.reshape((mom_eq.n_elems, 3, 3)))
@@ -486,10 +486,10 @@ def main():
     mat.add_to_non_elastic(desai)
     mom_eq.set_material(mat)
 
-    OPERATION_DAYS = 10
+    OPERATION_DAYS = 14
     SCHEDULE_MODE = "stretch" # "repeat" or "stretch"
     N_CYCLES = 2
-    dt_hours = 1
+    dt_hours = 0.2
 
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
@@ -523,7 +523,7 @@ def main():
     elif PRESSURE_SCENARIO == "irregular":
         base_waypoints_h = [0, 1.0, 2.0, 3.2, 4.0, 5.0, 6.4, 7.1, 9.0, 11.5,
                             13.0, 16.0, 18.0, 21.0, 24.0]
-        base_pressures_MPa = [10.0, 12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4,
+        base_pressures_MPa = [9.0, 12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4,
                               9.3, 10.7, 8.9, 11.6, 9.5, 10.2, 11.0]
         t_pressure, p_pressure = build_irregular_schedule_multi(
             tc_operation,
@@ -532,7 +532,7 @@ def main():
             days=OPERATION_DAYS, mode=SCHEDULE_MODE,
             smooth=0.25, clamp_min=0.0, clamp_max=None,
             resample_at_dt=True,
-            total_cycles=N_CYCLES,   
+            total_cycles=N_CYCLES,   # <— voeg dit toe als je ook hier 2 cycles wilt
         )
 
 

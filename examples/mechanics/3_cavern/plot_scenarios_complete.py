@@ -392,7 +392,7 @@ def main():
     fig, ax_logo, ax_info_1, ax_info_2, ax_info_3, ax0, ax00, ax01, ax02, ax10, ax11, ax12, ax30, ax31, ax32 = create_layout()
 
     # Specify folder to load the results from (operation stage)
-    output_folder = os.path.join("output", "case_sinus2x_10days_regular")
+    output_folder = os.path.join("output", "case_sin2x_2days_regular")
     operation_folder = os.path.join(output_folder, "operation")
 
     # Eerst wand en subsidence inladen
