@@ -7,31 +7,69 @@ import safeincave.PostProcessingTools as post
 # Units
 MPa = 1e6
 
-# ---------------------------------------------------------------------
-# RD dilatancy boundary  (same parameters as your plotting function)
-# ---------------------------------------------------------------------
-def q_dil_rd(p_MPa,
+
+
+# Units
+MPa = 1e6
+
+def q_dil_rd(p_MPa, psi,
              D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):
     """
-    Compute q_dil(p) in MPa for the Rider–Dieterich dilatancy boundary,
-    compression branch (psi = -30°), using same form as plot_dilatancy_boundary.
-    p_MPa must be compression-positive (as in your plots).
+    Compute q_dil(p, psi) in MPa for the Rider–Dieterich dilatancy boundary.
+
+    p_MPa : mean stress in MPa, compression-positive (zoals in je plots)
+    psi   : Lode angle in radians (zelfde definitie als in je slide)
     """
     p = np.asarray(p_MPa, dtype=float)
-    # mean stress -> I1
+    psi = np.asarray(psi, dtype=float)
+
+    # I1 in MPa (let op: jouw conventie p>0 in compressie)
     I1 = 3.0 * p  # MPa
 
-    psi_c = -np.pi / 6.0  # triaxial compression branch
-
-    # sign trick as in your plotting code
+    # sign-truc zoals in de literatuur
     sgn = np.sign(I1)
     sgn[sgn == 0.0] = 1.0
 
-    denom = (np.sqrt(3.0) * np.cos(psi_c) - D2 * np.sin(psi_c))
+    denom = (np.sqrt(3.0) * np.cos(psi) - D2 * np.sin(psi))
     sqrtJ2 = D1 * ((I1 / (sgn * sigma_ref)) ** m) / denom + T0  # MPa
 
     q = np.sqrt(3.0) * sqrtJ2  # MPa
     return q
+
+
+
+def compute_lode_angle_from_sigma(sig_Pa):
+    """
+    sig_Pa : (ncells, 3, 3) stress tensor in Pa
+    returns psi : (ncells,) Lode angle in radians
+    """
+    # Eigenwaarden (principal total stresses)
+    # omdat sigma symmetrisch is: eigvalsh
+    vals = np.linalg.eigvalsh(sig_Pa)   # shape (ncells, 3)
+    s1, s2, s3 = vals[:, 2], vals[:, 1], vals[:, 0]  # geordend 
+
+    # deviatorische principalen
+    I1 = s1 + s2 + s3
+    mean = I1 / 3.0
+    s1d = s1 - mean
+    s2d = s2 - mean
+    s3d = s3 - mean
+
+    # invarianten J2, J3 van deviatorische spanningen
+    J2 = (1.0 / 6.0) * ((s1d - s2d) ** 2 + (s2d - s3d) ** 2 + (s3d - s1d) ** 2)
+    J3 = s1d * s2d * s3d
+
+    # vermijd deling door nul
+    tiny = 1e-30
+    J2_safe = np.maximum(J2, tiny)
+
+    arg = - (np.sqrt(27.0) / 2.0) * J3 / (J2_safe ** 1.5)
+    arg = np.clip(arg, -1.0, 1.0)
+
+    psi = (1.0 / 3.0) * np.arccos(arg) # Later checken of je hier niet Sinus moet nemen!!!
+    return psi
+
+
 
 
 # ---------------------------------------------------------------------
@@ -60,27 +98,55 @@ def load_p_q(operation_folder):
     return time_list, p_MPa, q_MPa, p_path
 
 
-# ---------------------------------------------------------------------
-# Compute FOS = q_dil(p) / q
-# ---------------------------------------------------------------------
-def compute_FOS(p_MPa, q_MPa):
+
+
+
+def load_p_q_sig(operation_folder):
+    p_path  = os.path.join(operation_folder, "p_elems", "p_elems.xdmf")
+    q_path  = os.path.join(operation_folder, "q_elems", "q_elems.xdmf")
+    sig_path = os.path.join(operation_folder, "sig", "sig.xdmf")
+
+    pts_p,  time_list,  p_vals   = post.read_cell_scalar(p_path)
+    pts_q,  time_list2, q_vals   = post.read_cell_scalar(q_path)
+    pts_s,  time_list3, sig_vals = post.read_cell_tensor(sig_path)
+
+    if not (np.allclose(time_list, time_list2) and np.allclose(time_list, time_list3)):
+        raise RuntimeError("Time lists of p_elems, q_elems and sig do not match.")
+
+    # jouw conventie: compressie-positief p
+    p_MPa = -p_vals / MPa       # (nt, ncells)
+    q_MPa =  q_vals / MPa       # (nt, ncells)
+
+    # sig_vals in Pa, shape (nt, ncells, 3, 3)
+    return time_list, p_MPa, q_MPa, sig_vals, p_path
+
+
+def compute_FOS_with_lode(p_MPa, q_MPa, sig_Pa_series):
     """
-    p_MPa, q_MPa: (nt, ncells)
-    returns FOS with same shape.
+    p_MPa         : (nt, ncells)
+    q_MPa         : (nt, ncells)
+    sig_Pa_series : (nt, ncells, 3, 3)
+
+    returns FOS : (nt, ncells)
     """
     nt, nc = p_MPa.shape
     FOS = np.zeros_like(p_MPa)
 
     for it in range(nt):
-        p_t = p_MPa[it, :]
-        q_t = q_MPa[it, :]
+        # Lode angle per element op deze tijdstap
+        sig_t = sig_Pa_series[it, :, :, :]    # (ncells, 3, 3)
+        psi_t = compute_lode_angle_from_sigma(sig_t)  # (ncells,)
 
-        q_dil = q_dil_rd(p_t)  # MPa
-        q_safe = np.where(q_t <= 0.0, 1e-12, q_t)  # avoid 0 division
+        p_t = p_MPa[it, :]   # (ncells,)
+        q_t = q_MPa[it, :]   # (ncells,)
 
-        FOS[it, :] = q_dil / q_safe
+        q_dil_t = q_dil_rd(p_t, psi_t)  # MPa
+
+        q_safe = np.where(q_t <= 0.0, 1e-12, q_t)
+        FOS[it, :] = q_dil_t / q_safe
 
     return FOS
+
 
 
 # ---------------------------------------------------------------------
@@ -118,20 +184,16 @@ def write_FOS(operation_folder, time_list, FOS, mesh_source_xdmf):
 
 
 
-# ---------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------
 def main():
-    # Must match your Test.py output folder
-    base_folder = os.path.join("output", "case_sinus_70days_regular", "operation")
+    base_folder = os.path.join("output", "case_sinus_70days_irregular", "operation")
 
     if MPI.COMM_WORLD.rank == 0:
         print("Loading stresses...")
-    time_list, p_MPa, q_MPa, p_source = load_p_q(base_folder)
+    time_list, p_MPa, q_MPa, sig_vals, p_source = load_p_q_sig(base_folder)
 
     if MPI.COMM_WORLD.rank == 0:
-        print("Computing Factor of Safety...")
-    FOS = compute_FOS(p_MPa, q_MPa)
+        print("Computing FOS with Lode angle...")
+    FOS = compute_FOS_with_lode(p_MPa, q_MPa, sig_vals)
 
     if MPI.COMM_WORLD.rank == 0:
         print("Writing FOS field...")

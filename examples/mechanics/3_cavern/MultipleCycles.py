@@ -222,34 +222,117 @@ def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode, resam
 def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
                                    days, mode, smooth=0.25,
                                    clamp_min=0.0, clamp_max=None,
-                                   resample_at_dt=True):
-    times_h = base_waypoints_h
+                                   resample_at_dt=True,
+                                   total_cycles=None):
+    """
+    Irregular pressure schedule over meerdere dagen.
+
+    - mode="repeat":
+        herhaalt het 0–24h patroon elke dag (zoals nu al).
+        'total_cycles' wordt genegeerd.
+
+    - mode="stretch" & total_cycles is None:
+        base_waypoints_h wordt opgeschaald zodat je
+        precies 1 cycle over de totale simulatie (days * 24h) krijgt
+        (huidige gedrag).
+
+    - mode="stretch" & total_cycles >= 1:
+        je krijgt 'total_cycles' cycles over de totale simulatie
+        (days * 24h). De basisvorm blijft hetzelfde, maar wordt in
+        de tijd geschaald en achter elkaar geplakt.
+    """
+    times_h = np.asarray(base_waypoints_h, dtype=float)
+    pressures = np.asarray(base_pressures_MPa, dtype=float)
+
+    if len(times_h) != len(pressures):
+        raise ValueError("base_waypoints_h and base_pressures_MPa must have same length")
+
+    total_hours = days * DAY_H
+
     if mode == "repeat":
+        # Huidig gedrag: gewoon per dag herhalen
         times_h_multi = _repeat_hours(times_h, days)
         pressures_multi = []
         for d in range(int(days)):
             start = 0 if d == 0 else 1
-            pressures_multi.extend(base_pressures_MPa[start:])
-    else:
-        times_h_multi = _stretch_hours(times_h, days)
-        pressures_multi = list(base_pressures_MPa)
+            pressures_multi.extend(pressures[start:])
 
+    elif mode == "stretch":
+        # total_cycles: hoe vaak de basis-cyclus over de hele simulatie herhaald wordt
+        if total_cycles is None:
+            total_cycles = 1
+        total_cycles = max(1, int(total_cycles))
+
+        base_start = times_h[0]
+        base_end = times_h[-1]
+        base_duration = base_end - base_start
+        if base_duration <= 0.0:
+            raise ValueError("base_waypoints_h must span a positive duration.")
+
+        # duur van één cycle zodat total_cycles * cycle_duration = total_hours
+        cycle_duration = total_hours / float(total_cycles)
+        scale = cycle_duration / base_duration
+
+        times_h_multi = []
+        pressures_multi = []
+
+        for k in range(total_cycles):
+            offset = k * cycle_duration
+            for i, t in enumerate(times_h):
+                # voorkom dubbele tijdstap aan de grenzen
+                if k > 0 and i == 0:
+                    continue
+                t_scaled = offset + (t - base_start) * scale
+                times_h_multi.append(t_scaled)
+                pressures_multi.append(pressures[i])
+
+    else:
+        raise ValueError("mode must be 'repeat' or 'stretch'")
+
+    # Zorg dat we precies de totale simulatie afdekken
+    # (clip/extend eventueel een klein beetje)
+    times_h_multi = np.asarray(times_h_multi, dtype=float)
+    pressures_multi = np.asarray(pressures_multi, dtype=float)
+
+    # Bouw uiteindelijk de schedule met jouw bestaande helper
     return build_irregular_pressure_schedule(
         tc,
-        times_hours=times_h_multi,
-        pressures_MPa=pressures_multi,
+        times_hours=times_h_multi.tolist(),
+        pressures_MPa=pressures_multi.tolist(),
         smooth=smooth,
         clamp_min=clamp_min, clamp_max=clamp_max,
         resample_at_dt=resample_at_dt
     )
 
 
+
 def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
-                               daily_period_hours=24.0, clamp_min=0.0, clamp_max=None):
+                               daily_period_hours=24.0,
+                               total_cycles=1,
+                               clamp_min=0.0, clamp_max=None):
+    """
+    Sinusdrukschema over meerdere dagen.
+
+    mode = "repeat":
+        - Zelfde betekenis als nu: periode = daily_period_hours
+        - total_cycles wordt genegeerd (backwards compatible)
+
+    mode = "stretch":
+        - Er komen `total_cycles` volledige sinussen over de totale periode
+          van `days * 24` uur.
+        - Voor total_cycles=1 krijg je exact je oude gedrag.
+    """
+    total_hours = days * DAY_H
+
     if mode == "repeat":
+        # Zelfde als voorheen, je bepaalt zelf de periode per cycle
         T_hours = daily_period_hours
+
     elif mode == "stretch":
-        T_hours = days * DAY_H
+        # Verdeel de totaalduur over een gegeven aantal cycli
+        total_cycles = max(1, int(total_cycles))
+        T_hours = total_hours / float(total_cycles)
+
     else:
         raise ValueError("mode must be 'repeat' or 'stretch'")
 
@@ -260,13 +343,14 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
     )
 
 
+
 def main():
     # Read grid
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_regular")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_sinus_70days_irregular")
+    output_folder = os.path.join("output", "case_sinus_70days_regular")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -404,7 +488,9 @@ def main():
 
     OPERATION_DAYS = 70
     SCHEDULE_MODE = "stretch" # "repeat" or "stretch"
+    N_CYCLES = 2
     dt_hours = 2
+
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
                                      final_time=OPERATION_DAYS*24.0,
@@ -429,14 +515,15 @@ def main():
             tc_operation,
             p_mean=p_mean, p_ampl=p_ampl,
             days=OPERATION_DAYS, mode=SCHEDULE_MODE,
-            daily_period_hours=24.0,
+            daily_period_hours=24.0,   # wordt genegeerd bij "stretch"
+            total_cycles=N_CYCLES,     # <— nieuw
             clamp_min=0.0, clamp_max=None
         )
 
     elif PRESSURE_SCENARIO == "irregular":
         base_waypoints_h = [0, 1.0, 2.0, 3.2, 4.0, 5.0, 6.4, 7.1, 9.0, 11.5,
                             13.0, 16.0, 18.0, 21.0, 24.0]
-        base_pressures_MPa = [10.0, 12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4,
+        base_pressures_MPa = [9.0, 12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4,
                               9.3, 10.7, 8.9, 11.6, 9.5, 10.2, 11.0]
         t_pressure, p_pressure = build_irregular_schedule_multi(
             tc_operation,
@@ -444,8 +531,10 @@ def main():
             base_pressures_MPa=base_pressures_MPa,
             days=OPERATION_DAYS, mode=SCHEDULE_MODE,
             smooth=0.25, clamp_min=0.0, clamp_max=None,
-            resample_at_dt=True
+            resample_at_dt=True,
+            total_cycles=N_CYCLES,   # <— voeg dit toe als je ook hier 2 cycles wilt
         )
+
 
     else:
         raise ValueError(f"Unknown PRESSURE_SCENARIO: {PRESSURE_SCENARIO}")
