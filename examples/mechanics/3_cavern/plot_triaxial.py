@@ -222,7 +222,7 @@ def build_layout():
 def main():
     global PROBE_INDEX
 
-    output_folder    = os.path.join("output", "case_sinus_timesteptest")
+    output_folder    = os.path.join("output", "case_sinus(2)_14days_regular")
     operation_folder = os.path.join(output_folder, "operation")
 
     # --- auto probes, same as in cavern plots ---

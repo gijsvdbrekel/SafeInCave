@@ -323,7 +323,7 @@ class StressPath():
         self.q_probes = np.zeros((probes.shape[0], self.time_list.size))
         for i, probe in enumerate(probes):
             idx = post.find_closest_point(probe, self.points)
-            self.p_probes[i,:] = -self.p_elems[:,idx]/MPa
+            self.p_probes[i,:] = -self.p_elems[:,idx/3.0]/MPa
             self.q_probes[i,:] = self.q_elems[:,idx]/MPa
 
 

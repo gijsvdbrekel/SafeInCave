@@ -1,0 +1,122 @@
+// Gmsh project created on Tue Nov 19 11:26:16 2024
+
+gridsize1 = 65;
+gridsize2 = 3;
+gridsize3 = 30;
+
+R = 25;
+L = 20*R;
+ovb_width = 700;
+salt_width = 500;
+roof_width = 200;
+cave_height = 130;
+wall_width = cave_height - 2*R;
+
+z1 = -ovb_width;
+z2 = z1 - roof_width;
+z3 = z2 - R;
+z4 = z3 - wall_width;
+z5 = z4 - R;
+z6 = -(ovb_width + salt_width);
+
+Point(1) = {0.0, 0.0, 0.0, gridsize3};
+Point(2) = {0.0, L, 0.0, gridsize3};
+Point(3) = {L, L, 0.0, gridsize3};
+Point(4) = {L, 0.0, 0.0, gridsize3};
+
+Point(5) = {0.0, 0.0, z1, gridsize1};
+Point(6) = {0.0, L, z1, gridsize1};
+Point(7) = {L, L, z1, gridsize1};
+Point(8) = {L, 0.0, z1, gridsize1};
+
+Point(9) = {0.0, 0.0, z6, gridsize1};
+Point(10) = {0.0, L, z6, gridsize1};
+Point(11) = {L, L, z6, gridsize1};
+Point(12) = {L, 0.0, z6, gridsize1};
+
+Point(13) = {0.0, 0.0, z2, gridsize2};
+Point(14) = {R, 0.0, z3, gridsize2};
+Point(15) = {0.0, R, z3, gridsize2};
+Point(16) = {0.0, 0.0, z3, gridsize2};
+
+Point(17) = {0.0, 0.0, z5, gridsize2};
+Point(18) = {R, 0.0, z4, gridsize2};
+Point(19) = {0.0, R, z4, gridsize2};
+Point(20) = {0.0, 0.0, z4, gridsize2};
+Line(1) = {9, 12};
+Line(2) = {12, 11};
+Line(3) = {11, 10};
+Line(4) = {10, 9};
+Line(5) = {5, 8};
+Line(6) = {8, 7};
+Line(7) = {7, 6};
+Line(8) = {6, 5};
+Line(9) = {1, 4};
+Line(10) = {4, 3};
+Line(11) = {3, 2};
+Line(12) = {2, 1};
+Line(13) = {9, 17};
+Line(14) = {12, 8};
+Line(15) = {8, 4};
+Line(16) = {11, 7};
+Line(17) = {7, 3};
+Line(18) = {10, 6};
+Line(19) = {6, 2};
+Line(20) = {13, 5};
+Line(21) = {5, 1};
+Line(22) = {18, 14};
+Line(23) = {19, 15};
+Circle(24) = {18, 20, 17};
+Circle(25) = {19, 20, 17};
+Circle(26) = {18, 20, 19};
+Circle(27) = {14, 16, 13};
+Circle(28) = {13, 16, 15};
+Circle(29) = {14, 16, 15};
+
+Curve Loop(1) = {1, 14, -5, -20, -27, -22, 24, -13};
+Plane Surface(1) = {1};
+Curve Loop(2) = {2, 16, -6, -14};
+Plane Surface(2) = {2};
+Curve Loop(3) = {16, 7, -18, -3};
+Plane Surface(3) = {-3};
+Curve Loop(4) = {4, 13, -25, 23, -28, 20, -8, -18};
+Plane Surface(4) = {4};
+Curve Loop(5) = {3, 4, 1, 2};
+Plane Surface(5) = {-5};
+Curve Loop(6) = {5, 6, 7, 8};
+Plane Surface(6) = {6};
+Curve Loop(7) = {21, 9, -15, -5};
+Plane Surface(7) = {-7};
+Curve Loop(8) = {6, 17, -10, -15};
+Plane Surface(8) = {8};
+Curve Loop(9) = {17, 11, -19, -7};
+Plane Surface(9) = {-9};
+Curve Loop(10) = {9, 10, 11, 12};
+Plane Surface(10) = {10};
+Curve Loop(11) = {12, -21, -8, 19};
+Plane Surface(11) = {-11};
+Curve Loop(12) = {24, -25, -26};
+Surface(12) = {-12};
+Curve Loop(13) = {26, 23, -29, -22};
+Surface(13) = {-13};
+Curve Loop(14) = {29, -28, -27};
+Surface(14) = {-14};
+Surface Loop(1) = {6, 7, 8, 9, 11, 10};
+Volume(1) = {1};
+Surface Loop(2) = {2, 5, 1, 4, 12, 13, 14, 3, 6};
+Volume(2) = {2};
+
+Physical Surface("BOTTOM", 30) = {5};
+Physical Surface("SOUTH", 31) = {1};
+Physical Surface("NORTH", 32) = {3};
+Physical Surface("WEST", 33) = {4};
+Physical Surface("EAST", 34) = {2};
+Physical Surface("EAST_OB", 35) = {8};
+Physical Surface("WEST_OB", 36) = {11};
+Physical Surface("NORTH_OB", 37) = {9};
+Physical Surface("SOUTH_OB", 38) = {7};
+Physical Surface("TOP", 39) = {10};
+Physical Surface("CAVERN", 40) = {12, 13, 14};
+Physical Volume("SALT", 41) = {2};
+Physical Volume("OVERBURDEN", 42) = {1};
+Physical Curve("PROFILE", 43) = {24, 22, 27};
