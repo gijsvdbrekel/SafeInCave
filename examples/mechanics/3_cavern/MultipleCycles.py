@@ -350,7 +350,7 @@ def main():
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_sinus(2)_14days_regular")
+    output_folder = os.path.join("output", "case_sinus(1)_1day_regular_test")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -467,29 +467,29 @@ def main():
     sim.run()
 
     # ===== OPERATION STAGE =====
-    mu_1 = 5.3665857009859815e-11 * to.ones(mom_eq.n_elems)
-    N_1 = 3.1 * to.ones(mom_eq.n_elems)
-    n = 3.0 * to.ones(mom_eq.n_elems)
-    a_1 = 1.965018496922832e-05 * to.ones(mom_eq.n_elems)
-    eta_vp = 0.8275682807874163 * to.ones(mom_eq.n_elems)
-    beta_1 = 0.0048 * to.ones(mom_eq.n_elems)
-    beta = 0.995 * to.ones(mom_eq.n_elems)
-    m = -0.5 * to.ones(mom_eq.n_elems)
-    gamma = 0.095 * to.ones(mom_eq.n_elems)
-    alpha_0 = 0.0022 * to.ones(mom_eq.n_elems)
-    sigma_t = 5.0 * to.ones(mom_eq.n_elems)
-    desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n, beta_1, beta, m, gamma, sigma_t, alpha_0, "desai")
+    #mu_1 = 5.3665857009859815e-11 * to.ones(mom_eq.n_elems)
+    #N_1 = 3.1 * to.ones(mom_eq.n_elems)
+    #n = 3.0 * to.ones(mom_eq.n_elems)
+    #a_1 = 1.965018496922832e-05 * to.ones(mom_eq.n_elems)
+    #eta_vp = 0.8275682807874163 * to.ones(mom_eq.n_elems)
+    #beta_1 = 0.0048 * to.ones(mom_eq.n_elems)
+    #beta = 0.995 * to.ones(mom_eq.n_elems)
+    #m = -0.5 * to.ones(mom_eq.n_elems)
+    #gamma = 0.095 * to.ones(mom_eq.n_elems)
+    #alpha_0 = 0.0022 * to.ones(mom_eq.n_elems)
+    #sigma_t = 5.0 * to.ones(mom_eq.n_elems)
+    #desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n, beta_1, beta, m, gamma, sigma_t, alpha_0, "desai")
 
-    stress_to = ut.numpy2torch(mom_eq.sig.x.array.reshape((mom_eq.n_elems, 3, 3)))
-    desai.compute_initial_hardening(stress_to, Fvp_0=0.0)
+    #stress_to = ut.numpy2torch(mom_eq.sig.x.array.reshape((mom_eq.n_elems, 3, 3)))
+    #desai.compute_initial_hardening(stress_to, Fvp_0=0.0)
 
-    mat.add_to_non_elastic(desai)
-    mom_eq.set_material(mat)
+    #mat.add_to_non_elastic(desai)
+    #mom_eq.set_material(mat)
 
-    OPERATION_DAYS = 14
+    OPERATION_DAYS = 1
     SCHEDULE_MODE = "stretch" # "repeat" or "stretch"
-    N_CYCLES = 2
-    dt_hours = 0.2
+    N_CYCLES = 1
+    dt_hours = 0.1
 
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
@@ -510,7 +510,7 @@ def main():
 
     elif PRESSURE_SCENARIO == "sinus":
         p_mean = 10.0 * ut.MPa
-        p_ampl = 3.0 * ut.MPa
+        p_ampl = 1.0 * ut.MPa
         t_pressure, p_pressure = build_sinus_schedule_multi(
             tc_operation,
             p_mean=p_mean, p_ampl=p_ampl,
@@ -592,6 +592,7 @@ def main():
     output_mom_op.add_output_field("alpha", "Hardening parameter (-)")
     output_mom_op.add_output_field("Fvp", "Yield function (-)")
     output_mom_op.add_output_field("p_elems", "Mean stress (Pa)")
+    output_mom_op.add_output_field("p_nodes", "Mean stress (Pa) (nodes)")
     output_mom_op.add_output_field("q_elems", "Von Mises stress (Pa)")
     output_mom_op.add_output_field("sig", "Stress (Pa)")
     outputs_op = [output_mom_op]

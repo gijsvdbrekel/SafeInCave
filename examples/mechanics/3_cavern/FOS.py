@@ -92,7 +92,7 @@ def load_p_q(operation_folder):
         raise RuntimeError("Time lists of p_elems and q_elems do not match.")
 
     # Same convention as your StressPath: compression -> positive p
-    p_MPa = -(p_vals / 3) / MPa   # (nt, ncells)
+    p_MPa = -p_vals  / MPa   # (nt, ncells)
     q_MPa =  q_vals / MPa   # (nt, ncells)
 
     return time_list, p_MPa, q_MPa, p_path
@@ -114,7 +114,7 @@ def load_p_q_sig(operation_folder):
         raise RuntimeError("Time lists of p_elems, q_elems and sig do not match.")
 
     # jouw conventie: compressie-positief p
-    p_MPa = -(p_vals / 3) / MPa       # (nt, ncells)
+    p_MPa = -p_vals / MPa       # (nt, ncells)
     q_MPa =  q_vals / MPa       # (nt, ncells)
 
     # sig_vals in Pa, shape (nt, ncells, 3, 3)

@@ -286,6 +286,7 @@ def main():
 	output_mom.add_output_field("alpha", "Hardening parameter (-)")
 	output_mom.add_output_field("Fvp", "Yield function (-)")
 	output_mom.add_output_field("p_elems", "Mean stress (Pa)")
+	output_mom_op.add_output_field("p_nodes", "Mean stress (Pa) (nodes)")
 	output_mom.add_output_field("q_elems", "Von Mises stress (Pa)")
 	outputs = [output_mom]
 
