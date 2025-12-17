@@ -931,7 +931,7 @@ class LinearMomentum(LinearMomentumBase):
         Writes to :attr:`p_elems`.
         """
         stress_to = numpy2torch(self.sig.x.array.reshape((self.n_elems, 3, 3)))
-        p_to = to.einsum("kii->k", stress_to)
+        p_to = (to.einsum("kii->k", stress_to) / 3.0)
         p_to = self.grid.smoother.dot(p_to.numpy())
         self.p_elems.x.array[:] = p_to
 
