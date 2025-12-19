@@ -467,36 +467,36 @@ def main():
     sim.run()
 
     # ===== OPERATION STAGE =====
-    #mu_1 = 5.3665857009859815e-11 * to.ones(mom_eq.n_elems)
-    #N_1 = 3.1 * to.ones(mom_eq.n_elems)
-    #n = 3.0 * to.ones(mom_eq.n_elems)
-    #a_1 = 1.965018496922832e-05 * to.ones(mom_eq.n_elems)
-    #eta_vp = 0.8275682807874163 * to.ones(mom_eq.n_elems)
-    #beta_1 = 0.0048 * to.ones(mom_eq.n_elems)
-    #beta = 0.995 * to.ones(mom_eq.n_elems)
-    #m = -0.5 * to.ones(mom_eq.n_elems)
-    #gamma = 0.095 * to.ones(mom_eq.n_elems)
-    #alpha_0 = 0.0022 * to.ones(mom_eq.n_elems)
-    #sigma_t = 5.0 * to.ones(mom_eq.n_elems)
-    #desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n, beta_1, beta, m, gamma, sigma_t, alpha_0, "desai")
+    mu_1 = 5.3665857009859815e-11 * to.ones(mom_eq.n_elems)
+    N_1 = 3.1 * to.ones(mom_eq.n_elems)
+    n = 3.0 * to.ones(mom_eq.n_elems)
+    a_1 = 1.965018496922832e-05 * to.ones(mom_eq.n_elems)
+    eta_vp = 0.8275682807874163 * to.ones(mom_eq.n_elems)
+    beta_1 = 0.0048 * to.ones(mom_eq.n_elems)
+    beta = 0.995 * to.ones(mom_eq.n_elems)
+    m = -0.5 * to.ones(mom_eq.n_elems)
+    gamma = 0.095 * to.ones(mom_eq.n_elems)
+    alpha_0 = 0.0022 * to.ones(mom_eq.n_elems)
+    sigma_t = 5.0 * to.ones(mom_eq.n_elems)
+    desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n, beta_1, beta, m, gamma, sigma_t, alpha_0, "desai")
 
-    #stress_to = ut.numpy2torch(mom_eq.sig.x.array.reshape((mom_eq.n_elems, 3, 3)))
-    #desai.compute_initial_hardening(stress_to, Fvp_0=0.0)
+    stress_to = ut.numpy2torch(mom_eq.sig.x.array.reshape((mom_eq.n_elems, 3, 3)))
+    desai.compute_initial_hardening(stress_to, Fvp_0=0.0)
 
-    #mat.add_to_non_elastic(desai)
-    #mom_eq.set_material(mat)
+    mat.add_to_non_elastic(desai)
+    mom_eq.set_material(mat)
 
-    OPERATION_DAYS = 1
+    OPERATION_DAYS = 1095  # 3 years
     SCHEDULE_MODE = "stretch" # "repeat" or "stretch"
-    N_CYCLES = 1
-    dt_hours = 0.1
+    N_CYCLES = 9
+    dt_hours = 2
 
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
                                      final_time=OPERATION_DAYS*24.0,
                                      time_unit="hour")
 
-    PRESSURE_SCENARIO = "irregular"
+    PRESSURE_SCENARIO = "sinus"
 
     if PRESSURE_SCENARIO == "linear":
         base_times_h = [0.0, 2.0, 14.0, 16.0, 24.0]
@@ -510,7 +510,7 @@ def main():
 
     elif PRESSURE_SCENARIO == "sinus":
         p_mean = 10.0 * ut.MPa
-        p_ampl = 1.0 * ut.MPa
+        p_ampl = 3.0 * ut.MPa
         t_pressure, p_pressure = build_sinus_schedule_multi(
             tc_operation,
             p_mean=p_mean, p_ampl=p_ampl,
