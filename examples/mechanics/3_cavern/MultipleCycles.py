@@ -172,17 +172,37 @@ def _stretch_hours(times_h, factor_days):
 
 
 def _repeat_hours(times_h, days):
+    times_h = list(map(float, times_h))
     out = []
     for d in range(int(days)):
         off = d * DAY_H
-        start = 0 if d == 0 else 1
-        out.extend([off + t for t in times_h[start:]])
+        for i, t in enumerate(times_h):
+            if d > 0 and i == 0 and abs(t - 0.0) < 1e-12 and abs(times_h[-1] - DAY_H) < 1e-12:
+                # skip the 0h knot because previous day already had 24h knot
+                continue
+            out.append(off + t)
     return out
 
 
-def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode, resample_at_dt=True):
+
+def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode,
+                                resample_at_dt=True, total_cycles=None):
+    """
+    Extend your existing linear multi-day schedule builder.
+    - mode="repeat": repeat daily pattern each day (total_cycles ignored)
+    - mode="stretch":
+        * if total_cycles is None -> 1 cycle over total duration (old behavior)
+        * if total_cycles >= 1 -> repeat the base cycle total_cycles times over total duration
+    """
     if mode not in ("repeat", "stretch"):
         raise ValueError("mode must be 'repeat' or 'stretch'")
+
+    times_h = list(map(float, times_h))
+    pressures_MPa = list(map(float, pressures_MPa))
+    if len(times_h) != len(pressures_MPa) or len(times_h) < 2:
+        raise ValueError("Provide at least two waypoints with matching lengths.")
+
+    total_h = float(days) * DAY_H
 
     if mode == "repeat":
         t_h = _repeat_hours(times_h, days)
@@ -190,21 +210,39 @@ def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode, resam
         for d in range(int(days)):
             start = 0 if d == 0 else 1
             p_h.extend(pressures_MPa[start:])
-    else:
-        t_h = _stretch_hours(times_h, days)
-        p_h = list(pressures_MPa)
 
-    total_h = days * DAY_H
+    else:  # mode == "stretch"
+        if total_cycles is None:
+            total_cycles = 1
+        total_cycles = max(1, int(total_cycles))
 
+        base_start = times_h[0]
+        base_end = times_h[-1]
+        base_duration = base_end - base_start
+        if base_duration <= 0.0:
+            raise ValueError("times_h must span a positive duration.")
+
+        cycle_duration = total_h / float(total_cycles)
+        scale = cycle_duration / base_duration
+
+        t_h = []
+        p_h = []
+        for k in range(total_cycles):
+            offset = k * cycle_duration
+            for i, t in enumerate(times_h):
+                if k > 0 and i == 0:
+                    continue  # avoid duplicate knot at cycle boundaries
+                t_scaled = offset + (t - base_start) * scale
+                t_h.append(t_scaled)
+                p_h.append(pressures_MPa[i])
+
+    # Ensure coverage [0, total_h]
     if t_h[0] > 0.0:
         t_h.insert(0, 0.0)
         p_h.insert(0, p_h[0])
-
     if t_h[-1] < total_h:
         t_h.append(total_h)
         p_h.append(p_h[-1])
-
-    assert len(t_h) == len(p_h), f"len(t_h)={len(t_h)} != len(p_h)={len(p_h)}"
 
     knots_t = np.array([h * ut.hour for h in t_h], dtype=float)
     knots_p = np.array([p * ut.MPa for p in p_h], dtype=float)
@@ -346,11 +384,11 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 def main():
     # Read grid
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_regular")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_original")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_sinus(1)_1day_regular_test")
+    output_folder = os.path.join("output", "case_irregular(5)_100days_irregular_original")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -486,26 +524,32 @@ def main():
     mat.add_to_non_elastic(desai)
     mom_eq.set_material(mat)
 
-    OPERATION_DAYS = 1095  # 3 years
+    OPERATION_DAYS = 100  # 3 years
     SCHEDULE_MODE = "stretch" # "repeat" or "stretch"
-    N_CYCLES = 9
-    dt_hours = 2
+    N_CYCLES = 5
+    dt_hours = 0.2
 
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
                                      final_time=OPERATION_DAYS*24.0,
                                      time_unit="hour")
 
-    PRESSURE_SCENARIO = "sinus"
+    PRESSURE_SCENARIO = "irregular"
 
     if PRESSURE_SCENARIO == "linear":
+        p_min = 7.0
+        p_max = 10.0
+
         base_times_h = [0.0, 2.0, 14.0, 16.0, 24.0]
-        base_pressures_MPa = [10.0, 7.0, 7.0, 10.0, 10.0]
+        base_pressures_MPa = [p_max, p_min, p_min, p_max, p_max]
+
         t_pressure, p_pressure = build_linear_schedule_multi(
             tc_operation,
             base_times_h, base_pressures_MPa,
-            days=OPERATION_DAYS, mode=SCHEDULE_MODE,
-            resample_at_dt=True
+            days=OPERATION_DAYS,
+            mode=SCHEDULE_MODE,
+            resample_at_dt=True,
+            total_cycles=N_CYCLES,   # <-- now it actually does something
         )
 
     elif PRESSURE_SCENARIO == "sinus":

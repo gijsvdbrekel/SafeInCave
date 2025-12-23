@@ -11,6 +11,9 @@ import math
 import numpy as np
 
 
+# -----------------------------
+#  Momentum model + sparse output
+# -----------------------------
 class LinearMomentumMod(sf.LinearMomentum):
     def __init__(self, grid, theta):
         super().__init__(grid, theta)
@@ -31,27 +34,24 @@ class LinearMomentumMod(sf.LinearMomentum):
 
 
 class SparseSaveFields(sf.SaveFields):
-    """
-    SaveFields that only writes every `interval`-th call after t=0.
-    t = 0 is always saved.
-    """
+    """SaveFields that only writes every interval-th call after t=0. t=0 is always saved."""
     def __init__(self, mom_eq, interval: int):
         super().__init__(mom_eq)
         self.interval = max(1, int(interval))
         self._counter = 0
 
     def save_fields(self, t):
-        # Always save the initial state at t=0
         if t == 0:
             return super().save_fields(t)
-
-        # Count calls and only forward every `interval`-th one
         self._counter += 1
         if self._counter % self.interval == 0:
             return super().save_fields(t)
-        # otherwise: skip this step (no write)
+        # else skip
 
 
+# -----------------------------
+#  Pressure schedule helpers (as before)
+# -----------------------------
 def build_sinus_pressure_schedule(tc, *, p_mean, p_ampl, period_hours, phase_hours=0.0,
                                   clamp_min=None, clamp_max=None):
     """Sinus schedule sampled at simulation time steps."""
@@ -64,7 +64,6 @@ def build_sinus_pressure_schedule(tc, *, p_mean, p_ampl, period_hours, phase_hou
         t_vals.append(tc.t_final)
 
     two_pi_over_T = (2.0 * math.pi / period) if period > 0.0 else 0.0
-
     p_vals = []
     for t in t_vals:
         p = p_mean if period <= 0.0 else p_mean + p_ampl * math.sin(two_pi_over_T * (t - phase))
@@ -73,12 +72,10 @@ def build_sinus_pressure_schedule(tc, *, p_mean, p_ampl, period_hours, phase_hou
         if clamp_max is not None:
             p = min(p, clamp_max)
         p_vals.append(p)
-
     return t_vals, p_vals
 
 
 def _cardinal_segment(p0, p1, p2, p3, u, tension):
-    """Cardinal (Catmull–Rom with tension) for scalar values, u in [0,1]."""
     m1 = (1 - tension) * 0.5 * (p2 - p0)
     m2 = (1 - tension) * 0.5 * (p3 - p1)
     u2 = u * u
@@ -91,27 +88,21 @@ def _cardinal_segment(p0, p1, p2, p3, u, tension):
 
 
 def _cardinal_interp(ts, ps, t, tension):
-    """Evaluate cardinal spline at time t (scalar)."""
     if t <= ts[0]:
         return ps[0]
     if t >= ts[-1]:
         return ps[-1]
-
     i = np.searchsorted(ts, t) - 1
     t0 = ts[i]
-    t1 = ts[i+1]
-
-    i_m1 = max(i-1, 0)
-    i_p2 = min(i+2, len(ts)-1)
+    t1 = ts[i + 1]
+    i_m1 = max(i - 1, 0)
+    i_p2 = min(i + 2, len(ts) - 1)
     u = (t - t0) / (t1 - t0)
-    return _cardinal_segment(ps[i_m1], ps[i], ps[i+1], ps[i_p2], u, tension)
+    return _cardinal_segment(ps[i_m1], ps[i], ps[i + 1], ps[i_p2], u, tension)
 
 
-def build_irregular_pressure_schedule(tc,
-                                      times_hours, pressures_MPa,
-                                      *, smooth=0.3,
-                                      clamp_min=None, clamp_max=None,
-                                      resample_at_dt=True):
+def build_irregular_pressure_schedule(tc, times_hours, pressures_MPa, *, smooth=0.3,
+                                      clamp_min=None, clamp_max=None, resample_at_dt=True):
     if len(times_hours) != len(pressures_MPa) or len(times_hours) < 2:
         raise ValueError("Provide at least two waypoints with matching lengths.")
 
@@ -167,22 +158,36 @@ def _sample_at_dt(tc, t_end=None):
     return t_vals
 
 
-def _stretch_hours(times_h, factor_days):
-    return [t * float(factor_days) for t in times_h]
-
-
 def _repeat_hours(times_h, days):
+    # safe repeat that avoids duplicating the day boundary if pattern ends at 24h and starts at 0h
+    times_h = list(map(float, times_h))
     out = []
     for d in range(int(days)):
         off = d * DAY_H
-        start = 0 if d == 0 else 1
-        out.extend([off + t for t in times_h[start:]])
+        for i, t in enumerate(times_h):
+            if d > 0 and i == 0 and abs(t - 0.0) < 1e-12 and abs(times_h[-1] - DAY_H) < 1e-12:
+                continue
+            out.append(off + t)
     return out
 
 
-def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode, resample_at_dt=True):
+def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode,
+                                resample_at_dt=True, total_cycles=None):
+    """
+    - mode="repeat": repeat daily pattern each day (total_cycles ignored)
+    - mode="stretch":
+        * total_cycles=None -> 1 cycle over total duration (old behavior)
+        * total_cycles>=1   -> repeat base cycle total_cycles times over total duration
+    """
     if mode not in ("repeat", "stretch"):
         raise ValueError("mode must be 'repeat' or 'stretch'")
+
+    times_h = list(map(float, times_h))
+    pressures_MPa = list(map(float, pressures_MPa))
+    if len(times_h) != len(pressures_MPa) or len(times_h) < 2:
+        raise ValueError("Provide at least two waypoints with matching lengths.")
+
+    total_h = float(days) * DAY_H
 
     if mode == "repeat":
         t_h = _repeat_hours(times_h, days)
@@ -190,21 +195,38 @@ def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode, resam
         for d in range(int(days)):
             start = 0 if d == 0 else 1
             p_h.extend(pressures_MPa[start:])
-    else:
-        t_h = _stretch_hours(times_h, days)
-        p_h = list(pressures_MPa)
 
-    total_h = days * DAY_H
+    else:  # stretch
+        if total_cycles is None:
+            total_cycles = 1
+        total_cycles = max(1, int(total_cycles))
 
+        base_start = times_h[0]
+        base_end = times_h[-1]
+        base_duration = base_end - base_start
+        if base_duration <= 0.0:
+            raise ValueError("times_h must span a positive duration.")
+
+        cycle_duration = total_h / float(total_cycles)
+        scale = cycle_duration / base_duration
+
+        t_h, p_h = [], []
+        for k in range(total_cycles):
+            offset = k * cycle_duration
+            for i, t in enumerate(times_h):
+                if k > 0 and i == 0:
+                    continue
+                t_scaled = offset + (t - base_start) * scale
+                t_h.append(t_scaled)
+                p_h.append(pressures_MPa[i])
+
+    # Ensure coverage
     if t_h[0] > 0.0:
         t_h.insert(0, 0.0)
         p_h.insert(0, p_h[0])
-
     if t_h[-1] < total_h:
         t_h.append(total_h)
         p_h.append(p_h[-1])
-
-    assert len(t_h) == len(p_h), f"len(t_h)={len(t_h)} != len(p_h)={len(p_h)}"
 
     knots_t = np.array([h * ut.hour for h in t_h], dtype=float)
     knots_p = np.array([p * ut.MPa for p in p_h], dtype=float)
@@ -222,22 +244,53 @@ def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode, resam
 def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
                                    days, mode, smooth=0.25,
                                    clamp_min=0.0, clamp_max=None,
-                                   resample_at_dt=True):
-    times_h = base_waypoints_h
+                                   resample_at_dt=True, total_cycles=None):
+    times_h = np.asarray(base_waypoints_h, dtype=float)
+    pressures = np.asarray(base_pressures_MPa, dtype=float)
+
+    if len(times_h) != len(pressures):
+        raise ValueError("base_waypoints_h and base_pressures_MPa must have same length")
+
+    total_hours = days * DAY_H
+
     if mode == "repeat":
         times_h_multi = _repeat_hours(times_h, days)
         pressures_multi = []
         for d in range(int(days)):
             start = 0 if d == 0 else 1
-            pressures_multi.extend(base_pressures_MPa[start:])
+            pressures_multi.extend(pressures[start:])
+
+    elif mode == "stretch":
+        if total_cycles is None:
+            total_cycles = 1
+        total_cycles = max(1, int(total_cycles))
+
+        base_start = times_h[0]
+        base_end = times_h[-1]
+        base_duration = base_end - base_start
+        if base_duration <= 0.0:
+            raise ValueError("base_waypoints_h must span a positive duration.")
+
+        cycle_duration = total_hours / float(total_cycles)
+        scale = cycle_duration / base_duration
+
+        times_h_multi, pressures_multi = [], []
+        for k in range(total_cycles):
+            offset = k * cycle_duration
+            for i, t in enumerate(times_h):
+                if k > 0 and i == 0:
+                    continue
+                t_scaled = offset + (t - base_start) * scale
+                times_h_multi.append(t_scaled)
+                pressures_multi.append(pressures[i])
+
     else:
-        times_h_multi = _stretch_hours(times_h, days)
-        pressures_multi = list(base_pressures_MPa)
+        raise ValueError("mode must be 'repeat' or 'stretch'")
 
     return build_irregular_pressure_schedule(
         tc,
-        times_hours=times_h_multi,
-        pressures_MPa=pressures_multi,
+        times_hours=np.asarray(times_h_multi, dtype=float).tolist(),
+        pressures_MPa=np.asarray(pressures_multi, dtype=float).tolist(),
         smooth=smooth,
         clamp_min=clamp_min, clamp_max=clamp_max,
         resample_at_dt=resample_at_dt
@@ -245,28 +298,101 @@ def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
 
 
 def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
-                               daily_period_hours=24.0, clamp_min=0.0, clamp_max=None):
+                               daily_period_hours=24.0,
+                               total_cycles=1,
+                               clamp_min=0.0, clamp_max=None):
+    total_hours = days * DAY_H
     if mode == "repeat":
         T_hours = daily_period_hours
     elif mode == "stretch":
-        T_hours = days * DAY_H
+        total_cycles = max(1, int(total_cycles))
+        T_hours = total_hours / float(total_cycles)
     else:
         raise ValueError("mode must be 'repeat' or 'stretch'")
 
     return build_sinus_pressure_schedule(
-        tc, p_mean=p_mean, p_ampl=p_ampl,
+        tc,
+        p_mean=p_mean, p_ampl=p_ampl,
         period_hours=T_hours, phase_hours=0.0,
         clamp_min=clamp_min, clamp_max=clamp_max
     )
 
 
+# -----------------------------
+#  Variable-dt time controller (pressure-based)
+# -----------------------------
+class TimeControllerFromList:
+    """
+    Minimal time controller compatible with SafeInCave Simulator_M:
+    - t, dt, t_final in seconds
+    - keep_looping(), advance_time()
+    - step_counter
+    """
+    def __init__(self, time_list_seconds):
+        self.time_list = np.asarray(time_list_seconds, dtype=float)
+        if self.time_list.ndim != 1 or self.time_list.size < 2:
+            raise ValueError("time_list_seconds must have at least 2 entries.")
+        if not np.all(np.diff(self.time_list) > 0):
+            raise ValueError("time_list_seconds must be strictly increasing.")
+
+        self.t_initial = float(self.time_list[0])
+        self.t_final = float(self.time_list[-1])
+        self.t = float(self.time_list[0])
+        self.step_counter = 0
+        self.dt = float(self.time_list[1] - self.time_list[0])
+
+    def keep_looping(self):
+        return self.step_counter < (self.time_list.size - 1)
+
+    def advance_time(self):
+        self.step_counter += 1
+        t_prev = self.t
+        self.t = float(self.time_list[self.step_counter])
+        self.dt = self.t - t_prev
+
+
+def build_time_list_by_dp_limit(t_final, p_of_t, *, dt_min, dt_max, dp_max):
+    """
+    Create a variable time grid so that |p(t+dt)-p(t)| <= dp_max (Pa),
+    with dt clamped in [dt_min, dt_max] (seconds).
+    """
+    t = 0.0
+    times = [0.0]
+    p_prev = float(p_of_t(0.0))
+
+    max_steps = int(np.ceil(t_final / dt_min)) + 50
+    for _ in range(max_steps):
+        if t >= t_final - 1e-12:
+            break
+
+        dt = dt_max
+        while True:
+            t_try = min(t + dt, t_final)
+            p_try = float(p_of_t(t_try))
+            if abs(p_try - p_prev) <= dp_max or dt <= dt_min + 1e-12:
+                t = t_try
+                p_prev = p_try
+                times.append(t)
+                break
+            dt *= 0.5
+            if dt < dt_min:
+                dt = dt_min
+
+    if abs(times[-1] - t_final) > 1e-9:
+        times.append(t_final)
+    return times
+
+
+# -----------------------------
+#  Main
+# -----------------------------
 def main():
     # Read grid
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_original")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_sinus_70days_irregular")
+    output_folder = os.path.join("output", "case_irregular(5)_100days_irregular_original")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -301,7 +427,7 @@ def main():
 
     # Dislocation creep
     ndc = 4.6
-    A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+    A_dc = (40.0 * (1e-6) ** ndc / sec_per_year) * to.ones(mom_eq.n_elems)
     Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
     n_dc = ndc * to.ones(mom_eq.n_elems)
     creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
@@ -317,7 +443,6 @@ def main():
     mat.add_to_non_elastic(kelvin)
     mat.add_to_non_elastic(creep_0)
     mat.add_to_non_elastic(creep_pressure)
-
     mom_eq.set_material(mat)
 
     # Body forces
@@ -353,7 +478,7 @@ def main():
                              [0.0, tc_equilibrium.t_final],
                              g=g_vec[2])
 
-    gas_density = 0.089  # Hydrogen density in g/L
+    gas_density = 0.089
     p_gas = 10.0 * ut.MPa
     bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, 430.0,
                                 [p_gas, p_gas],
@@ -363,7 +488,6 @@ def main():
     bc_equilibrium = momBC.BcHandler(mom_eq)
     for bc in [bc_west, bc_bottom, bc_south, bc_east, bc_north, bc_top, bc_cavern]:
         bc_equilibrium.add_boundary_condition(bc)
-
     mom_eq.set_boundary_conditions(bc_equilibrium)
 
     output_folder_equilibrium = os.path.join(output_folder, "equilibrium")
@@ -377,9 +501,7 @@ def main():
     output_mom.add_output_field("sig", "Stress (Pa)")
     output_mom.add_output_field("p_elems", "Mean stress (Pa)")
     output_mom.add_output_field("q_elems", "Von Mises stress (Pa)")
-    outputs = [output_mom]
-
-    sim = sf.Simulator_M(mom_eq, tc_equilibrium, outputs, True)
+    sim = sf.Simulator_M(mom_eq, tc_equilibrium, [output_mom], True)
     sim.run()
 
     # ===== OPERATION STAGE =====
@@ -393,43 +515,57 @@ def main():
     m = -0.5 * to.ones(mom_eq.n_elems)
     gamma = 0.095 * to.ones(mom_eq.n_elems)
     alpha_0 = 0.0022 * to.ones(mom_eq.n_elems)
-    sigma_t = 1.5 * to.ones(mom_eq.n_elems)
+    sigma_t = 5.0 * to.ones(mom_eq.n_elems)
     desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n, beta_1, beta, m, gamma, sigma_t, alpha_0, "desai")
 
     stress_to = ut.numpy2torch(mom_eq.sig.x.array.reshape((mom_eq.n_elems, 3, 3)))
     desai.compute_initial_hardening(stress_to, Fvp_0=0.0)
-
     mat.add_to_non_elastic(desai)
     mom_eq.set_material(mat)
 
-    OPERATION_DAYS = 70
-    SCHEDULE_MODE = "stretch" # "repeat" or "stretch"
-    dt_hours = 2
+    # --- operation settings ---
+    OPERATION_DAYS = 100
+    SCHEDULE_MODE = "stretch"     # "repeat" or "stretch"
+    N_CYCLES = 5
+    PRESSURE_SCENARIO = "irregular"
 
-    tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
-                                     final_time=OPERATION_DAYS*24.0,
-                                     time_unit="hour")
+    # Variable-dt controls (seconds)
+    DT_FINE_H = 0.2     # used to sample/define the pressure schedule 
+    DT_COARSE_H = 2.0   # max timestep away from steep parts
+    MAX_DP_MPA = 0.2   # max pressure change per step (tune if needed)
 
-    PRESSURE_SCENARIO = "sinus"
+    # Base controller used for schedule construction (fixed dt, fine)
+    tc_schedule = sf.TimeController(
+        dt=DT_FINE_H,
+        initial_time=0.0,
+        final_time=OPERATION_DAYS * 24.0,
+        time_unit="hour"
+    )
 
+    # --- build pressure schedule arrays (same as before, sampled at DT_FINE_H) ---
     if PRESSURE_SCENARIO == "linear":
+        p_min_MPa = 7.0
+        p_max_MPa = 10.0
         base_times_h = [0.0, 2.0, 14.0, 16.0, 24.0]
-        base_pressures_MPa = [10.0, 7.0, 7.0, 10.0, 10.0]
+        base_pressures_MPa = [p_max_MPa, p_min_MPa, p_min_MPa, p_max_MPa, p_max_MPa]
         t_pressure, p_pressure = build_linear_schedule_multi(
-            tc_operation,
+            tc_schedule,
             base_times_h, base_pressures_MPa,
-            days=OPERATION_DAYS, mode=SCHEDULE_MODE,
-            resample_at_dt=True
+            days=OPERATION_DAYS,
+            mode=SCHEDULE_MODE,
+            resample_at_dt=True,
+            total_cycles=N_CYCLES
         )
 
     elif PRESSURE_SCENARIO == "sinus":
         p_mean = 10.0 * ut.MPa
         p_ampl = 3.0 * ut.MPa
         t_pressure, p_pressure = build_sinus_schedule_multi(
-            tc_operation,
+            tc_schedule,
             p_mean=p_mean, p_ampl=p_ampl,
             days=OPERATION_DAYS, mode=SCHEDULE_MODE,
             daily_period_hours=24.0,
+            total_cycles=N_CYCLES,
             clamp_min=0.0, clamp_max=None
         )
 
@@ -439,18 +575,34 @@ def main():
         base_pressures_MPa = [10.0, 12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4,
                               9.3, 10.7, 8.9, 11.6, 9.5, 10.2, 11.0]
         t_pressure, p_pressure = build_irregular_schedule_multi(
-            tc_operation,
+            tc_schedule,
             base_waypoints_h=base_waypoints_h,
             base_pressures_MPa=base_pressures_MPa,
             days=OPERATION_DAYS, mode=SCHEDULE_MODE,
             smooth=0.25, clamp_min=0.0, clamp_max=None,
-            resample_at_dt=True
+            resample_at_dt=True,
+            total_cycles=N_CYCLES
         )
-
     else:
         raise ValueError(f"Unknown PRESSURE_SCENARIO: {PRESSURE_SCENARIO}")
 
-    # Operation BCs
+    # --- build variable time grid based on dp-per-step limit ---
+    t_arr = np.asarray(t_pressure, dtype=float)
+    p_arr = np.asarray(p_pressure, dtype=float)
+
+    def p_of_t(t):
+        return float(np.interp(t, t_arr, p_arr))
+
+    time_list = build_time_list_by_dp_limit(
+        tc_schedule.t_final,
+        p_of_t,
+        dt_min=DT_FINE_H * ut.hour,
+        dt_max=DT_COARSE_H * ut.hour,
+        dp_max=MAX_DP_MPA * ut.MPa
+    )
+    tc_operation = TimeControllerFromList(time_list)
+
+    # --- operation boundary conditions ---
     bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_operation.t_final])
     bc_bottom = momBC.DirichletBC("Bottom", 2, [0.0, 0.0], [0.0, tc_operation.t_final])
     bc_south = momBC.DirichletBC("South", 1, [0.0, 0.0], [0.0, tc_operation.t_final])
@@ -468,16 +620,15 @@ def main():
                              [0.0, tc_operation.t_final],
                              g=g_vec[2])
     bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, 430.0,
-                                p_pressure,
-                                t_pressure,
+                                list(p_arr), list(t_arr),
                                 g=g_vec[2])
 
     bc_operation = momBC.BcHandler(mom_eq)
     for bc in [bc_west, bc_bottom, bc_south, bc_east, bc_north, bc_top, bc_cavern]:
         bc_operation.add_boundary_condition(bc)
-
     mom_eq.set_boundary_conditions(bc_operation)
 
+    # output + save schedule JSON (as before)
     output_folder_operation = os.path.join(output_folder, "operation")
     if MPI.COMM_WORLD.rank == 0:
         print(output_folder_operation)
@@ -486,15 +637,18 @@ def main():
         "scenario": PRESSURE_SCENARIO,
         "mode": SCHEDULE_MODE,
         "operation_days": OPERATION_DAYS,
-        "t_values": [float(t) for t in t_pressure],
-        "p_values": [float(p) for p in p_pressure],
+        "t_values": [float(t) for t in t_arr],
+        "p_values": [float(p) for p in p_arr],
+        "dt_fine_hours": float(DT_FINE_H),
+        "dt_coarse_hours": float(DT_COARSE_H),
+        "max_dp_MPa": float(MAX_DP_MPA),
+        "n_time_steps_variable_dt": int(len(time_list)),
     }
-
     os.makedirs(output_folder, exist_ok=True)
-    with open(os.path.join(output_folder, "pressure_schedule.json"), 'w') as f:
+    with open(os.path.join(output_folder, "pressure_schedule.json"), "w") as f:
         json.dump(pressure_data, f, indent=2)
 
-    # Operation outputs – use sparse saver (every 15th step)
+    # Operation outputs – sparse saver
     output_mom_op = SparseSaveFields(mom_eq, interval=15)
     output_mom_op.set_output_folder(output_folder_operation)
     output_mom_op.add_output_field("u", "Displacement (m)")
@@ -503,13 +657,13 @@ def main():
     output_mom_op.add_output_field("alpha", "Hardening parameter (-)")
     output_mom_op.add_output_field("Fvp", "Yield function (-)")
     output_mom_op.add_output_field("p_elems", "Mean stress (Pa)")
+    output_mom_op.add_output_field("p_nodes", "Mean stress (Pa) (nodes)")
     output_mom_op.add_output_field("q_elems", "Von Mises stress (Pa)")
     output_mom_op.add_output_field("sig", "Stress (Pa)")
-    outputs_op = [output_mom_op]
 
-    sim_op = sf.Simulator_M(mom_eq, tc_operation, outputs_op, False)
+    sim_op = sf.Simulator_M(mom_eq, tc_operation, [output_mom_op], False)
     sim_op.run()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

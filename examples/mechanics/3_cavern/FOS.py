@@ -12,62 +12,52 @@ MPa = 1e6
 # Units
 MPa = 1e6
 
-def q_dil_rd(p_MPa, psi,
-             D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):
-    """
-    Compute q_dil(p, psi) in MPa for the Rider–Dieterich dilatancy boundary.
-
-    p_MPa : mean stress in MPa, compression-positive (zoals in je plots)
-    psi   : Lode angle in radians (zelfde definitie als in je slide)
-    """
+def q_dil_rd(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0): # tensile strenght is changed from 1.5 to 5 to stay consistent with the desai model
     p = np.asarray(p_MPa, dtype=float)
     psi = np.asarray(psi, dtype=float)
 
-    # I1 in MPa (let op: jouw conventie p>0 in compressie)
-    I1 = 3.0 * p  # MPa
-
-    # sign-truc zoals in de literatuur
+    I1 = 3.0 * p
     sgn = np.sign(I1)
     sgn[sgn == 0.0] = 1.0
 
     denom = (np.sqrt(3.0) * np.cos(psi) - D2 * np.sin(psi))
-    sqrtJ2 = D1 * ((I1 / (sgn * sigma_ref)) ** m) / denom + T0  # MPa
+    # Prevent blow-up if denom gets very small
+    denom = np.where(np.abs(denom) < 1e-12, np.sign(denom) * 1e-12, denom)
 
-    q = np.sqrt(3.0) * sqrtJ2  # MPa
+    sqrtJ2 = D1 * ((I1 / (sgn * sigma_ref)) ** m) / denom + T0
+    q = np.sqrt(3.0) * sqrtJ2
     return q
 
 
 
-def compute_lode_angle_from_sigma(sig_Pa):
-    """
-    sig_Pa : (ncells, 3, 3) stress tensor in Pa
-    returns psi : (ncells,) Lode angle in radians
-    """
-    # Eigenwaarden (principal total stresses)
-    # omdat sigma symmetrisch is: eigvalsh
-    vals = np.linalg.eigvalsh(sig_Pa)   # shape (ncells, 3)
-    s1, s2, s3 = vals[:, 2], vals[:, 1], vals[:, 0]  # geordend 
 
-    # deviatorische principalen
+def compute_lode_angle_from_sigma(sig_Pa):
+    # Enforce symmetry per cell (robust against tiny numerical asymmetry)
+    sig = 0.5 * (sig_Pa + np.swapaxes(sig_Pa, -1, -2))
+
+    vals = np.linalg.eigvalsh(sig)
+    s1, s2, s3 = vals[:, 2], vals[:, 1], vals[:, 0]
+
     I1 = s1 + s2 + s3
     mean = I1 / 3.0
     s1d = s1 - mean
     s2d = s2 - mean
     s3d = s3 - mean
 
-    # invarianten J2, J3 van deviatorische spanningen
     J2 = (1.0 / 6.0) * ((s1d - s2d) ** 2 + (s2d - s3d) ** 2 + (s3d - s1d) ** 2)
     J3 = s1d * s2d * s3d
 
-    # vermijd deling door nul
     tiny = 1e-30
     J2_safe = np.maximum(J2, tiny)
 
-    arg = - (np.sqrt(27.0) / 2.0) * J3 / (J2_safe ** 1.5)
-    arg = np.clip(arg, -1.0, 1.0)
+    x = (3.0 * np.sqrt(3.0) / 2.0) * (J3 / (J2_safe ** 1.5))
+    x = np.clip(x, -1.0, 1.0)
 
-    psi = (1.0 / 3.0) * np.arccos(arg) # Later checken of je hier niet Sinus moet nemen!!!
+    theta = (1.0 / 3.0) * np.arccos(x)   # <-- FIXED
+    psi = theta - np.pi / 6.0            # map to [-pi/6, +pi/6]
     return psi
+
+
 
 
 
@@ -149,18 +139,16 @@ def compute_FOS_with_lode(p_MPa, q_MPa, sig_Pa_series):
 
 
 
-# ---------------------------------------------------------------------
-# Write FOS as DG0 cell field to XDMF using mesh from p_elems.xdmf
-# ---------------------------------------------------------------------
-def write_FOS(operation_folder, time_list, FOS, mesh_source_xdmf):
-    print("Writing FOS field...\n")
-
-    # Mesh uit p_elems.xdmf halen (die heeft p_elems.h5 ernaast)
-    with do.io.XDMFFile(MPI.COMM_WORLD, mesh_source_xdmf, "r") as xdmf:
+def write_FOS_serial(operation_folder, time_list, FOS, mesh_source_xdmf):
+    """
+    Serial writer: reads mesh and writes XDMF with COMM_SELF.
+    Works even if the simulation was run in parallel.
+    """
+    # Read mesh in SERIAL communicator
+    with do.io.XDMFFile(MPI.COMM_SELF, mesh_source_xdmf, "r") as xdmf:
         mesh = xdmf.read_mesh()
         mesh.name = "mesh"
 
-    # ⬇️ HIER zit de bug – gebruik functionspace i.p.v. FunctionSpace
     V = do.fem.functionspace(mesh, ("DG", 0))
     fos_fun = do.fem.Function(V)
     fos_fun.name = "FOS"
@@ -169,35 +157,35 @@ def write_FOS(operation_folder, time_list, FOS, mesh_source_xdmf):
     os.makedirs(fos_folder, exist_ok=True)
     fos_path = os.path.join(fos_folder, "FOS.xdmf")
 
-    with do.io.XDMFFile(MPI.COMM_WORLD, fos_path, "w") as xdmf_out:
+    # Write in SERIAL communicator
+    with do.io.XDMFFile(MPI.COMM_SELF, fos_path, "w") as xdmf_out:
         xdmf_out.write_mesh(mesh)
-
-        nt = len(time_list)
         for it, t in enumerate(time_list):
-            # FOS heeft vorm (nt, ncells); DG0 heeft 1 dof per cel
-            fos_fun.x.array[:] = FOS[it, :]
+            fos_fun.x.array[:] = FOS[it, :]  # now DG0 dofs == global ncells in serial mesh
             xdmf_out.write_function(fos_fun, float(t))
 
-    if MPI.COMM_WORLD.rank == 0:
-        print(f"FOS written to: {fos_path}")
+    print(f"FOS written to: {fos_path}")
+
 
 
 
 
 def main():
+    # Only rank 0 postprocesses (MPI-safe, simplest)
+    if MPI.COMM_WORLD.rank != 0:
+        return
+
     base_folder = os.path.join("output", "case_sinus_70days_irregular", "operation")
 
-    if MPI.COMM_WORLD.rank == 0:
-        print("Loading stresses...")
+    print("Loading stresses...")
     time_list, p_MPa, q_MPa, sig_vals, p_source = load_p_q_sig(base_folder)
 
-    if MPI.COMM_WORLD.rank == 0:
-        print("Computing FOS with Lode angle...")
+    print("Computing FOS with Lode angle...")
     FOS = compute_FOS_with_lode(p_MPa, q_MPa, sig_vals)
 
-    if MPI.COMM_WORLD.rank == 0:
-        print("Writing FOS field...")
-    write_FOS(base_folder, time_list, FOS, p_source)
+    print("Writing FOS field...")
+    write_FOS_serial(base_folder, time_list, FOS, p_source)
+
 
 
 if __name__ == "__main__":
