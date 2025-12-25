@@ -222,8 +222,9 @@ def plot_pressure_schedule(ax, output_folder):
         t_values = np.array(data["t_values"]) / hour  # sec -> hours
         p_values = np.array(data["p_values"]) / MPa   # Pa  -> MPa
         
-        ax.plot(t_values, p_values, "-o", color="darkred",
-                linewidth=2.0, markersize=6, label="Pressure schedule")
+        ax.plot(t_values, p_values, "-", color="darkred", linewidth=0.8, label="Pressure schedule")
+        ax.plot(t_values[::50], p_values[::50], "o", color="darkred", markersize=2)
+
         # marker showing current time step (start at t=0)
         marker = ax.scatter(t_values[0], p_values[0],
                             c="white", edgecolors="black", zorder=10000)
@@ -325,6 +326,7 @@ class StressPath():
             idx = post.find_closest_point(probe, self.points)
             self.p_probes[i,:] = -self.p_elems[:, idx] / MPa
             self.q_probes[i,:] = self.q_elems[:,idx]/MPa
+
 
 
 
