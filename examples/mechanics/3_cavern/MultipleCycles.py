@@ -388,7 +388,7 @@ def main():
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_irregular(5)_100days_irregular_original")
+    output_folder = os.path.join("output", "case_irregular(4)_100days_irregular_original")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
