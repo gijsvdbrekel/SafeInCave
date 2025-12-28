@@ -7,8 +7,8 @@
 // *** VOLUME CORRECTION APPLIED ***
 // Additional scaling: 0.758345 to reach 600k m³
 //
-coarse_size = 65;
-fine_size = 1;
+coarse_size = 30;
+fine_size = 2;
 
 Lz = 660.0;
 Ly = 450.0;

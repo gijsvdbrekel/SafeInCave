@@ -4,8 +4,8 @@
 // Full 3D geometry (no symmetry)
 //////////////////////////////////////////////////////////////
 
-size_coarse = 65;
-size_fine   = 1;
+size_coarse = 30;
+size_fine   = 2;
 
 Lz = 660;
 Ly = 450;
