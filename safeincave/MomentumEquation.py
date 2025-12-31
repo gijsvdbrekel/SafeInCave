@@ -893,15 +893,6 @@ class LinearMomentum(LinearMomentumBase):
         """
         self.u = self.X
 
-	# def compute_p_nodes(self) -> do.fem.Function:
-	# 	self.p_nodes = project(ufl.tr(self.sig)/3, self.CG1_1)
-
-	# def compute_p_elems(self) -> do.fem.Function:
-	# 	# self.p_elems = project(ufl.tr(self.sig)/3, self.DG0_1)
-	# 	stress_to = numpy2torch(self.sig.x.array.reshape((self.n_elems, 3, 3)))
-	# 	p_to = to.einsum("kii->k", stress_to)
-	# 	self.p_elems.x.array[:] = to.flatten(p_to)
-
     def compute_p_nodes(self) -> None:
         """
         Compute nodal pressure ``p = tr(σ)/3`` via node-element averaging.
@@ -992,9 +983,8 @@ class LinearMomentum(LinearMomentumBase):
 
 
 
-
-class LinearMomentumP1P1_Stab_E(LinearMomentumBase):
-    def __init__(self, grid, theta, stab_scaling: float = 0.0):
+class LinearMomentumMixed(LinearMomentumBase):
+    def __init__(self, grid, theta, stab_method: str="stab_E_star", stab_scaling: float=1.0):
         super().__init__(grid, theta)
         Vue = basix.ufl.element("CG", self.grid.mesh.basix_cell(), 1, shape=(3,))   # displacement finite element
         Vpe = basix.ufl.element("CG", self.grid.mesh.basix_cell(), 1)               # mean stress finite element
@@ -1003,7 +993,15 @@ class LinearMomentumP1P1_Stab_E(LinearMomentumBase):
         self.create_trial_test_functions()
         self.create_normal()
         self.create_solution_vector()
-        self.calculate_h(stab_scaling)
+
+        assert stab_scaling >= 0.0, "stab_scaling must be >= 0.0"
+        if stab_scaling == 0.0:
+            pass
+        else:
+            self.calculate_h(stab_scaling)
+
+        assert stab_method in ["stab_E", "stab_E_star"], "stab_method must be stab_E or stab_E_star"
+        self.stab_method = stab_method
 
     def calculate_h(self, stab_scaling: float = 0.0) -> None:
         model_h = ModelML()
@@ -1105,7 +1103,19 @@ class LinearMomentumP1P1_Stab_E(LinearMomentumBase):
         return self.p_elems
 
     def compute_moduli(self, stress_to):
-        pass
+        if self.stab_method == "stab_E":
+            pass
+        else:
+            strain_to = self.compute_total_strain()
+            principal_stresses = to.linalg.eigvalsh(stress_to)
+            principal_strains = to.linalg.eigvalsh(strain_to)
+            sigma_1 = principal_stresses[:,0]
+            sigma_2 = principal_stresses[:,1]
+            sigma_3 = principal_stresses[:,2]
+            epsil_1 = principal_strains[:,0]
+            nu = self.mat.elems_e[0].nu
+            E_star_1 = (sigma_1 - nu*(sigma_2 + sigma_3))/epsil_1
+            self.E_star.x.array[:] = E_star_1
 
     def solve_elastic_response(self):
         # Build bilinear form
@@ -1188,21 +1198,3 @@ class LinearMomentumP1P1_Stab_E(LinearMomentumBase):
         self.p_k.x.scatter_forward()
 
         self.run_after_solve()
-
-
-
-class LinearMomentumP1P1_Stab_E_Star(LinearMomentumP1P1_Stab_E):
-    def __init__(self, grid, theta, stab_scaling: float=1.0):
-        super().__init__(grid, theta, stab_scaling)
-
-    def compute_moduli(self, stress_to):
-        strain_to = self.compute_total_strain()
-        principal_stresses = to.linalg.eigvalsh(stress_to)
-        principal_strains = to.linalg.eigvalsh(strain_to)
-        sigma_1 = principal_stresses[:,0]
-        sigma_2 = principal_stresses[:,1]
-        sigma_3 = principal_stresses[:,2]
-        epsil_1 = principal_strains[:,0]
-        nu = self.mat.elems_e[0].nu
-        E_star_1 = (sigma_1 - nu*(sigma_2 + sigma_3))/epsil_1
-        self.E_star.x.array[:] = E_star_1
