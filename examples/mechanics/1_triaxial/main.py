@@ -6,7 +6,7 @@ import dolfinx as do
 import os
 import torch as to
 
-class LinearMomentumP1(sf.LinearMomentum):
+class LinearMomentumMod(sf.LinearMomentum):
 	def __init__(self, grid, theta):
 		super().__init__(grid, theta)
 		self.Fvp = do.fem.Function(self.DG0_1)
@@ -21,24 +21,9 @@ class LinearMomentumP1(sf.LinearMomentum):
 		self.Fvp.x.array[:] = self.mat.elems_ne[2].Fvp
 
 
-class LinearMomentumP1P1_Stab_E(sf.LinearMomentumP1P1_Stab_E):
-	def __init__(self, grid, theta, stab_scaling=0):
-		super().__init__(grid, theta)
-		self.Fvp = do.fem.Function(self.DG0_1)
-		self.eps_ve = do.fem.Function(self.DG0_3x3)
-		self.eps_cr = do.fem.Function(self.DG0_3x3)
-		self.eps_vp = do.fem.Function(self.DG0_3x3)
-
-	def run_after_solve(self):
-		self.eps_ve.x.array[:] = to.flatten(self.mat.elems_ne[0].eps_ne_k)
-		self.eps_cr.x.array[:] = to.flatten(self.mat.elems_ne[1].eps_ne_k)
-		self.eps_vp.x.array[:] = to.flatten(self.mat.elems_ne[2].eps_ne_k)
-		self.Fvp.x.array[:] = self.mat.elems_ne[2].Fvp
-
-
-class LinearMomentumP1P1_Stab_E_Star(sf.LinearMomentumP1P1_Stab_E_Star):
-	def __init__(self, grid, theta, stab_scaling=0):
-		super().__init__(grid, theta)
+class LinearMomentumMixedMod(sf.LinearMomentumMixed):
+	def __init__(self, grid, theta, stab_method, stab_scaling=1.0):
+		super().__init__(grid, theta, stab_method, stab_scaling)
 		self.Fvp = do.fem.Function(self.DG0_1)
 		self.eps_ve = do.fem.Function(self.DG0_3x3)
 		self.eps_cr = do.fem.Function(self.DG0_3x3)
@@ -64,22 +49,23 @@ def run(formulation):
 	unit = "hour"
 	t_0 = 0.0
 	dt = 0.5
-	t_final = 6
+	t_final = 24
 	t_control = sf.TimeController(dt=dt, initial_time=t_0, final_time=t_final, time_unit=unit)
 
 	# Define momentum equation
+	theta = 0.5
 	if formulation == "P1":
-		mom_eq = LinearMomentumP1(grid, theta=0.5)
+		mom_eq = LinearMomentumMod(grid, theta=theta)
 	elif formulation == "P1P1":
-		mom_eq = LinearMomentumP1P1_Stab_E(grid, theta=0.5, stab_scaling=0.0)
+		mom_eq = LinearMomentumMixedMod(grid, theta=theta, stab_method="stab_E", stab_scaling=0.0)
 	elif formulation == "P1P1_Stab_E":
-		mom_eq = LinearMomentumP1P1_Stab_E(grid, theta=0.5, stab_scaling=1.0)
+		mom_eq = LinearMomentumMixedMod(grid, theta=theta, stab_method="stab_E", stab_scaling=1.0)
 	elif formulation == "P1P1_Stab_E_Star":
-		mom_eq = LinearMomentumP1P1_Stab_E_Star(grid, theta=0.5, stab_scaling=1.0)
+		mom_eq = LinearMomentumMixedMod(grid, theta=theta, stab_method="stab_E_star", stab_scaling=1.0)
 
 	# Define solver
 	mom_solver = PETSc.KSP().create(grid.mesh.comm)
-	mom_solver.setType("bicg")
+	mom_solver.setType("gmres")
 	mom_solver.getPC().setType("asm")
 	mom_solver.setTolerances(rtol=1e-12, max_it=100)
 	mom_eq.set_solver(mom_solver)
@@ -208,10 +194,10 @@ def run(formulation):
 
 
 def main():
-	# run("P1")
+	run("P1")
 	# run("P1P1")
 	# run("P1P1_Stab_E")
-	run("P1P1_Stab_E_Star")
+	# run("P1P1_Stab_E_Star")
 
 
 if __name__ == '__main__':
