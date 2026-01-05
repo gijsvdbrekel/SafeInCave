@@ -31,11 +31,20 @@ def run(formulation):
 	if formulation == "P1":
 		mom_eq = sf.LinearMomentum(grid, theta=theta)
 	elif formulation == "P1P1":
-		mom_eq = sf.LinearMomentumMixed(grid, theta=theta, stab_method="stab_E", stab_scaling=0.0)
+		mom_eq = sf.LinearMomentumMixed(grid,
+										theta=theta,
+										stab_method="stab_E",
+										stab_scaling=0.0)
 	elif formulation == "P1P1_Stab_E":
-		mom_eq = sf.LinearMomentumMixed(grid, theta=theta, stab_method="stab_E", stab_scaling=1.0)
+		mom_eq = sf.LinearMomentumMixed(grid,
+										theta=theta,
+										stab_method="stab_E",
+										stab_scaling=1.0)
 	elif formulation == "P1P1_Stab_E_Star":
-		mom_eq = sf.LinearMomentumMixed(grid, theta=theta, stab_method="stab_E_star", stab_scaling=1.0)
+		mom_eq = sf.LinearMomentumMixed(grid,
+										theta=theta,
+										stab_method="stab_E_star",
+										stab_scaling=1.0)
 
 	# Define solver
 	mom_solver = PETSc.KSP().create(grid.mesh.comm)
@@ -105,16 +114,24 @@ def run(formulation):
 	mom_eq.set_T(T0_field)
 
 	# Time settings for equilibrium stage
-	tc_eq = sf.TimeControllerParabolic(n_time_steps=20, initial_time=0.0, final_time=5, time_unit="day")
-	# tc_eq = sf.TimeController(dt=0.1, final_time=5, initial_time=0.0, time_unit="day")
+	tc_eq = sf.TimeControllerParabolic(n_time_steps=20,
+										initial_time=0.0,
+										final_time=5,
+										time_unit="day")
 
 	# Boundary conditions
 	bc_equilibrium = momBC.BcHandler(mom_eq)
 
 	# Apply Dirichlet boundary conditions
-	boundaries = [("West_salt", 0), ("West_ovb", 0), ("East_salt", 0), ("East_ovb", 0), 
-				  ("South_salt", 1), ("South_ovb", 1), ("North_salt", 1), ("North_ovb", 1),
-				  ("Bottom", 2)]
+	boundaries = [("West_salt", 0),
+					("West_ovb", 0),
+					("East_salt", 0),
+					("East_ovb", 0), 
+				  	("South_salt", 1),
+					("South_ovb", 1),
+					("North_salt", 1),
+					("North_ovb", 1),
+				  	("Bottom", 2)]
 	for b_name, component in boundaries:
 		bc = momBC.DirichletBC(boundary_name=b_name, component=component, values=[0.0, 0.0], time_values=[0.0, tc_eq.t_final])
 		bc_equilibrium.add_boundary_condition(bc)
