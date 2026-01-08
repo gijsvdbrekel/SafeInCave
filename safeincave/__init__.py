@@ -13,7 +13,7 @@ __version__ = "2.1.0"
 
 from .Grid import GridHandlerGMSH
 from .HeatEquation import HeatDiffusion
-from .MomentumEquation import LinearMomentumBase, LinearMomentum, LinearMomentumMixed, LinearMomentumP1P1_Stab_E, LinearMomentumP1P1_Stab_E_Star
+from .MomentumEquation import LinearMomentumBase, LinearMomentum, LinearMomentumMixed
 from .MaterialProps import Material, NonElasticElement, Spring, Thermoelastic, Viscoelastic, DislocationCreep, PressureSolutionCreep, ViscoplasticDesai
 from .OutputHandler import SaveFields
 from .Simulators import Simulator_TM, Simulator_T, Simulator_M, Simulator_GUI
@@ -32,8 +32,6 @@ __all__ = [
     "LinearMomentumBase",
     "LinearMomentum",
     "LinearMomentumMixed",
-    "LinearMomentumP1P1_Stab_E",
-    "LinearMomentumP1P1_Stab_E_Star",
     "Material",
     "NonElasticElement",
     "Spring",
