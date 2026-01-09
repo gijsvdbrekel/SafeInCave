@@ -341,3 +341,22 @@ def create_field_elems(grid: GridHandlerGMSH, fun: Fn) -> to.Tensor:
 		x = sum(coordinates[v] for v in cell_vertices) / len(cell_vertices)
 		field[i] = fun(x[0], x[1], x[2])
 	return field
+
+
+def apply_grey_theme(fig, axes, transparent=True, grid_color="0.92", back_color='0.85'):
+	fig.patch.set_facecolor("#212121ff")
+	if transparent:
+		fig.patch.set_alpha(0.0)
+	for ax in axes:
+		if ax != None:
+			ax.grid(True, color=grid_color)
+			ax.set_axisbelow(True)
+			ax.spines['bottom'].set_color('black')
+			ax.spines['top'].set_color('black')
+			ax.spines['right'].set_color('black')
+			ax.spines['left'].set_color('black')
+			ax.tick_params(axis='x', colors='black', which='both')
+			ax.tick_params(axis='y', colors='black', which='both')
+			ax.yaxis.label.set_color('black')
+			ax.xaxis.label.set_color('black')
+			ax.set_facecolor(back_color)
