@@ -355,7 +355,7 @@ class Simulator_M(Simulator):
 
 		else:
 			# Calculate total strain
-			eps_tot_to = self.eq_mom.compute_total_strain()
+			eps_tot_to = numpy2torch(self.eq_mom.eps_tot.x.array.reshape((self.eq_mom.n_elems, 3, 3)))
 
 			# Retrieve stress
 			stress_to = numpy2torch(self.eq_mom.sig.x.array.reshape((self.eq_mom.n_elems, 3, 3)))

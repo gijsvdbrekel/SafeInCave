@@ -548,23 +548,23 @@ class NonElasticElement(ABC):
         Tangent-like operator (N, 6, 6) assembled in `compute_G_B`.
     """
     def __init__(self, n_elems):
-    	self.n_elems = n_elems
-    	self.eps_ne_rate = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
-    	self.eps_ne_rate_old = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
-    	self.eps_ne_old = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
-    	self.eps_ne_k = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
-    	self.B = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
-    	self.G = to.zeros((self.n_elems, 6, 6), dtype=to.float64)
+        self.n_elems = n_elems
+        self.eps_ne_rate = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
+        self.eps_ne_rate_old = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
+        self.eps_ne_old = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
+        self.eps_ne_k = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
+        self.B = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
+        self.G = to.zeros((self.n_elems, 6, 6), dtype=to.float64)
 
     @abstractmethod
     def compute_eps_ne_rate(self, stress_vec: to.Tensor, phi1: float, Temp: to.Tensor, return_eps_ne: bool=False) -> None:
-    	pass
+        pass
 
     def increment_internal_variables(self, *args) -> None:
-    	pass
+        pass
 
     def update_internal_variables(self, *args) -> None:
-    	pass
+        pass
 
     def compute_eps_ne_k(self, phi1: float, phi2: float) -> None:
         """
@@ -648,13 +648,13 @@ class NonElasticElement(ABC):
         c2 = 2.0
         magic_indexes = [(0,0,0,c1), (1,1,1,c1), (2,2,2,c1), (0,1,3,c2), (0,2,4,c2), (1,2,5,c2)]
         for i, j, k, phi in magic_indexes:
-        	stress_eps[:,i,j] += EPSILON
-        	eps_A = self.compute_eps_ne_rate(stress_eps, phi1, Temp, return_eps_ne=True)
-        	stress_eps[:,i,j] -= EPSILON
-        	stress_eps[:,i,j] -= EPSILON
-        	eps_B = self.compute_eps_ne_rate(stress_eps, phi1, Temp, return_eps_ne=True)
-        	stress_eps[:,i,j] += EPSILON
-        	E[:,:,k] = phi*(eps_A[:,[0,1,2,0,0,1],[0,1,2,1,2,2]] - eps_B[:,[0,1,2,0,0,1],[0,1,2,1,2,2]]) / (2*EPSILON)
+            stress_eps[:,i,j] += EPSILON
+            eps_A = self.compute_eps_ne_rate(stress_eps, phi1, Temp, return_eps_ne=True)
+            stress_eps[:,i,j] -= EPSILON
+            stress_eps[:,i,j] -= EPSILON
+            eps_B = self.compute_eps_ne_rate(stress_eps, phi1, Temp, return_eps_ne=True)
+            stress_eps[:,i,j] += EPSILON
+            E[:,:,k] = phi*(eps_A[:,[0,1,2,0,0,1],[0,1,2,1,2,2]] - eps_B[:,[0,1,2,0,0,1],[0,1,2,1,2,2]]) / (2*EPSILON)
         return E
 
     def compute_B_and_H_over_h(self, stress: to.Tensor, dt: float, theta: float, Temp: to.Tensor) -> None:
@@ -797,7 +797,7 @@ class Viscoelastic(NonElasticElement):
     eta, E, nu : torch.Tensor
         Material parameters, shape (N,).
     """
-    def __init__(self, eta: to.Tensor, E: to.Tensor, nu: to.Tensor, name: bool="kelvin_voigt"):
+    def __init__(self, eta: to.Tensor, E: to.Tensor, nu: to.Tensor, name: str="kelvin_voigt"):
         super().__init__(E.shape[0])
         self.eta = eta
         self.E = E
@@ -837,9 +837,9 @@ class Viscoelastic(NonElasticElement):
         """
         eps_ne_rate = dotdot_torch(self.G, stress_vec - dotdot_torch(self.C1, self.eps_ne_old + phi1*self.eps_ne_rate_old))
         if return_eps_ne:
-        	return eps_ne_rate.clone()
+            return eps_ne_rate.clone()
         else:
-        	self.eps_ne_rate = eps_ne_rate.clone()
+            self.eps_ne_rate = eps_ne_rate.clone()
 
     def compute_E(self, stress: to.Tensor, dt: float, theta: float, Temp: to.Tensor) -> to.Tensor:
         """
@@ -868,6 +868,19 @@ class Viscoelastic(NonElasticElement):
         return E
 
 
+class LinearDashpot(NonElasticElement):
+    def __init__(self, A: to.Tensor, name: str="dashpot"):
+        super().__init__(A.shape[0])
+        self.A = A
+        self.name = name
+
+    def compute_eps_ne_rate(self, stress_vec: to.Tensor, phi1: float, Temp: to.Tensor, return_eps_ne: bool=False):
+        eps_rate = self.A[:,None,None]*stress_vec
+        if return_eps_ne:
+            return eps_rate
+        else:
+            self.eps_ne_rate = eps_rate
+
 
 
 class DislocationCreep(NonElasticElement):
@@ -893,7 +906,7 @@ class DislocationCreep(NonElasticElement):
     A, Q, n : torch.Tensor
         Material parameters, shape (N,).
     """
-    def __init__(self, A: to.Tensor, Q: to.Tensor, n: to.Tensor, name: bool="creep"):
+    def __init__(self, A: to.Tensor, Q: to.Tensor, n: to.Tensor, name: str="creep"):
         super().__init__(A.shape[0])
         self.R = 8.32
         self.Q = Q
@@ -939,9 +952,9 @@ class DislocationCreep(NonElasticElement):
         A_bar = self.A*to.exp(-self.Q/self.R/Temp)*q_vm**(self.n - 1)
         eps_rate = A_bar[:,None,None]*dev
         if return_eps_ne:
-        	return eps_rate
+            return eps_rate
         else:
-        	self.eps_ne_rate = eps_rate
+            self.eps_ne_rate = eps_rate
 
 
 class PressureSolutionCreep(NonElasticElement):
@@ -967,7 +980,7 @@ class PressureSolutionCreep(NonElasticElement):
     A, Q, d : torch.Tensor
         Material parameters, shape (N,).
     """
-    def __init__(self, A: to.Tensor, d: to.Tensor, Q: to.Tensor, name: bool="creep"):
+    def __init__(self, A: to.Tensor, d: to.Tensor, Q: to.Tensor, name: str="creep"):
         super().__init__(A.shape[0])
         self.R = 8.32
         self.Q = Q
@@ -1053,7 +1066,7 @@ class ViscoplasticDesai(NonElasticElement):
 						gamma: to.Tensor,
 						sigma_t: to.Tensor,
 						alpha_0: to.Tensor,
-						name: bool="desai"):
+						name: str="desai"):
         super().__init__(mu_1.shape[0])
         self.name = name
         self.mu_1 = mu_1
@@ -1272,7 +1285,7 @@ class ViscoplasticDesai(NonElasticElement):
         Also updates `self.Fvp` when `return_eps_ne=False`.
         """
         if alpha == None:
-        	alpha = self.alpha
+            alpha = self.alpha
 
         s_xx, s_yy, s_zz, s_xy, s_xz, s_yz = self.extract_stress_components(stress)
         I1, I2, I3, J2, J3, Sr, I1_star, ind_J2_leq_0 = self.compute_stress_invariants(s_xx, s_yy, s_zz, s_xy, s_xz, s_yz)
@@ -1280,7 +1293,7 @@ class ViscoplasticDesai(NonElasticElement):
         # Compute yield function
         Fvp = self.compute_Fvp(alpha, I1_star, J2, Sr)
         if not return_eps_ne:
-        	self.Fvp = Fvp.clone()
+            self.Fvp = Fvp.clone()
 
 
         # Compute flow direction, i.e. d(Fvp)/d(stress)
@@ -1360,11 +1373,11 @@ class ViscoplasticDesai(NonElasticElement):
         ramp_idx = to.where(Fvp > 0)[0]
         lmbda = to.zeros(self.n_elems, dtype=to.float64)
         if len(ramp_idx) != 0:
-        	lmbda[ramp_idx] = self.mu_1[ramp_idx]*(Fvp[ramp_idx]/self.F_0)**self.N_1[ramp_idx]
+            lmbda[ramp_idx] = self.mu_1[ramp_idx]*(Fvp[ramp_idx]/self.F_0)**self.N_1[ramp_idx]
         eps_vp_rate = -dQdS*lmbda[:, None, None]
 
         if return_eps_ne:
-        	return eps_vp_rate
+            return eps_vp_rate
         else:
             self.eps_ne_rate = eps_vp_rate
 
@@ -1411,12 +1424,12 @@ class ViscoplasticDesai(NonElasticElement):
         self.P = to.zeros_like(stress)
         stress_eps = stress.clone()
         for i, j in [(0,0), (1,1), (2,2), (0,1), (0,2), (1,2)]:
-        	stress_eps[:,i,j] += EPSILON_STRESS
-        	eps_ne_rate_eps = self.compute_eps_ne_rate(stress_eps, dt*theta, Temp, return_eps_ne=True)
-        	r_eps = self.compute_residue(eps_ne_rate_eps, self.alpha, dt)
-        	self.P[:,i,j] = (r_eps - self.r) / EPSILON_STRESS
-        	self.P[:,j,i] = self.P[:,i,j]
-        	stress_eps[:,i,j] -= EPSILON_STRESS
+            stress_eps[:,i,j] += EPSILON_STRESS
+            eps_ne_rate_eps = self.compute_eps_ne_rate(stress_eps, dt*theta, Temp, return_eps_ne=True)
+            r_eps = self.compute_residue(eps_ne_rate_eps, self.alpha, dt)
+            self.P[:,i,j] = (r_eps - self.r) / EPSILON_STRESS
+            self.P[:,j,i] = self.P[:,i,j]
+            stress_eps[:,i,j] -= EPSILON_STRESS
 
         H = self.compute_H(Q, self.P)
         H_over_h = H/self.h[:,None,None]

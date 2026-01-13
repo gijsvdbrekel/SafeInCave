@@ -29,8 +29,8 @@ class Test1(unittest.TestCase):
 
 		# Populate u
 		def initial_u(x):
-		    val = x[0]**2 + x[1]**2 + x[2]**2  # x² + y² + z²
-		    return np.array([val, val, val], dtype=np.float64)
+			val = x[0]**2 + x[1]**2 + x[2]**2  # x² + y² + z²
+			return np.array([val, val, val], dtype=np.float64)
 		self.u.interpolate(initial_u)
 
 		self.eps_tensor = to.tensor([[ [1., 4., 5.],
@@ -143,12 +143,12 @@ class Test1(unittest.TestCase):
 		self.assertEqual(eps.ufl_shape, (3,3))
 
 	def test_numpy2torch(self):
-	    a = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)  # not float64 on purpose
-	    t = ut.numpy2torch(a)
-	    assert isinstance(t, to.Tensor)
-	    assert t.dtype == to.float64
-	    assert t.shape == (2, 3)
-	    np.testing.assert_allclose(t.numpy(), a.astype(np.float64))
+		a = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)  # not float64 on purpose
+		t = ut.numpy2torch(a)
+		assert isinstance(t, to.Tensor)
+		assert t.dtype == to.float64
+		assert t.shape == (2, 3)
+		np.testing.assert_allclose(t.numpy(), a.astype(np.float64))
 
 
 class Test2(unittest.TestCase):
@@ -156,12 +156,27 @@ class Test2(unittest.TestCase):
 		self.grid = GridHandlerGMSH("geom", os.path.join("..", "grids", "cube_regions"))
 
 	def test_fields(self):
-		fun = lambda x,y,z: x**2 + y**2 + z**2
-		field_nodes = ut.create_field_nodes(self.grid, fun)
-		field_elems = ut.create_field_elems(self.grid, fun)
+		fun_1x1 = lambda x,y,z: x**2 + y**2 + z**2
+		fun_2x2 = lambda x,y,z: to.tensor([[x, y], [y, z]], dtype=to.float64)
+		fun_3x3 = lambda x,y,z: to.tensor([[x, y, z], [y, z, x], [z, x, y]], dtype=to.float64)
+
+		field_nodes = ut.create_field_nodes(self.grid, fun_1x1)
+		field_elems = ut.create_field_elems(self.grid, fun_1x1)
 		data = ut.read_json(os.path.join("files", "expected_values_equations", "field_nodes_elems.json"))
 		expected_field_nodes = to.tensor(data["field_nodes"], dtype=to.float64)
 		expected_field_elems = to.tensor(data["field_elems"], dtype=to.float64)
-
 		to.testing.assert_close(field_nodes, expected_field_nodes, rtol=1e-4, atol=1e-9)
 		to.testing.assert_close(field_elems, expected_field_elems, rtol=1e-4, atol=1e-9)
+
+		field_elems = ut.create_field_elems(self.grid, fun_2x2)
+		assert field_elems.shape == (self.grid.n_elems, 2, 2)
+
+		field_elems = ut.create_field_elems(self.grid, fun_3x3)
+		assert field_elems.shape == (self.grid.n_elems, 3, 3)
+
+		field_nodes = ut.create_field_nodes(self.grid, fun_2x2)
+		assert field_nodes.shape == (self.grid.n_nodes, 2, 2)
+
+		field_nodes = ut.create_field_nodes(self.grid, fun_3x3)
+		assert field_nodes.shape == (self.grid.n_nodes, 3, 3)
+

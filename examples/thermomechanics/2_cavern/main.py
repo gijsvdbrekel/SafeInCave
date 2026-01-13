@@ -359,9 +359,9 @@ def run(formulation):
 
 
 def main():
-	run("P1")
-	run("P1P1")
-	run("P1P1_Stab_E")
+	# run("P1")
+	# run("P1P1")
+	# run("P1P1_Stab_E")
 	run("P1P1_Stab_E_Star")
 
 
