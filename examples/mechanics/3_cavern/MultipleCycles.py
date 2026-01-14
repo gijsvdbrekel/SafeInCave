@@ -384,11 +384,11 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 def main():
     # Read grid
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_original")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_600")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder
-    output_folder = os.path.join("output", "case_irregular(4)_100days_irregular_original")
+    output_folder = os.path.join("output", "case_sinus(0308)_100days_irregular_600")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -459,7 +459,7 @@ def main():
     bc_bottom = momBC.DirichletBC("Bottom", 2, [0.0, 0.0], [0.0, tc_equilibrium.t_final])
     bc_south = momBC.DirichletBC("South", 1, [0.0, 0.0], [0.0, tc_equilibrium.t_final])
 
-    side_burden = 20.3 * ut.MPa
+    side_burden = 18.2 * ut.MPa
     bc_east = momBC.NeumannBC("East", 2, salt_density, 660.0,
                               [side_burden, side_burden],
                               [0.0, tc_equilibrium.t_final],
@@ -469,15 +469,15 @@ def main():
                                [0.0, tc_equilibrium.t_final],
                                g=g_vec[2])
 
-    over_burden = 20.3 * ut.MPa
+    over_burden = 18.2 * ut.MPa
     bc_top = momBC.NeumannBC("Top", 2, 0.0, 0.0,
                              [over_burden, over_burden],
                              [0.0, tc_equilibrium.t_final],
                              g=g_vec[2])
 
-    gas_density = 0.089  # Hydrogen density in g/L
-    p_gas = 10.0 * ut.MPa
-    bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, 430.0,
+    gas_density = 17.5  # Hydrogen density in g/L at specific T and P conditions
+    p_gas = 14.7 * ut.MPa
+    bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, 360.0,
                                 [p_gas, p_gas],
                                 [0.0, tc_equilibrium.t_final],
                                 g=g_vec[2])
@@ -526,7 +526,7 @@ def main():
 
     OPERATION_DAYS = 100  # 3 years
     SCHEDULE_MODE = "stretch" # "repeat" or "stretch"
-    N_CYCLES = 5
+    N_CYCLES = 8
     dt_hours = 0.2
 
 
@@ -534,11 +534,11 @@ def main():
                                      final_time=OPERATION_DAYS*24.0,
                                      time_unit="hour")
 
-    PRESSURE_SCENARIO = "irregular"
+    PRESSURE_SCENARIO = "sinus"
 
     if PRESSURE_SCENARIO == "linear":
-        p_min = 7.0
-        p_max = 10.0
+        p_min = 8.0
+        p_max = 21.4 
 
         base_times_h = [0.0, 2.0, 14.0, 16.0, 24.0]
         base_pressures_MPa = [p_max, p_min, p_min, p_max, p_max]
@@ -553,8 +553,8 @@ def main():
         )
 
     elif PRESSURE_SCENARIO == "sinus":
-        p_mean = 10.0 * ut.MPa
-        p_ampl = 3.0 * ut.MPa
+        p_mean = 14.7 * ut.MPa
+        p_ampl = 6.7 * ut.MPa
         t_pressure, p_pressure = build_sinus_schedule_multi(
             tc_operation,
             p_mean=p_mean, p_ampl=p_ampl,
@@ -600,7 +600,7 @@ def main():
                              [over_burden, over_burden],
                              [0.0, tc_operation.t_final],
                              g=g_vec[2])
-    bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, 430.0,
+    bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, 360.0,
                                 p_pressure,
                                 t_pressure,
                                 g=g_vec[2])
