@@ -26,6 +26,27 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+
+# Simulation outputs
+Output*/
+outputs/
+results/
+OutputNobian/
+
+# FEM / mesh outputs
+*.h5
+*.xdmf
+*.msh
+*.msh2
+
+# Windows Zone.Identifier artifacts
+*:Zone.Identifier
+
+# Python cache
+__pycache__/
+*.pyc
+
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
