@@ -210,9 +210,9 @@ def main():
         # classify by folder name
         scheme = pressure_scheme_from_folder(name)
         if scheme == "irregular":
-        irregular_cases.append((name, fpath))
+            irregular_cases.append((name, fpath))
         elif scheme == "sinus":
-        sinus_cases.append((name, fpath))
+            sinus_cases.append((name, fpath))
 
 
     if not irregular_cases and not sinus_cases:

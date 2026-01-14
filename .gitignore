@@ -28,16 +28,16 @@ MANIFEST
 
 
 # Simulation outputs
+# ignore all outputs
+OutputNobian/
 Output*/
 outputs/
 results/
-OutputNobian/
-
-# FEM / mesh outputs
 *.h5
 *.xdmf
-*.msh
-*.msh2
+
+# but keep a small curated dataset folder
+!results/sample/**
 
 # Windows Zone.Identifier artifacts
 *:Zone.Identifier
