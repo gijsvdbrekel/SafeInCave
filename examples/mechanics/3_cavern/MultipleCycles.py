@@ -475,7 +475,7 @@ def main():
                              [0.0, tc_equilibrium.t_final],
                              g=g_vec[2])
 
-    gas_density = 17.5  # Hydrogen density in g/L at specific T and P conditions
+    gas_density = 11.1  # Hydrogen density in kg/m3 at specific T and P conditions
     p_gas = 14.7 * ut.MPa
     bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, 360.0,
                                 [p_gas, p_gas],
