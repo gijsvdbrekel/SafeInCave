@@ -408,7 +408,7 @@ def plot_stress_paths(ax, stress_path: StressPath, i: int, t_step: int):
     ax.scatter(stress_path.p_probes[i, t_step], stress_path.q_probes[i, t_step],
                c="white", edgecolors="black", zorder=10000)
 
-    plot_dilatancy_boundaries_all(ax, p_min=0.01, p_max=125.0, npts=500, show_legend=True)
+    plot_dilatancy_boundaries_all(ax, p_min=0.01, p_max=40.0, npts=500, show_legend=True)
 
     ax.set_xlabel("Mean stress (MPa)", size=10, fontname="serif")
     ax.set_ylabel("Von Mises stress (MPa)", size=10, fontname="serif")

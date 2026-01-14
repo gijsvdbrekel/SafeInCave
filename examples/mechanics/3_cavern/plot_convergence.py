@@ -13,7 +13,7 @@ MPA = 1e6
 
 # ---------- helpers: naming & consistent colors ----------
 
-CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt"]
+CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
 
 def cavern_label_from_folder(folder_name: str) -> str:
     # take text before first underscore, e.g. "Asymmetric_regular_600_convergence" -> "Asymmetric"

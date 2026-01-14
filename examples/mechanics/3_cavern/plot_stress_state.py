@@ -13,7 +13,7 @@ DAY = 24.0 * HOUR
 # ------------------------
 # Naming + consistent colors
 # ------------------------
-CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt"]
+CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
 
 def cavern_label_from_folder(folder_name: str) -> str:
     # e.g. "Asymmetric_irregular_600" -> "Asymmetric"
@@ -274,7 +274,7 @@ def main():
     ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
     required = ["u.xdmf", "geom.msh", "p_elems.xdmf", "q_elems.xdmf"]
 
-    TARGET_PRESSURE = "irregular"
+    TARGET_PRESSURE = "sinus"
 
     # collect cases
     cases = []
@@ -314,7 +314,7 @@ def main():
         stress_by_case[label] = read_stress_paths(folder, probes)
 
     # extra figure: shape + probes for one cavern
-    TARGET = "Asymmetric"
+    TARGET = "IrregularFine"
     target_folder = None
     for nm, folder in cases:
         if cavern_label_from_folder(nm) == TARGET:
@@ -389,3 +389,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
