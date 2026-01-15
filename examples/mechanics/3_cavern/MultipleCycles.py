@@ -390,21 +390,39 @@ def main():
 
      # --- Cavern-specific z_max ---
     Z_MAX_BY_CAVERN = {
-        "regular": 315.26,
-        "tilted": 345.67,
-        "teardrop": 353.15,
-        "asymmetric": 338.89,
-        "irregular": 319.86,
-        "multichamber": 334.14,
+        "regular600": 315.26,
+        "tilted600": 345.67,
+        "teardrop600": 353.15,
+        "asymmetric600": 338.89,
+        "irregular600": 319.86,
+        "multichamber600": 334.14,
+        "regular1200": 393.21,
+        "tilted1200":  430.78,
+        "teardrop1200":  445.06,
+        "asymmetric1200":  422.76,
+        "irregular1200":  402.21,
+        "multichamber1200":  420.82,
     }
 
-    CAVERN_TYPE = "irregular"   # hier kies je welke geometrie je draait
+    CAVERN_TYPE = "irregular600"   # hier kies je welke geometrie je draait
     z_max = Z_MAX_BY_CAVERN[CAVERN_TYPE]
+
+    # --- Overburden & side burden depend on cavern set (600 vs 1200) ---
+    if CAVERN_TYPE.endswith("600"):
+        p_ref = 18.2 * ut.MPa
+    elif CAVERN_TYPE.endswith("1200"):
+        p_ref = 20.1 * ut.MPa
+    else:
+        raise ValueError(f"Cannot infer cavern set (600/1200) from CAVERN_TYPE='{CAVERN_TYPE}'")
+
+    side_burden = p_ref
+    over_burden = p_ref
+
 
 
 
     # Define output folder
-    output_folder = os.path.join("output", "case_sinus(0308)_100days_irregular_600")
+    output_folder = os.path.join("output", f"case_{PRESSURE_SCENARIO}_{OPERATION_DAYS}days_{CAVERN_TYPE}")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -475,7 +493,6 @@ def main():
     bc_bottom = momBC.DirichletBC("Bottom", 2, [0.0, 0.0], [0.0, tc_equilibrium.t_final])
     bc_south = momBC.DirichletBC("South", 1, [0.0, 0.0], [0.0, tc_equilibrium.t_final])
 
-    side_burden = 18.2 * ut.MPa
     bc_east = momBC.NeumannBC("East", 2, salt_density, 660.0,
                               [side_burden, side_burden],
                               [0.0, tc_equilibrium.t_final],
@@ -485,7 +502,6 @@ def main():
                                [0.0, tc_equilibrium.t_final],
                                g=g_vec[2])
 
-    over_burden = 18.2 * ut.MPa
     bc_top = momBC.NeumannBC("Top", 2, 0.0, 0.0,
                              [over_burden, over_burden],
                              [0.0, tc_equilibrium.t_final],
@@ -542,8 +558,8 @@ def main():
 
     OPERATION_DAYS = 100  # 3 years
     SCHEDULE_MODE = "stretch" # "repeat" or "stretch"
-    N_CYCLES = 8
-    dt_hours = 0.2
+    N_CYCLES = 10
+    dt_hours = 2
 
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
