@@ -1,8 +1,8 @@
 //////////////////////////////////////////////////////////////
 // IRREGULAR CAVERN - FULL 3D COMPLETE (No Symmetry)
-// SCALED to 600k m³ volume
+// SCALED to 620k m³ volume (scale factor 0.940774)
 // Centered in 3D domain
-// Complete with all surfaces for proper meshing
+// FIXED: Both tips use Lines instead of Circles
 //////////////////////////////////////////////////////////////
 
 coarse_size = 65;
@@ -14,9 +14,6 @@ Lx = 450.0;
 
 x_center = Lx/2;  // 225.0
 y_center = Ly/2;  // 225.0
-
-// Simplified irregular profile with 6 key levels
-// (Using fewer levels for complete surface definition)
 
 //////////////////////////////
 // OUTER BOX
@@ -37,48 +34,48 @@ Point(8) = {0, Ly, Lz, coarse_size};
 //////////////////////////////
 
 // Level 1 - Bottom (z=180, R=16.55)
-Point(100) = {x_center, y_center, 180.0, fine_size};           // tip
-Point(101) = {x_center, y_center, 185.0, coarse_size};         // center
-Point(102) = {x_center + 16.55, y_center, 185.0, fine_size};   // +x
-Point(103) = {x_center - 16.55, y_center, 185.0, fine_size};   // -x
-Point(104) = {x_center, y_center + 16.55, 185.0, fine_size};   // +y
-Point(105) = {x_center, y_center - 16.55, 185.0, fine_size};   // -y
+Point(100) = {x_center, y_center, 169.339232, fine_size};           // tip
+Point(101) = {x_center, y_center, 174.043100, coarse_size};         // center
+Point(102) = {x_center + 15.569802, y_center, 174.043100, fine_size};   // +x
+Point(103) = {x_center - 15.569802, y_center, 174.043100, fine_size};   // -x
+Point(104) = {x_center, y_center + 15.569802, 174.043100, fine_size};   // +y
+Point(105) = {x_center, y_center - 15.569802, 174.043100, fine_size};   // -y
 
 // Level 2 - Lower bulge (z=205, R=51.72)
-Point(110) = {x_center, y_center, 205.0, coarse_size};
-Point(112) = {x_center + 51.72, y_center, 205.0, fine_size};
-Point(113) = {x_center - 51.72, y_center, 205.0, fine_size};
-Point(114) = {x_center, y_center + 51.72, 205.0, fine_size};
-Point(115) = {x_center, y_center - 51.72, 205.0, fine_size};
+Point(110) = {x_center, y_center, 192.858570, coarse_size};
+Point(112) = {x_center + 48.656806, y_center, 192.858570, fine_size};
+Point(113) = {x_center - 48.656806, y_center, 192.858570, fine_size};
+Point(114) = {x_center, y_center + 48.656806, 192.858570, fine_size};
+Point(115) = {x_center, y_center - 48.656806, 192.858570, fine_size};
 
 // Level 3 - Maximum (z=230, R=56.0)
-Point(120) = {x_center, y_center, 230.0, coarse_size};
-Point(122) = {x_center + 56.0, y_center, 230.0, fine_size};
-Point(123) = {x_center - 56.0, y_center, 230.0, fine_size};
-Point(124) = {x_center, y_center + 56.0, 230.0, fine_size};
-Point(125) = {x_center, y_center - 56.0, 230.0, fine_size};
+Point(120) = {x_center, y_center, 216.377908, coarse_size};
+Point(122) = {x_center + 52.683317, y_center, 216.377908, fine_size};
+Point(123) = {x_center - 52.683317, y_center, 216.377908, fine_size};
+Point(124) = {x_center, y_center + 52.683317, 216.377908, fine_size};
+Point(125) = {x_center, y_center - 52.683317, 216.377908, fine_size};
 
 // Level 4 - Constriction (z=270, R=36.0)
-Point(130) = {x_center, y_center, 270.0, coarse_size};
-Point(132) = {x_center + 36.0, y_center, 270.0, fine_size};
-Point(133) = {x_center - 36.0, y_center, 270.0, fine_size};
-Point(134) = {x_center, y_center + 36.0, 270.0, fine_size};
-Point(135) = {x_center, y_center - 36.0, 270.0, fine_size};
+Point(130) = {x_center, y_center, 254.008848, coarse_size};
+Point(132) = {x_center + 33.867846, y_center, 254.008848, fine_size};
+Point(133) = {x_center - 33.867846, y_center, 254.008848, fine_size};
+Point(134) = {x_center, y_center + 33.867846, 254.008848, fine_size};
+Point(135) = {x_center, y_center - 33.867846, 254.008848, fine_size};
 
 // Level 5 - Upper (z=310, R=26.0)
-Point(140) = {x_center, y_center, 310.0, coarse_size};
-Point(142) = {x_center + 26.0, y_center, 310.0, fine_size};
-Point(143) = {x_center - 26.0, y_center, 310.0, fine_size};
-Point(144) = {x_center, y_center + 26.0, 310.0, fine_size};
-Point(145) = {x_center, y_center - 26.0, 310.0, fine_size};
+Point(140) = {x_center, y_center, 291.639789, coarse_size};
+Point(142) = {x_center + 24.460111, y_center, 291.639789, fine_size};
+Point(143) = {x_center - 24.460111, y_center, 291.639789, fine_size};
+Point(144) = {x_center, y_center + 24.460111, 291.639789, fine_size};
+Point(145) = {x_center, y_center - 24.460111, 291.639789, fine_size};
 
 // Level 6 - Top (z=335, R=8.0)
-Point(150) = {x_center, y_center, 340.0, fine_size};           // tip
-Point(151) = {x_center, y_center, 335.0, coarse_size};         // center
-Point(152) = {x_center + 8.0, y_center, 335.0, fine_size};
-Point(153) = {x_center - 8.0, y_center, 335.0, fine_size};
-Point(154) = {x_center, y_center + 8.0, 335.0, fine_size};
-Point(155) = {x_center, y_center - 8.0, 335.0, fine_size};
+Point(150) = {x_center, y_center, 319.862994, fine_size};           // tip
+Point(151) = {x_center, y_center, 315.159126, coarse_size};         // center
+Point(152) = {x_center + 7.526188, y_center, 315.159126, fine_size};
+Point(153) = {x_center - 7.526188, y_center, 315.159126, fine_size};
+Point(154) = {x_center, y_center + 7.526188, 315.159126, fine_size};
+Point(155) = {x_center, y_center - 7.526188, 315.159126, fine_size};
 
 //////////////////////////////
 // OUTER BOX EDGES
@@ -133,11 +130,11 @@ Line(54) = {145, 155};
 // CIRCLE ARCS AT EACH LEVEL
 //////////////////////////////
 
-// Level 1 - Bottom
-Circle(60) = {100, 101, 102};
-Circle(61) = {100, 101, 104};
-Circle(62) = {100, 101, 103};
-Circle(63) = {100, 101, 105};
+// Level 1 - Bottom (LINES from tip to ring)
+Line(60) = {100, 102};
+Line(61) = {100, 104};
+Line(62) = {100, 103};
+Line(63) = {100, 105};
 
 Circle(64) = {102, 101, 104};
 Circle(65) = {104, 101, 103};
@@ -168,11 +165,11 @@ Circle(101) = {144, 140, 143};
 Circle(102) = {143, 140, 145};
 Circle(103) = {145, 140, 142};
 
-// Level 6 - Top
-Circle(110) = {150, 151, 152};
-Circle(111) = {150, 151, 154};
-Circle(112) = {150, 151, 153};
-Circle(113) = {150, 151, 155};
+// Level 6 - Top (LINES from tip to ring - FIXED!)
+Line(110) = {150, 152};
+Line(111) = {150, 154};
+Line(112) = {150, 153};
+Line(113) = {150, 155};
 
 Circle(114) = {152, 151, 154};
 Circle(115) = {154, 151, 153};
@@ -261,7 +258,7 @@ Surface(253) = {253};
 Curve Loop(254) = {103, 24, -117, -54};
 Surface(254) = {254};
 
-// Top cap (4 surfaces)
+// Top cap (4 surfaces - FIXED!)
 Curve Loop(261) = {110, 114, -111};
 Surface(261) = {261};
 

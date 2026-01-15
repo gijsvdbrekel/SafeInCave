@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////////////
 // TILTED CAVERN - 8 degree tilt from vertical
-// SCALED to 1.4M m³ volume
+// CORRECTED to 620k m³ volume (measured by mesh integration)
 // Full 3D geometry (no symmetry)
 //////////////////////////////////////////////////////////////
 
@@ -11,15 +11,15 @@ Lz = 660;
 Ly = 450;
 Lx = 450;
 
-// Geometry parameters (SCALED by 0.9392)
-h_bottom = 205.189718;     // bottom elevation of cavern
-H_cavern = 187.8;          // total cavern height (was 200.0)
-R = 47.0;                  // cavern radius (was 50.0)
+// Geometry parameters (CORRECTED - scaled by 0.941459 to reach 620k m³)
+h_bottom = 145.632349;              // scaled from original 154.687861
+H_cavern = 133.311701;              // scaled from original 141.601108
+R = 33.362301;                      // scaled from original 35.436790
 
 // Tilt parameters
-tilt_angle = 8.0;          // degrees from vertical
+tilt_angle = 5.677999;              // scaled from original 6.031580
 tilt_rad = tilt_angle * Pi / 180.0;
-horizontal_shift = H_cavern * Tan(tilt_rad);  // ~26.4m for 187.8m height, 8° tilt
+horizontal_shift = H_cavern * Tan(tilt_rad);
 
 // Cavern center positions (tilted in x-direction)
 x_bottom = Lx/2 - horizontal_shift/2;   // center shifted back at bottom
@@ -56,13 +56,13 @@ Point(105) = {x_bottom,   y_center-R, h_bottom+R, size_fine};    // -y
 // CAVERN GEOMETRY - TOP BULB
 //////////////////////////////
 
-Point(110) = {x_top, y_center, h_bottom+H_cavern+R, size_fine};      // top tip
-Point(111) = {x_top, y_center, h_bottom+H_cavern,   size_coarse};    // top center
+Point(110) = {x_top, y_center, h_bottom+R+H_cavern+R, size_fine};      // top tip
+Point(111) = {x_top, y_center, h_bottom+R+H_cavern,   size_coarse};    // top center
 
-Point(112) = {x_top+R, y_center,   h_bottom+H_cavern, size_fine};    // +x
-Point(113) = {x_top-R, y_center,   h_bottom+H_cavern, size_fine};    // -x
-Point(114) = {x_top,   y_center+R, h_bottom+H_cavern, size_fine};    // +y
-Point(115) = {x_top,   y_center-R, h_bottom+H_cavern, size_fine};    // -y
+Point(112) = {x_top+R, y_center,   h_bottom+R+H_cavern, size_fine};    // +x
+Point(113) = {x_top-R, y_center,   h_bottom+R+H_cavern, size_fine};    // -x
+Point(114) = {x_top,   y_center+R, h_bottom+R+H_cavern, size_fine};    // +y
+Point(115) = {x_top,   y_center-R, h_bottom+R+H_cavern, size_fine};    // -y
 
 //////////////////////////////
 // OUTER BOX EDGES
