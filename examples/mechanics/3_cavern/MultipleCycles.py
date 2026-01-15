@@ -414,10 +414,12 @@ def main():
 
     PRESSURE_SCENARIO = "sinus"
 
+    
     output_folder = os.path.join(
         "output",
-        f"case_{PRESSURE_SCENARIO}_{OPERATION_DAYS}days_{CAVERN_TYPE}"
+        f"case_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_{CAVERN_TYPE}"
     )
+
 
 
     # --- Overburden & side burden depend on cavern set (600 vs 1200) ---
