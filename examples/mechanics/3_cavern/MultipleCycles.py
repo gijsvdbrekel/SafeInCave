@@ -404,8 +404,21 @@ def main():
         "multichamber1200":  420.82,
     }
 
-    CAVERN_TYPE = "irregular600"   # hier kies je welke geometrie je draait
+    CAVERN_TYPE = "irregular600"
     z_max = Z_MAX_BY_CAVERN[CAVERN_TYPE]
+
+    OPERATION_DAYS = 100
+    SCHEDULE_MODE = "stretch"
+    N_CYCLES = 8
+    dt_hours = 0.2
+
+    PRESSURE_SCENARIO = "sinus"
+
+    output_folder = os.path.join(
+        "output",
+        f"case_{PRESSURE_SCENARIO}_{OPERATION_DAYS}days_{CAVERN_TYPE}"
+    )
+
 
     # --- Overburden & side burden depend on cavern set (600 vs 1200) ---
     if CAVERN_TYPE.endswith("600"):
@@ -417,12 +430,6 @@ def main():
 
     side_burden = p_ref
     over_burden = p_ref
-
-
-
-
-    # Define output folder
-    output_folder = os.path.join("output", f"case_{PRESSURE_SCENARIO}_{OPERATION_DAYS}days_{CAVERN_TYPE}")
 
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
@@ -556,17 +563,11 @@ def main():
     mat.add_to_non_elastic(desai)
     mom_eq.set_material(mat)
 
-    OPERATION_DAYS = 100  # 3 years
-    SCHEDULE_MODE = "stretch" # "repeat" or "stretch"
-    N_CYCLES = 10
-    dt_hours = 2
-
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
                                      final_time=OPERATION_DAYS*24.0,
                                      time_unit="hour")
 
-    PRESSURE_SCENARIO = "sinus"
 
     if PRESSURE_SCENARIO == "linear":
         p_min = 8.0
@@ -614,6 +615,7 @@ def main():
 
     else:
         raise ValueError(f"Unknown PRESSURE_SCENARIO: {PRESSURE_SCENARIO}")
+    
 
     # Operation BCs
     bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_operation.t_final])
