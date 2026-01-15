@@ -428,9 +428,17 @@ def plot_probes(ax, probes):
 def main():
     fig, ax_logo, ax_info_1, ax_info_2, ax_info_3, ax0, ax00, ax01, ax02, ax10, ax11, ax12, ax30, ax31, ax32 = create_layout()
 
-    # Specify folder to load the results from (operation stage)
-    output_folder = os.path.join("output", "case_linear(0409)_100days_irregular_600")
+    # --- Parameters of the case you want to visualize ---
+    PRESSURE_SCENARIO = "sinus"
+    N_CYCLES = 1
+    OPERATION_DAYS = 1
+    CAVERN_TYPE = "irregular600"
+
+    CASE_NAME = f"case_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_{CAVERN_TYPE}"
+
+    output_folder = os.path.join("output", CASE_NAME)
     operation_folder = os.path.join(output_folder, "operation")
+
 
     # Eerst wand en subsidence inladen
     wall_profile = WallProfileData(operation_folder, scale=1)

@@ -407,10 +407,10 @@ def main():
     CAVERN_TYPE = "irregular600"
     z_max = Z_MAX_BY_CAVERN[CAVERN_TYPE]
 
-    OPERATION_DAYS = 100
+    OPERATION_DAYS = 1
     SCHEDULE_MODE = "stretch"
-    N_CYCLES = 8
-    dt_hours = 0.2
+    N_CYCLES = 1
+    dt_hours = 0.1
 
     PRESSURE_SCENARIO = "sinus"
 
