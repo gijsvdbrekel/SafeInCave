@@ -30,6 +30,7 @@ MANIFEST
 # Simulation outputs
 # ignore all outputs
 OutputNobian/
+VolumeCalculation/
 Output*/
 outputs/
 results/
