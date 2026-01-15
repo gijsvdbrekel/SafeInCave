@@ -384,8 +384,24 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 def main():
     # Read grid
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_600")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_600_3D")
     grid = sf.GridHandlerGMSH("geom", grid_path)
+
+
+     # --- Cavern-specific z_max ---
+    Z_MAX_BY_CAVERN = {
+        "regular": 315.26,
+        "tilted": 345.67,
+        "teardrop": 353.15,
+        "asymmetric": 338.89,
+        "irregular": 319.86,
+        "multichamber": 334.14,
+    }
+
+    CAVERN_TYPE = "irregular"   # hier kies je welke geometrie je draait
+    z_max = Z_MAX_BY_CAVERN[CAVERN_TYPE]
+
+
 
     # Define output folder
     output_folder = os.path.join("output", "case_sinus(0308)_100days_irregular_600")
@@ -477,7 +493,7 @@ def main():
 
     gas_density = 7.6  # Hydrogen density in kg/m3 at specific T and P conditions
     p_gas = 14.7 * ut.MPa
-    bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, 360.0,
+    bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, z_max,
                                 [p_gas, p_gas],
                                 [0.0, tc_equilibrium.t_final],
                                 g=g_vec[2])
@@ -600,7 +616,7 @@ def main():
                              [over_burden, over_burden],
                              [0.0, tc_operation.t_final],
                              g=g_vec[2])
-    bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, 360.0,
+    bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, z_max,
                                 p_pressure,
                                 t_pressure,
                                 g=g_vec[2])
