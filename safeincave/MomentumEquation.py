@@ -985,7 +985,7 @@ class LinearMomentum(LinearMomentumBase):
 
 
 class LinearMomentumMixed(LinearMomentumBase):
-    def __init__(self, grid, theta, stab_method: str="stab_E_star", stab_scaling: float=1.0):
+    def __init__(self, grid, theta, stab_scaling: float=1.0):
         super().__init__(grid, theta)
         Vue = basix.ufl.element("CG", self.grid.mesh.basix_cell(), 1, shape=(3,))   # displacement finite element
         Vpe = basix.ufl.element("CG", self.grid.mesh.basix_cell(), 1)               # mean stress finite element
@@ -1000,9 +1000,6 @@ class LinearMomentumMixed(LinearMomentumBase):
             pass
         else:
             self.calculate_h(stab_scaling)
-
-        assert stab_method in ["stab_E", "stab_E_star"], "stab_method must be stab_E or stab_E_star"
-        self.stab_method = stab_method
 
     def calculate_h(self, stab_scaling: float = 0.0) -> None:
         model_h = ModelML()
@@ -1104,19 +1101,16 @@ class LinearMomentumMixed(LinearMomentumBase):
         return self.p_elems
 
     def compute_moduli(self, stress_to):
-        if self.stab_method == "stab_E":
-            pass
-        else:
-            strain_to = self.compute_total_strain()
-            principal_stresses = to.linalg.eigvalsh(stress_to)
-            principal_strains = to.linalg.eigvalsh(strain_to)
-            sigma_1 = principal_stresses[:,0]
-            sigma_2 = principal_stresses[:,1]
-            sigma_3 = principal_stresses[:,2]
-            epsil_1 = principal_strains[:,0]
-            nu = self.mat.elems_e[0].nu
-            E_star_1 = (sigma_1 - nu*(sigma_2 + sigma_3))/epsil_1
-            self.E_star.x.array[:] = E_star_1
+        strain_to = self.compute_total_strain()
+        principal_stresses = to.linalg.eigvalsh(stress_to)
+        principal_strains = to.linalg.eigvalsh(strain_to)
+        sigma_1 = principal_stresses[:,0]
+        sigma_2 = principal_stresses[:,1]
+        sigma_3 = principal_stresses[:,2]
+        epsil_1 = principal_strains[:,0]
+        nu = self.mat.elems_e[0].nu
+        E_star_1 = (sigma_1 - nu*(sigma_2 + sigma_3))/epsil_1
+        self.E_star.x.array[:] = E_star_1
 
     def solve_elastic_response(self):
         # Build bilinear form
