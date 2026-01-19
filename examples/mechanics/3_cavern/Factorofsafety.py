@@ -29,21 +29,24 @@ def pressure_scheme_from_folder(folder_name: str) -> str:
 # ---------- RD model ----------
 def q_dil_rd(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):
     """
-    RD dilation boundary q_dil(p,psi) in MPa.
+    RD dilation boundary q_dil(p, psi) in MPa.
+
+    Uses p = mean stress (compression-positive), psi = Lode angle.
+    Implements the robust form with |I1| inside the power to avoid sign/power issues.
     """
     p = np.asarray(p_MPa, dtype=float)
     psi = np.asarray(psi, dtype=float)
 
-    I1 = 3.0 * p
-    sgn = np.sign(I1)
-    sgn[sgn == 0.0] = 1.0
+    I1 = 3.0 * p  # MPa
+    absI1 = np.abs(I1)
 
     denom = (np.sqrt(3.0) * np.cos(psi) - D2 * np.sin(psi))
+    # avoid blow-up; preserve sign if denom is tiny
     denom = np.where(np.abs(denom) < 1e-12, np.sign(denom) * 1e-12, denom)
 
-    sqrtJ2 = D1 * ((I1 / (sgn * sigma_ref)) ** m) / denom + T0
-    q = np.sqrt(3.0) * sqrtJ2
-    return q
+    sqrtJ2_dil = D1 * ((absI1 / sigma_ref) ** m) / denom + T0  # MPa
+    q_dil = np.sqrt(3.0) * sqrtJ2_dil                          # MPa
+    return q_dil
 
 def compute_lode_angle_from_sigma(sig_Pa):
     """
@@ -73,6 +76,29 @@ def compute_lode_angle_from_sigma(sig_Pa):
     psi = theta - np.pi/6.0
     return psi
 
+def compute_p_q_from_sigma(sig_Pa, compression_positive=True):
+    """
+    Compute p (mean stress, MPa, compression-positive) and q (von Mises, MPa)
+    directly from the full stress tensor, per cell.
+
+    sig_Pa: (ncells, 3, 3) in Pa
+    """
+    sig = 0.5 * (sig_Pa + np.swapaxes(sig_Pa, -1, -2))
+    if compression_positive:
+        sig = -sig  # align with SafeInCave's constitutive convention (see Desai: stress_vec = -stress)
+
+    # p = tr(sig)/3
+    I1 = np.trace(sig, axis1=1, axis2=2)          # Pa
+    p = (I1 / 3.0) / MPA                           # MPa
+
+    # deviatoric + J2 -> q = sqrt(3*J2)
+    mean = (I1 / 3.0)[:, None, None]
+    dev = sig - mean * np.eye(3)[None, :, :]
+    J2 = 0.5 * np.sum(dev * dev, axis=(1, 2))      # Pa^2
+    q = np.sqrt(3.0 * np.maximum(J2, 0.0)) / MPA   # MPa
+
+    return p, q
+
 # ---------- robust path helpers (flat vs nested output) ----------
 def pick_existing(*paths):
     for p in paths:
@@ -80,78 +106,64 @@ def pick_existing(*paths):
             return p
     return None
 
-def load_p_q_sig(case_folder):
+def load_sig(case_folder):
     """
     Supports both:
-      case_folder/p_elems.xdmf
-      case_folder/p_elems/p_elems.xdmf
-    same for q_elems and sig.
+      case_folder/sig.xdmf
+      case_folder/sig/sig.xdmf
     """
-    p_path = pick_existing(
-        os.path.join(case_folder, "p_elems.xdmf"),
-        os.path.join(case_folder, "p_elems", "p_elems.xdmf"),
-    )
-    q_path = pick_existing(
-        os.path.join(case_folder, "q_elems.xdmf"),
-        os.path.join(case_folder, "q_elems", "q_elems.xdmf"),
-    )
     sig_path = pick_existing(
         os.path.join(case_folder, "sig.xdmf"),
         os.path.join(case_folder, "sig", "sig.xdmf"),
     )
+    if sig_path is None:
+        raise FileNotFoundError(f"Missing sig in {case_folder}")
 
-    if p_path is None or q_path is None or sig_path is None:
-        raise FileNotFoundError(f"Missing p_elems/q_elems/sig in {case_folder}")
+    pts_s, t, sig_vals = post.read_cell_tensor(sig_path)
+    return np.asarray(t, float), np.asarray(sig_vals, float), sig_path
 
-    pts_p, t1, p_vals = post.read_cell_scalar(p_path)
-    pts_q, t2, q_vals = post.read_cell_scalar(q_path)
-    pts_s, t3, sig_vals = post.read_cell_tensor(sig_path)
-
-    if not (np.allclose(t1, t2) and np.allclose(t1, t3)):
-        # clip to common length as safe fallback
-        nt = min(len(t1), len(t2), len(t3))
-        t1 = t1[:nt]
-        p_vals = p_vals[:nt]
-        q_vals = q_vals[:nt]
-        sig_vals = sig_vals[:nt]
-
-    return np.asarray(t1, float), np.asarray(p_vals, float), np.asarray(q_vals, float), np.asarray(sig_vals, float), p_path
-
-def compute_FOS(time_list, p_vals, q_vals, sig_vals, divide_p_by_3=False):
+def compute_FOS(time_list, sig_vals, *, compression_positive=True, q_tol_MPa=1e-3):
     """
-    p_vals, q_vals from PostProcessingTools are in Pa or MPa depending on your pipeline.
-    In your setup: p_vals and q_vals are in Pa -> convert to MPa by /MPA.
-    Convention: p positive in compression.
+    Compute FoS per time step, per cell:
+        FoS = q_dil(p, psi) / q
+
+    IMPORTANT:
+    - Computes p, q, psi consistently from the SAME stress tensor (sig_vals).
+    - Uses compression-positive convention by default to match SafeInCave (Desai flips sign).
+    - Masks cells with q < q_tol_MPa to avoid meaningless huge ratios in near-hydrostatic zones.
+      Those cells get FoS = +inf so they DO NOT control your global minimum.
     """
-    # convert to MPa and sign convention
-    # p stored negative in compression in your plots -> use minus
-    p_MPa = -p_vals / MPA
-    q_MPa =  q_vals / MPA
-
-    if divide_p_by_3:
-        p_MPa = p_MPa / 3.0
-
-    nt, nc = p_MPa.shape
-    FOS = np.zeros((nt, nc), dtype=float)
+    nt = sig_vals.shape[0]
+    nc = sig_vals.shape[1]
+    FOS = np.full((nt, nc), np.inf, dtype=float)
 
     for it in range(nt):
-        psi = compute_lode_angle_from_sigma(sig_vals[it])          # (nc,)
-        q_dil = q_dil_rd(p_MPa[it], psi)                           # (nc,)
-        q_safe = np.where(q_MPa[it] <= 0.0, 1e-12, q_MPa[it])
-        FOS[it] = q_dil / q_safe
+        sig_t = sig_vals[it]  # (nc, 3, 3) Pa
 
-    FOS[~np.isfinite(FOS)] = 0.0
+        # compute consistently from sig
+        p_MPa, q_MPa = compute_p_q_from_sigma(sig_t, compression_positive=compression_positive)
+        psi = compute_lode_angle_from_sigma((-sig_t) if compression_positive else sig_t)
+
+        q_dil = q_dil_rd(p_MPa, psi)  # MPa
+
+        mask = q_MPa >= float(q_tol_MPa)
+        FOS[it, mask] = q_dil[mask] / q_MPa[mask]
+
+    # clean-up
+    FOS[~np.isfinite(FOS)] = np.inf
     FOS = np.clip(FOS, 0.0, 1e6)
     return FOS
 
 def write_FOS_paraview(case_folder, time_list, FOS, mesh_source_xdmf, out_folder, field_name="FOS"):
     """
     Writes DG0 cell field so ParaView shows it under Cell Data with correct name.
+
+    NOTE (strict): This assumes the cell ordering in meshio's TimeSeriesReader output matches
+    dolfinx's XDMF mesh cell ordering. If you see scrambled spatial patterns, this is why.
     """
     os.makedirs(out_folder, exist_ok=True)
     out_path = os.path.join(out_folder, f"{os.path.basename(case_folder)}_{field_name}.xdmf")
 
-    # read mesh SERIAL
     with do.io.XDMFFile(MPI.COMM_SELF, mesh_source_xdmf, "r") as xdmf:
         mesh = xdmf.read_mesh()
         mesh.name = "mesh"
@@ -160,12 +172,11 @@ def write_FOS_paraview(case_folder, time_list, FOS, mesh_source_xdmf, out_folder
     f = do.fem.Function(V)
     f.name = field_name
 
-    # sanity: DG0 dofs should match ncells
     ncells = FOS.shape[1]
     if f.x.array.size != ncells:
         raise RuntimeError(
             f"DG0 dofs ({f.x.array.size}) != ncells in FOS ({ncells}). "
-            "This usually means you're reading the wrong mesh source."
+            "You are almost certainly reading/writing with different meshes or different cell ordering."
         )
 
     with do.io.XDMFFile(MPI.COMM_SELF, out_path, "w") as xdmf_out:
@@ -184,8 +195,11 @@ def main():
     ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
     TARGET_PRESSURE = "irregular"
 
-    # if your no-GUI run laptop has the old p bug:
-    DIVIDE_P_BY_3 = True
+    # SafeInCave constitutive convention (Desai): compression-positive uses -sigma
+    COMPRESSION_POSITIVE = True
+
+    # Avoid FoS blowing up where q ~ 0 (near hydrostatic); adjust if needed
+    Q_TOL_MPA = 1e-3  # 0.001 MPa = 1 kPa
 
     # collect cases
     cases = []
@@ -198,15 +212,14 @@ def main():
         if pressure_scheme_from_folder(nm) != TARGET_PRESSURE:
             continue
 
-        # minimal check: must have p/q/sig somewhere
         try:
-            load_p_q_sig(fpath)
+            load_sig(fpath)
             cases.append((nm, fpath))
         except Exception:
             continue
 
     if not cases:
-        raise RuntimeError(f"No cases found for pressure scheme '{TARGET_PRESSURE}' with p/q/sig.")
+        raise RuntimeError(f"No cases found for pressure scheme '{TARGET_PRESSURE}' with sig.")
 
     # consistent colors
     labels_present = []
@@ -222,7 +235,6 @@ def main():
     OUT = os.path.join(ROOT, "_FOS_outputs", TARGET_PRESSURE)
     os.makedirs(OUT, exist_ok=True)
 
-    # plot: ONLY one line per cavern = global min over all cells
     plt.figure(figsize=(12, 6))
 
     for nm, folder in cases:
@@ -230,24 +242,29 @@ def main():
         col = color_map.get(lab, None)
 
         print(f"\n=== {nm} ===")
-        time_list, p_vals, q_vals, sig_vals, mesh_source = load_p_q_sig(folder)
-        FOS = compute_FOS(time_list, p_vals, q_vals, sig_vals, divide_p_by_3=DIVIDE_P_BY_3)
+        time_list, sig_vals, mesh_source = load_sig(folder)
 
-        # write for ParaView (this WILL show the array as "FOS")
+        FOS = compute_FOS(
+            time_list, sig_vals,
+            compression_positive=COMPRESSION_POSITIVE,
+            q_tol_MPa=Q_TOL_MPA
+        )
+
         write_FOS_paraview(folder, time_list, FOS, mesh_source, OUT, field_name="FOS")
 
-        # summary: global minimum FoS across all volume cells
-        fos_min = FOS.min(axis=1)
+        # global minimum FoS across all cells, ignoring q<tol cells (they are inf)
+        fos_min = np.min(FOS, axis=1)
+        fos_min[~np.isfinite(fos_min)] = np.nan  # if everything was masked, show nan
+
         t_days = time_list / DAY
         plt.plot(t_days, fos_min, linewidth=2.2, label=lab, color=col)
 
     plt.axhline(1.0, linewidth=1.5)
     plt.xlabel("Time (days)")
-    plt.ylabel("FoS = q_dil(p, ψ) / q  (plotted: min over all cells)")
+    plt.ylabel("FoS = q_dil(p, ψ) / q   (min over cells; cells with q<tol ignored)")
     plt.grid(True, alpha=0.3)
     plt.title(f"Factor of Safety over time (pressure scheme = {TARGET_PRESSURE})")
 
-    # legend with only cavern names (unique)
     ax = plt.gca()
     handles, labels = ax.get_legend_handles_labels()
     uniq = {}
