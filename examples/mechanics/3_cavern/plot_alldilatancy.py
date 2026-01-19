@@ -516,7 +516,7 @@ def main():
         ax32.set_xlim(xmin,xmax)
         ax32.set_ylim(ymin,ymax)
 
-                # --- update pressure marker if data available ---
+        # --- update pressure marker if data available ---
         if t_press is not None and p_press is not None and press_marker is not None:
             idx = min(int(val), len(t_press) - 1)
             # keep axis limits
