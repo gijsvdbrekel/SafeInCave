@@ -14,20 +14,44 @@ import numpy as np
 class LinearMomentumMod(sf.LinearMomentum):
     def __init__(self, grid, theta):
         super().__init__(grid, theta)
+        self.expect_vp_state = False  # set True after you add Desai
 
     def initialize(self) -> None:
+        # Keep what you had: push elastic stiffness + allocate output fields
         self.C.x.array[:] = to.flatten(self.mat.C)
         self.Fvp = do.fem.Function(self.DG0_1)
         self.alpha = do.fem.Function(self.DG0_1)
         self.eps_vp = do.fem.Function(self.DG0_3x3)
 
     def run_after_solve(self):
-        try:
-            self.eps_vp.x.array[:] = to.flatten(self.mat.elems_ne[-1].eps_ne_k)
-            self.Fvp.x.array[:] = self.mat.elems_ne[-1].Fvp
-            self.alpha.x.array[:] = self.mat.elems_ne[-1].alpha
-        except Exception:
-            pass
+        if not hasattr(self, "eps_vp"):
+            return
+
+        elems = getattr(self.mat, "elems_ne", None)
+        if not elems:
+            return
+        st = elems[-1]
+
+        # eps_vp: write if available (works after any inelastic update that stores eps_ne_k)
+        if hasattr(st, "eps_ne_k"):
+            self.eps_vp.x.array[:] = to.flatten(st.eps_ne_k)
+
+        # Fvp/alpha: only expected after Desai is added
+        if self.expect_vp_state:
+            if not (hasattr(st, "Fvp") and hasattr(st, "alpha")):
+                if MPI.COMM_WORLD.rank == 0:
+                    print("[WARN] Expected Fvp/alpha but missing.")
+                return
+            self.Fvp.x.array[:] = st.Fvp
+            self.alpha.x.array[:] = st.alpha
+        else:
+            # During equilibrium: skip silently (or write if they happen to exist)
+            if hasattr(st, "Fvp") and hasattr(st, "alpha"):
+                self.Fvp.x.array[:] = st.Fvp
+                self.alpha.x.array[:] = st.alpha
+
+
+
 
 
 class SparseSaveFields(sf.SaveFields):
@@ -382,11 +406,10 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 
 
+
 def main():
-    # Read grid
     grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_600_3D")
     grid = sf.GridHandlerGMSH("geom", grid_path)
-
 
      # --- Cavern-specific z_max ---
     Z_MAX_BY_CAVERN = {
@@ -564,6 +587,7 @@ def main():
 
     mat.add_to_non_elastic(desai)
     mom_eq.set_material(mat)
+    mom_eq.expect_vp_state = True
 
 
     tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
