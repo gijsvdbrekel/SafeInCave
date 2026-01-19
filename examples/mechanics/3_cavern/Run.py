@@ -432,8 +432,8 @@ def main():
 
     OPERATION_DAYS = 100
     SCHEDULE_MODE = "stretch"
-    N_CYCLES = 1
-    dt_hours = 0.1
+    N_CYCLES = 10
+    dt_hours = 0.2
 
     PRESSURE_SCENARIO = "sinus"
 
@@ -540,7 +540,7 @@ def main():
                              g=g_vec[2])
 
     gas_density = 7.6  # Hydrogen density in kg/m3 at specific T and P conditions
-    p_gas = 14.7 * ut.MPa
+    p_gas = 15 * ut.MPa
     bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, z_max,
                                 [p_gas, p_gas],
                                 [0.0, tc_equilibrium.t_final],
@@ -596,11 +596,11 @@ def main():
 
 
     if PRESSURE_SCENARIO == "linear":
-        p_min = 8.0
+        p_min = p_gas
         p_max = 21.4 
 
         base_times_h = [0.0, 2.0, 14.0, 16.0, 24.0]
-        base_pressures_MPa = [p_max, p_min, p_min, p_max, p_max]
+        base_pressures_MPa = [p_min, p_max, p_max, p_min, p_min]
 
         t_pressure, p_pressure = build_linear_schedule_multi(
             tc_operation,
@@ -612,8 +612,8 @@ def main():
         )
 
     elif PRESSURE_SCENARIO == "sinus":
-        p_mean = 14.7 * ut.MPa
-        p_ampl = 6.7 * ut.MPa
+        p_mean = p_gas * ut.MPa
+        p_ampl = 6.5 * ut.MPa
         t_pressure, p_pressure = build_sinus_schedule_multi(
             tc_operation,
             p_mean=p_mean, p_ampl=p_ampl,
@@ -626,7 +626,7 @@ def main():
     elif PRESSURE_SCENARIO == "irregular":
         base_waypoints_h = [0, 1.0, 2.0, 3.2, 4.0, 5.0, 6.4, 7.1, 9.0, 11.5,
                             13.0, 16.0, 18.0, 21.0, 24.0]
-        base_pressures_MPa = [10.0, 12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4,
+        base_pressures_MPa = [p_gas, 12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4,
                               9.3, 10.7, 8.9, 11.6, 9.5, 10.2, 11.0]
         t_pressure, p_pressure = build_irregular_schedule_multi(
             tc_operation,
