@@ -13,10 +13,10 @@ import math
 # ============================================================
 #  SCENARIO SWITCHES (zet precies ÉÉN preset True)
 # ============================================================
-RUN_DESAI_ONLY = False            # spring + desai (alleen viscoplastisch)
+RUN_DESAI_ONLY = True            # spring + desai (alleen viscoplastisch)
 RUN_DISLOC_OLD_ONLY = False       # spring + dislocation (oude params)
 RUN_DISLOC_NEW_ONLY = False       # spring + dislocation (nieuwe params)
-RUN_FULL = True                   # spring + kelvin + disloc + pressure-solution + desai
+RUN_FULL = False                   # spring + kelvin + disloc + pressure-solution + desai
 RUN_FULL_MINUS_DESAI = False      # spring + kelvin + disloc + pressure-solution (zonder desai)
 
 # Equilibrium: meestal wil je puur elastisch initialiseren (aanrader)
@@ -301,15 +301,15 @@ def main():
     parts = build_base_material_parts(mom_eq)
     salt_density = parts["salt_density"]
 
-    # Body forces
+   # Body forces (PAS NA set_material!)
     g = -9.81
     g_vec = [0.0, 0.0, g]
-    mom_eq.build_body_force(g_vec)
 
     # Temperature
     T0_field = 298 * to.ones(mom_eq.n_elems)
     mom_eq.set_T0(T0_field)
     mom_eq.set_T(T0_field)
+
 
     # ============================================================
     # EQUILIBRIUM STAGE
@@ -334,6 +334,8 @@ def main():
         mom_eq.expect_vp_state = False
 
     mom_eq.set_material(mat_eq)
+    mom_eq.build_body_force(g_vec)   # <-- HIER
+
 
     # Equilibrium BCs
     bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_equilibrium.t_final])
