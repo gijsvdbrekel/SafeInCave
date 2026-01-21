@@ -408,7 +408,7 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 
 def main():
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_600_3D")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_1200_3D")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
      # --- Cavern-specific z_max ---
@@ -427,13 +427,13 @@ def main():
         "multichamber1200":  420.82,
     }
 
-    CAVERN_TYPE = "irregular600"
+    CAVERN_TYPE = "irregular1200"
     z_max = Z_MAX_BY_CAVERN[CAVERN_TYPE]
 
-    OPERATION_DAYS = 100
+    OPERATION_DAYS = 365
     SCHEDULE_MODE = "stretch"
-    N_CYCLES = 10
-    dt_hours = 0.2
+    N_CYCLES = 5
+    dt_hours = 2
 
     PRESSURE_SCENARIO = "sinus"
 
@@ -622,7 +622,7 @@ def main():
             days=OPERATION_DAYS, mode=SCHEDULE_MODE,
             daily_period_hours=24.0,   # wordt genegeerd bij "stretch"
             total_cycles=N_CYCLES,     # <— nieuw
-            clamp_min=p_gas, clamp_max=None
+            clamp_min=None, clamp_max=None
         )
 
     elif PRESSURE_SCENARIO == "irregular":
@@ -635,7 +635,7 @@ def main():
             base_waypoints_h=base_waypoints_h,
             base_pressures_MPa=base_pressures_MPa,
             days=OPERATION_DAYS, mode=SCHEDULE_MODE,
-            smooth=0.25, clamp_min=p_gas, clamp_max=None,
+            smooth=0.25, clamp_min=None, clamp_max=None,
             resample_at_dt=True,
             total_cycles=N_CYCLES,   # <— voeg dit toe als je ook hier 2 cycles wilt
         )

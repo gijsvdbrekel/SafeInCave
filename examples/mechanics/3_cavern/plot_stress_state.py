@@ -15,14 +15,38 @@ DAY = 24.0 * HOUR
 # ------------------------
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
 
-def cavern_label_from_folder(folder_name: str) -> str:
-    # e.g. "Asymmetric_irregular_600" -> "Asymmetric"
-    return folder_name.split("_")[0]
+def cavern_label_from_group(group_folder: str) -> str:
+    """
+    group folder looks like: Asymmetric_sinus_600 or Tilt_irregular_600
+    """
+    low = group_folder.lower()
+    if low.startswith("asymmetric"):
+        return "Asymmetric"
+    if low.startswith("multichamber"):
+        return "Multichamber"
+    if low.startswith("teardrop"):
+        return "Teardrop"
+    if low.startswith("tilt") or low.startswith("tilted"):
+        return "Tilt"
+    if low.startswith("regular"):
+        return "Regular"
+    if low.startswith("irregularfine") or low.startswith("irregular_fine"):
+        return "IrregularFine"
+    if low.startswith("irregular"):
+        return "Irregular"
+    return group_folder.split("_")[0]
 
-def pressure_scheme_from_folder(folder_name: str) -> str:
-    # e.g. "Asymmetric_irregular_600" -> "irregular"
-    parts = folder_name.split("_")
-    return parts[1].lower() if len(parts) > 1 else ""
+def pressure_scheme_from_group(group_folder: str) -> str:
+    """
+    group folder looks like: Asymmetric_sinus_600 -> sinus
+                             Tilt_irregular_600  -> irregular
+    """
+    low = group_folder.lower()
+    if "_irregular_" in low or low.endswith("_irregular") or "irregular" in low:
+        return "irregular"
+    if "_sinus_" in low or low.endswith("_sinus") or "sinus" in low:
+        return "sinus"
+    return ""
 
 def build_color_map(labels):
     cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
@@ -31,12 +55,13 @@ def build_color_map(labels):
     return {lab: cycle[i % len(cycle)] for i, lab in enumerate(labels)}
 
 # ------------------------
-# Pressure schedule reader (FIXED: actually uses prefix)
+# Pressure schedule reader (Pressure_sinus / Pressure_irregular folders)
 # ------------------------
 def read_pressure_schedule_from_pressure_folder(root_folder: str, prefix: str):
     """
-    Looks for a folder starting with `prefix` (case-insensitive) and reads the first file
-    starting with 'pressure_schedule' inside it.
+    Finds folder starting with prefix (case-insensitive), reads pressure_schedule*.json inside it.
+    Example:
+      prefix="Pressure_sinus" -> OutputNobian/Pressure_sinus/pressure_schedule.json
     """
     prefix_l = prefix.lower()
 
@@ -63,7 +88,6 @@ def read_pressure_schedule_from_pressure_folder(root_folder: str, prefix: str):
 
         t_days = np.asarray(data["t_values"], dtype=float) / DAY
         p_MPa = np.asarray(data["p_values"], dtype=float) / MPA
-
         print(f"Using pressure schedule from: {folder_name}/{os.path.basename(candidate)}")
         return t_days, p_MPa
 
@@ -102,16 +126,13 @@ def get_wall_indices_from_msh(msh_path):
     msh = meshio.read(msh_path)
     wall_idx = None
 
-    # meshio <=4
     if hasattr(msh, "cells_dict") and "line" in msh.cells_dict:
         wall_idx = np.unique(np.asarray(msh.cells_dict["line"]).reshape(-1))
 
-    # some versions: dict
     if wall_idx is None and isinstance(getattr(msh, "cells", None), dict):
         if "line" in msh.cells:
             wall_idx = np.unique(np.asarray(msh.cells["line"]).reshape(-1))
 
-    # meshio >=5: list of CellBlock
     if wall_idx is None:
         for cb in msh.cells:
             if getattr(cb, "type", None) == "line":
@@ -124,7 +145,7 @@ def get_wall_indices_from_msh(msh_path):
     return msh.points, wall_idx
 
 # ------------------------
-# Probe generation (top/mid/bottom + bends)
+# Probe generation
 # ------------------------
 def auto_generate_probes_from_wall_points(wall_points_sorted_z, n_bend_probes=2, min_gap_idx=5):
     pts = wall_points_sorted_z
@@ -185,11 +206,26 @@ def auto_generate_probes_from_wall_points(wall_points_sorted_z, n_bend_probes=2,
     return probes
 
 # ------------------------
-# Read wall points from u + geom.msh
+# Paths for your folder-per-field layout inside operation/
+# ------------------------
+def path_u_xdmf(case_folder):
+    return os.path.join(case_folder, "operation", "u", "u.xdmf")
+
+def path_geom_msh(case_folder):
+    return os.path.join(case_folder, "operation", "mesh", "geom.msh")
+
+def path_p_xdmf(case_folder):
+    return os.path.join(case_folder, "operation", "p_elems", "p_elems.xdmf")
+
+def path_q_xdmf(case_folder):
+    return os.path.join(case_folder, "operation", "q_elems", "q_elems.xdmf")
+
+# ------------------------
+# Read wall points from u + geom
 # ------------------------
 def load_wall_points(case_folder):
-    u_xdmf = os.path.join(case_folder, "u.xdmf")
-    msh_path = os.path.join(case_folder, "geom.msh")
+    u_xdmf = path_u_xdmf(case_folder)
+    msh_path = path_geom_msh(case_folder)
 
     points, _, _ = post.read_node_vector(u_xdmf)
     points_msh, wall_idx_msh = get_wall_indices_from_msh(msh_path)
@@ -202,8 +238,8 @@ def load_wall_points(case_folder):
     return wall_points[order]
 
 def load_wall_points_and_u(case_folder):
-    u_xdmf = os.path.join(case_folder, "u.xdmf")
-    msh_path = os.path.join(case_folder, "geom.msh")
+    u_xdmf = path_u_xdmf(case_folder)
+    msh_path = path_geom_msh(case_folder)
 
     points, time_list, u_field = post.read_node_vector(u_xdmf)
     points_msh, wall_idx_msh = get_wall_indices_from_msh(msh_path)
@@ -247,8 +283,8 @@ def plot_cavern_shape_with_probes(ax, wall_points, wall_u, probes_dict, scale=1.
 # Stress path reader for probes
 # ------------------------
 def read_stress_paths(case_folder, probes_dict):
-    p_path = os.path.join(case_folder, "p_elems.xdmf")
-    q_path = os.path.join(case_folder, "q_elems.xdmf")
+    p_path = path_p_xdmf(case_folder)
+    q_path = path_q_xdmf(case_folder)
 
     points_p, time_list, p_elems = post.read_cell_scalar(p_path)
     _, time_list2, q_elems = post.read_cell_scalar(q_path)
@@ -267,35 +303,79 @@ def read_stress_paths(case_folder, probes_dict):
 
     return out
 
+def scheme_from_case_folder(case_folder_name: str) -> str:
+    low = case_folder_name.lower()
+    if low.startswith("case_sinus"):
+        return "sinus"
+    if low.startswith("case_irregular"):
+        return "irregular"
+    return ""
+
+def collect_cases_nested(ROOT, target_pressure: str):
+    """
+    Returns list of (label, case_folder_path).
+    Detects pressure scheme from the case folder name: case_sinus(...) / case_irregular(...)
+    """
+    required_files = [path_u_xdmf, path_geom_msh, path_p_xdmf, path_q_xdmf]
+
+    cases = []
+
+    for group in sorted(os.listdir(ROOT)):
+        group_path = os.path.join(ROOT, group)
+        if not os.path.isdir(group_path):
+            continue
+
+        # skip pressure folders
+        if group.lower().startswith("pressure_"):
+            continue
+
+        cavern_label = cavern_label_from_group(group)
+
+        for sub in sorted(os.listdir(group_path)):
+            if not sub.lower().startswith("case_"):
+                continue
+
+            # decide scheme from case folder name (robust!)
+            case_scheme = scheme_from_case_folder(sub)
+            if case_scheme != target_pressure:
+                continue
+
+            case_path = os.path.join(group_path, sub)
+            if not os.path.isdir(case_path):
+                continue
+
+            missing = []
+            for f in required_files:
+                fp = f(case_path)
+                if not os.path.isfile(fp):
+                    missing.append(fp)
+
+            if missing:
+                print(f"[SKIP] {group}/{sub} missing:")
+                for m in missing:
+                    print("   -", m)
+                continue
+
+            print(f"[OK] {group}/{sub}  -> label={cavern_label}, scheme={case_scheme}")
+            cases.append((cavern_label, case_path))
+
+    return cases
+
+
 # ------------------------
 # Main
 # ------------------------
 def main():
     ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
-    required = ["u.xdmf", "geom.msh", "p_elems.xdmf", "q_elems.xdmf"]
+    TARGET_PRESSURE = "sinus"  # sinus or "irregular"
 
-    TARGET_PRESSURE = "sinus"
-
-    # collect cases
-    cases = []
-    for nm in sorted(os.listdir(ROOT)):
-        fpath = os.path.join(ROOT, nm)
-        if not os.path.isdir(fpath):
-            continue
-        if nm.lower().startswith("pressure_"):
-            continue
-        if pressure_scheme_from_folder(nm) != TARGET_PRESSURE:
-            continue
-        if all(os.path.isfile(os.path.join(fpath, r)) for r in required):
-            cases.append((nm, fpath))
-
+    cases = collect_cases_nested(ROOT, TARGET_PRESSURE)
     if not cases:
-        raise RuntimeError(f"No '{TARGET_PRESSURE}' case folders found with " + ", ".join(required))
+        raise RuntimeError(f"No '{TARGET_PRESSURE}' cases found under nested folders in {ROOT}.")
 
-    # consistent colors per cavern label
+    # unique labels present
     labels_present = []
-    for nm, _ in cases:
-        lab = cavern_label_from_folder(nm)
+    for lab, _ in cases:
         if lab not in labels_present:
             labels_present.append(lab)
 
@@ -306,18 +386,17 @@ def main():
     probe_types = ["top", "mid", "bottom", "bend1", "bend2"]
 
     # build stress paths
-    stress_by_case = {}
-    for nm, folder in cases:
-        label = cavern_label_from_folder(nm)
+    stress_by_label = {}
+    for lab, folder in cases:
         wall_points = load_wall_points(folder)
         probes = auto_generate_probes_from_wall_points(wall_points, n_bend_probes=2, min_gap_idx=5)
-        stress_by_case[label] = read_stress_paths(folder, probes)
+        stress_by_label[lab] = read_stress_paths(folder, probes)
 
-    # extra figure: shape + probes for one cavern
-    TARGET = "IrregularFine"
+    # optional: shape plot for one label
+    TARGET_LABEL_FOR_SHAPE = "Asymmetric"
     target_folder = None
-    for nm, folder in cases:
-        if cavern_label_from_folder(nm) == TARGET:
+    for lab, folder in cases:
+        if lab == TARGET_LABEL_FOR_SHAPE:
             target_folder = folder
             break
 
@@ -326,9 +405,9 @@ def main():
         probes = auto_generate_probes_from_wall_points(wall_points, n_bend_probes=2, min_gap_idx=5)
         fig2, ax2 = plt.subplots(figsize=(6, 6))
         plot_cavern_shape_with_probes(ax2, wall_points, wall_u, probes, scale=1.0)
-        ax2.set_title(f"{TARGET} cavern shape + probes")
+        ax2.set_title(f"{TARGET_LABEL_FOR_SHAPE} cavern shape + probes")
     else:
-        print(f"[WARN] Could not find target cavern '{TARGET}' in cases. No shape plot made.")
+        print(f"[WARN] Could not find target cavern '{TARGET_LABEL_FOR_SHAPE}' for shape plot.")
 
     # p–q plots per probe type
     fig, axes = plt.subplots(2, 3, figsize=(16, 9))
@@ -339,9 +418,9 @@ def main():
         plot_dilatancy_boundary(ax)
 
         for lab in labels_sorted:
-            if lab not in stress_by_case:
+            if lab not in stress_by_label:
                 continue
-            p, q = stress_by_case[lab][ptype]
+            p, q = stress_by_label[lab][ptype]
             ax.plot(p, q, linewidth=2.0, color=color_map[lab])
             ax.scatter(p[-1], q[-1], s=30, edgecolors="black", linewidths=0.6,
                        color=color_map[lab], zorder=5)
@@ -351,16 +430,16 @@ def main():
         ax.set_ylabel("Von Mises q (MPa)")
         ax.grid(True, alpha=0.3)
 
-    # pressure schedule in bottom-right subplot (correct schedule!)
+    # pressure schedule in bottom-right subplot (from Pressure_* folders)
     axp = axes[5]
     tP, pP = read_pressure_schedule_from_pressure_folder(ROOT, f"Pressure_{TARGET_PRESSURE}")
 
     if tP is None:
-        axp.text(0.5, 0.5, f"No pressure schedule found for Pressure_{TARGET_PRESSURE}*",
+        axp.text(0.5, 0.5, f"No pressure schedule found in Pressure_{TARGET_PRESSURE}*",
                  ha="center", va="center", transform=axp.transAxes)
         axp.axis("off")
     else:
-        axp.plot(tP, pP, linewidth=2.0, color="darkred")
+        axp.plot(tP, pP, linewidth=2.0)
         axp.set_title(f"Pressure schedule ({TARGET_PRESSURE})")
         axp.set_xlabel("Time (days)")
         axp.set_ylabel("Pressure (MPa)")
@@ -389,4 +468,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
