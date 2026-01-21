@@ -408,7 +408,7 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 
 def main():
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_1200_3D")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_regular_600_3D")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
      # --- Cavern-specific z_max ---
@@ -427,12 +427,12 @@ def main():
         "multichamber1200":  420.82,
     }
 
-    CAVERN_TYPE = "irregular1200"
+    CAVERN_TYPE = "regular600"
     z_max = Z_MAX_BY_CAVERN[CAVERN_TYPE]
 
     OPERATION_DAYS = 365
     SCHEDULE_MODE = "stretch"
-    N_CYCLES = 5
+    N_CYCLES = 10
     dt_hours = 2
 
     PRESSURE_SCENARIO = "sinus"
@@ -539,7 +539,7 @@ def main():
                              [0.0, tc_equilibrium.t_final],
                              g=g_vec[2])
 
-    gas_density = 7.6  # Hydrogen density in kg/m3 at specific T and P conditions
+    gas_density = 0.089  # Hydrogen density in kg/m3 at atmospheric conditions
     p_gas_MPa = 15.0
     p_gas = p_gas_MPa * ut.MPa   # keep equilibrium exactly consistent
 
