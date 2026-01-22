@@ -28,8 +28,8 @@ class LinearMomentumMod(sf.LinearMomentum):
 
 
 class LinearMomentumMixedMod(sf.LinearMomentumMixed):
-	def __init__(self, grid, theta, stab_method, stab_scaling):
-		super().__init__(grid, theta, stab_method, stab_scaling)
+	def __init__(self, grid, theta, stab_scaling):
+		super().__init__(grid, theta, stab_scaling)
 		self.Fvp = do.fem.Function(self.DG0_1)
 		self.alpha = do.fem.Function(self.DG0_1)
 		self.eps_vp = do.fem.Function(self.DG0_3x3)
@@ -318,7 +318,7 @@ def run(formulation):
 
 def main():
 	run("P1")
-	run("P1P1")
+	# run("P1P1")
 	run("P1P1_Stab")
 
 if __name__ == '__main__':

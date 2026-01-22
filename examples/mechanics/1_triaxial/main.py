@@ -22,8 +22,8 @@ class LinearMomentumMod(sf.LinearMomentum):
 
 
 class LinearMomentumMixedMod(sf.LinearMomentumMixed):
-	def __init__(self, grid, theta, stab_method, stab_scaling=1.0):
-		super().__init__(grid, theta, stab_method, stab_scaling)
+	def __init__(self, grid, theta, stab_scaling=1.0):
+		super().__init__(grid, theta, stab_scaling)
 		self.Fvp = do.fem.Function(self.DG0_1)
 		self.eps_ve = do.fem.Function(self.DG0_3x3)
 		self.eps_cr = do.fem.Function(self.DG0_3x3)
@@ -37,7 +37,6 @@ class LinearMomentumMixedMod(sf.LinearMomentumMixed):
 
 
 def run(formulation):
-
 	# Read grid
 	grid_path = os.path.join("..", "..", "..", "grids", "cube")
 	grid = sf.GridHandlerGMSH("geom", grid_path)
@@ -192,9 +191,9 @@ def run(formulation):
 
 
 def main():
-	run("P1")
+	# run("P1")
 	# run("P1P1")
-	# run("P1P1_Stab")
+	run("P1P1_Stab")
 
 
 if __name__ == '__main__':

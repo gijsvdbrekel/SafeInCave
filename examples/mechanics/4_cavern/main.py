@@ -220,7 +220,7 @@ def run(formulation):
 
 	# Define simulator
 	sim = sf.Simulator_M(mom_eq, tc_op, outputs, False)
-	sim.run()
+	# sim.run()
 
 
 def main():
