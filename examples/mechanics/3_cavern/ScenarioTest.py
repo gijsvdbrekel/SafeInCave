@@ -14,13 +14,13 @@ import math
 #  SCENARIO SWITCHES (zet precies ÉÉN preset True)
 # ============================================================
 RUN_DESAI_ONLY = False            # spring + desai (alleen viscoplastisch)
-RUN_DISLOC_OLD_ONLY = True      # spring + dislocation (oude params)
+RUN_DISLOC_OLD_ONLY = False      # spring + dislocation (oude params)
 RUN_DISLOC_NEW_ONLY = False      # spring + dislocation (nieuwe params)
-RUN_FULL = False                 # spring + kelvin + disloc + pressure-solution + desai
+RUN_FULL = True                 # spring + kelvin + disloc + pressure-solution + desai
 RUN_FULL_MINUS_DESAI = False     # spring + kelvin + disloc + pressure-solution (zonder desai)
 
 # Equilibrium: meestal wil je puur elastisch initialiseren (aanrader)
-EQUILIBRIUM_ELASTIC_ONLY = True
+EQUILIBRIUM_ELASTIC_ONLY = False
 
 # ============================================================
 #  FIXED RUN SETTINGS
