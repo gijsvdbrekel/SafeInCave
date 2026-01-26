@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpi4py import MPI
 import dolfinx as do
+import json
 
 import safeincave.PostProcessingTools as post
 
@@ -16,8 +17,8 @@ CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop"
 ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
 
 SELECT = {
-    "pressure": "irregular",     # "sinus" / "irregular" / "csv_profile" / "linear" / None (=all)
-    "caverns": None,             # e.g. ["Regular", "Irregular"] or None (=all)
+    "pressure": "sinus",     # "sinus" / "irregular" / "csv_profile" / "linear" / None (=all)
+    "caverns": ["Regular"],             # e.g. ["Regular", "Irregular"] or None (=all)
     "case_contains": None,       # e.g. "365days" or "8cyc" or "desai_only" or None
 }
 

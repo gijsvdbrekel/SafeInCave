@@ -99,6 +99,12 @@ def read_pressure_schedule(case_folder: str):
         t = np.asarray(data["t_values"], dtype=float) / HOUR
         p = np.asarray(data["p_values"], dtype=float) / MPA
         return t, p
+    
+    if "t_values_s" in data and "p_values_Pa" in data:
+        t = np.asarray(data["t_values_s"], dtype=float) / HOUR
+        p = np.asarray(data["p_values_Pa"], dtype=float) / MPA
+        return t, p
+
 
     raise KeyError(f"Pressure JSON has unexpected keys: {list(data.keys())}")
 
@@ -444,6 +450,18 @@ def read_case_metadata(case_folder: str) -> dict:
     m = re.search(r"(\d+)\s*days", name)
     if m:
         meta["operation_days"] = int(m.group(1))
+        
+        
+    # --- normalize strings (avoid filter mismatches) ---
+    if meta["pressure_scenario"] is not None:
+        meta["pressure_scenario"] = str(meta["pressure_scenario"]).lower()
+
+    if meta["scenario"] is not None:
+        meta["scenario"] = str(meta["scenario"]).lower()
+
+    if meta["mode"] is not None:
+        meta["mode"] = str(meta["mode"]).lower()
+
 
     return meta
 
@@ -488,8 +506,13 @@ def index_all_cases(root: str) -> list[dict]:
 def filter_cases(cases: list[dict], sel: dict) -> list[dict]:
     def ok(m: dict) -> bool:
         cavs = sel.get("caverns", None)
-        if cavs is not None and m["cavern_group"] not in cavs:
-            return False
+        if cavs is not None:
+            # accept either exact group folder name OR the pretty label
+            group = m.get("cavern_group", "")
+            label = cavern_label_from_group(group)
+            if (group not in cavs) and (label not in cavs):
+                return False
+
 
         p = sel.get("pressure", None)
         if p is not None:

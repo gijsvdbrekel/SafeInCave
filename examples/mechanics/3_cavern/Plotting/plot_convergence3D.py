@@ -35,7 +35,7 @@ SELECT = {
 
     # Pressure scheme from pressure_schedule.json: "sinus", "irregular", "csv_profile", "linear", ...
     # None = all pressure schemes
-    "pressure": None,                # e.g. "sinus"
+    "pressure": "sinus",                # e.g. "sinus"
 
     # Optional: only keep case folders containing substring
     "case_contains": None,           # e.g. "365days" or "desai_only" or None
@@ -69,13 +69,7 @@ def cavern_label_from_group(group_folder: str) -> str:
     return group_folder.split("_")[0]
 
 
-def scheme_from_case_folder(case_folder_name: str) -> str:
-    low = case_folder_name.lower()
-    if low.startswith("case_sinus"):
-        return "sinus"
-    if low.startswith("case_irregular"):
-        return "irregular"
-    return ""
+
 
 
 def build_color_map(labels):
@@ -113,56 +107,6 @@ def is_valid_hdf5(h5_path: str) -> bool:
         return False
 
 
-def collect_cases_nested(ROOT, target_scheme: str):
-    """
-    Returns list of dicts:
-      {label, group, case_name, case_path, has_pressure_json}
-    Filters by scheme using case folder name: case_sinus... / case_irregular...
-    """
-    cases = []
-    for group in sorted(os.listdir(ROOT)):
-        group_path = os.path.join(ROOT, group)
-        if not os.path.isdir(group_path):
-            continue
-        if group.lower().startswith("pressure_"):
-            continue
-
-        label = cavern_label_from_group(group)
-
-        for sub in sorted(os.listdir(group_path)):
-            if not sub.lower().startswith("case_"):
-                continue
-
-            case_scheme = scheme_from_case_folder(sub)
-            if case_scheme != target_scheme:
-                continue
-
-            case_path = os.path.join(group_path, sub)
-            if not os.path.isdir(case_path):
-                continue
-
-            # required for 3D convergence
-            u_xdmf = path_u_xdmf(case_path)
-            u_h5 = path_u_h5(case_path)
-            msh = path_geom_msh(case_path)
-
-            if not (os.path.isfile(u_xdmf) and os.path.isfile(u_h5) and os.path.isfile(msh)):
-                print(f"[SKIP] {group}/{sub} missing u.xdmf/u.h5/geom.msh")
-                continue
-
-            if not is_valid_hdf5(u_h5):
-                print(f"[SKIP] {group}/{sub} corrupt u.h5 (not HDF5 signature)")
-                continue
-
-            cases.append({
-                "label": label,
-                "group": group,
-                "case_name": sub,
-                "case_path": case_path,
-                "has_pressure_json": os.path.isfile(path_pressure_json(case_path)),
-            })
-
-    return cases
 
 
 
@@ -212,55 +156,6 @@ def read_pressure_schedule(case_folder: str):
 
 
 
-# ------------------------
-# 3D convergence from cavern surface: V0 and ΔV(t)
-# ------------------------
-def _iter_surface_cellblocks_with_phys(mesh: meshio.Mesh):
-    """
-    Yields tuples:
-      (cell_type: str, cells: (Nc, nverts) int array, phys_tags: (Nc,) int array)
-    for surface cell blocks that have gmsh:physical.
-    """
-    # Determine how to access cell data for gmsh physical tags
-    # meshio typically stores: mesh.cell_data_dict["gmsh:physical"][cell_type] -> tags
-    phys = None
-    if hasattr(mesh, "cell_data_dict"):
-        phys = mesh.cell_data_dict.get("gmsh:physical", None)
-    else:
-        # older/newer variations – try best effort
-        try:
-            phys = mesh.cell_data.get("gmsh:physical", None)
-        except Exception:
-            phys = None
-
-    if phys is None:
-        return  # nothing
-
-    # Surface cell types we accept
-    def is_surface_type(ct: str) -> bool:
-        return isinstance(ct, str) and (ct.startswith("triangle") or ct.startswith("quad"))
-
-    # Iterate through mesh.cells
-    # mesh.cells is list[CellBlock] in recent meshio; sometimes dict in older
-    if isinstance(mesh.cells, dict):
-        for ct, arr in mesh.cells.items():
-            if not is_surface_type(ct):
-                continue
-            tags = phys.get(ct, None)
-            if tags is None:
-                continue
-            yield ct, np.asarray(arr, dtype=int), np.asarray(tags, dtype=int)
-    else:
-        for cb in mesh.cells:
-            ct = getattr(cb, "type", None)
-            if not is_surface_type(ct):
-                continue
-            tags = phys.get(ct, None)
-            if tags is None:
-                continue
-            yield ct, np.asarray(cb.data, dtype=int), np.asarray(tags, dtype=int)
-
-
 def _area_vectors(points_xyz: np.ndarray, tri: np.ndarray):
     """
     Compute area vector (n * area) for each triangle.
@@ -273,13 +168,6 @@ def _area_vectors(points_xyz: np.ndarray, tri: np.ndarray):
     return 0.5 * np.cross(p1 - p0, p2 - p0)
 
 
-def _quad_to_tris(quad: np.ndarray):
-    """
-    quad: (N,4) -> two triangles per quad: (2N,3)
-    """
-    t1 = quad[:, [0, 1, 2]]
-    t2 = quad[:, [0, 2, 3]]
-    return np.vstack([t1, t2])
 
 
 from mpi4py import MPI
@@ -421,71 +309,6 @@ def compute_convergence_3d_percent(case_path: str, cavern_phys_tag: int = 29):
 
 
 
-
-
-# ------------------------
-# Plotting (multi-cavern per scheme, 2-panel)
-# ------------------------
-def plot_scheme(ROOT: str, scheme: str, *, color_map, cavern_phys_tag: int = CAVERN_PHYS_TAG):
-    cases = collect_cases_nested(ROOT, scheme)
-    if not cases:
-        raise RuntimeError(f"No '{scheme}' cases found under nested folders in {ROOT}.")
-
-    fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(13, 7), sharex=True,
-        gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12},
-    )
-    fig.suptitle(f"3D cavern volume convergence – pressure scheme: {scheme}", fontsize=12)
-
-    # --- convergence lines ---
-    plotted_any = False
-    for c in cases:
-        lab = c["label"]
-        col = color_map.get(lab, None)
-
-        try:
-            t_days, conv = compute_convergence_3d_percent(c["case_path"], cavern_phys_tag=cavern_phys_tag)
-        except Exception as e:
-            print(f"[SKIP] convergence {c['group']}/{c['case_name']}: {e}")
-            continue
-
-        ax1.plot(t_days, conv, linewidth=2.0, alpha=0.95, color=col, label=lab)
-        plotted_any = True
-
-    if not plotted_any:
-        ax1.text(0.5, 0.5, "No convergence curves could be plotted (all cases failed).",
-                 ha="center", va="center", transform=ax1.transAxes)
-
-    ax1.set_ylabel("Convergence (ΔV/V0) (%)")
-    ax1.grid(True, alpha=0.3)
-
-    # unique legend
-    handles, labs = ax1.get_legend_handles_labels()
-    uniq = {}
-    for h, l in zip(handles, labs):
-        uniq[l] = h
-    if uniq:
-        ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=9, frameon=True)
-
-    # --- pressure schedule: take first available in this scheme ---
-    ref_t, ref_p = None, None
-    for c in cases:
-        t, p = read_pressure_from_case(c["case_path"])
-        if t is not None:
-            ref_t, ref_p = t, p
-            break
-
-    if ref_t is None:
-        ax2.text(0.5, 0.5, "No pressure_schedule.json found for this scheme.",
-                 ha="center", va="center", transform=ax2.transAxes)
-    else:
-        ax2.plot(ref_t, ref_p, linewidth=1.7)
-
-    ax2.set_ylabel("Pressure (MPa)")
-    ax2.set_xlabel("Time (days)")
-    ax2.grid(True, alpha=0.3)
-
-    return fig
 
 def read_case_pressure_scenario(case_path: str) -> str | None:
     """
