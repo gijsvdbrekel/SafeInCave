@@ -48,6 +48,39 @@ def pressure_scheme_from_group(group_folder: str) -> str:
         return "sinus"
     return ""
 
+def read_pressure_schedule(case_folder: str):
+    """
+    Returns (t_hours, p_MPa).
+    Supports both new JSON keys (t_hours/p_MPa) and old keys (t_values/p_values in s/Pa).
+    """
+    import os, json
+    import numpy as np
+
+    pjson = os.path.join(case_folder, "pressure_schedule.json")
+    if not os.path.isfile(pjson):
+        return None, None
+
+    with open(pjson, "r") as f:
+        data = json.load(f)
+
+    # New format (preferred)
+    if "t_hours" in data and "p_MPa" in data:
+        t = np.asarray(data["t_hours"], dtype=float)
+        p = np.asarray(data["p_MPa"], dtype=float)
+        return t, p
+
+    # Old format (seconds / Pa)
+    if "t_values" in data and "p_values" in data:
+        # Import your unit constants in the calling file, or define here:
+        HOUR = 3600.0
+        MPA = 1e6
+        t = np.asarray(data["t_values"], dtype=float) / HOUR
+        p = np.asarray(data["p_values"], dtype=float) / MPA
+        return t, p
+
+    raise KeyError(f"Pressure JSON has unexpected keys: {list(data.keys())}")
+
+
 def build_color_map(labels):
     cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
     if not cycle:
@@ -86,8 +119,11 @@ def read_pressure_schedule_from_pressure_folder(root_folder: str, prefix: str):
         with open(candidate, "r") as f:
             data = json.load(f)
 
-        t_days = np.asarray(data["t_values"], dtype=float) / DAY
-        p_MPa = np.asarray(data["p_values"], dtype=float) / MPA
+        t_hours, p_MPa = read_pressure_schedule(folder_path)  # or the folder containing the json
+        if t_hours is None:
+            return None, None
+        t_days = t_hours / 24.0
+
         print(f"Using pressure schedule from: {folder_name}/{os.path.basename(candidate)}")
         return t_days, p_MPa
 

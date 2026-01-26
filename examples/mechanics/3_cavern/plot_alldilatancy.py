@@ -209,6 +209,39 @@ def plot_convergence(ax, wall: WallProfileData, t_step: int):
     ax.scatter(wall.time_list[t_step] / hour, wall.volumes[t_step], c="white", edgecolors="black", zorder=10000)
     ax.set_xlabel("Time (hours)", size=12, fontname="serif")
     ax.set_ylabel("Convergence (%)", size=12, fontname="serif")
+    
+def read_pressure_schedule(case_folder: str):
+    """
+    Returns (t_hours, p_MPa).
+    Supports both new JSON keys (t_hours/p_MPa) and old keys (t_values/p_values in s/Pa).
+    """
+    import os, json
+    import numpy as np
+
+    pjson = os.path.join(case_folder, "pressure_schedule.json")
+    if not os.path.isfile(pjson):
+        return None, None
+
+    with open(pjson, "r") as f:
+        data = json.load(f)
+
+    # New format (preferred)
+    if "t_hours" in data and "p_MPa" in data:
+        t = np.asarray(data["t_hours"], dtype=float)
+        p = np.asarray(data["p_MPa"], dtype=float)
+        return t, p
+
+    # Old format (seconds / Pa)
+    if "t_values" in data and "p_values" in data:
+        # Import your unit constants in the calling file, or define here:
+        HOUR = 3600.0
+        MPA = 1e6
+        t = np.asarray(data["t_values"], dtype=float) / HOUR
+        p = np.asarray(data["p_values"], dtype=float) / MPA
+        return t, p
+
+    raise KeyError(f"Pressure JSON has unexpected keys: {list(data.keys())}")
+
 
 
 def plot_pressure_schedule(ax, output_folder):
@@ -219,8 +252,10 @@ def plot_pressure_schedule(ax, output_folder):
         with open(pressure_file, "r") as f:
             data = json.load(f)
 
-        t_values = np.array(data["t_values"]) / hour  # sec -> hours
-        p_values = np.array(data["p_values"]) / MPa  # Pa  -> MPa
+        t_values, p_values = read_pressure_schedule(output_folder)
+        if t_values is None:
+            return None, None, None
+
 
         ax.plot(t_values, p_values, "-", color="darkred", linewidth=0.8, label="Pressure schedule")
         ax.plot(t_values[::50], p_values[::50], "o", color="darkred", markersize=2)

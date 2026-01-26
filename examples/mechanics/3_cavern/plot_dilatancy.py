@@ -222,14 +222,38 @@ def collect_cases_nested(ROOT: str, target_scheme: str):
 
 
 def read_pressure_schedule(case_path: str):
+    """
+    Returns (t_hours, p_MPa).
+    Supports new JSON keys (t_hours/p_MPa) and old keys (t_values/p_values in s/Pa).
+    Also supports your raw keys (t_values_s/p_values_Pa).
+    """
     pjson = path_pressure_json(case_path)
     if not os.path.isfile(pjson):
         return None, None
+
     with open(pjson, "r") as f:
         data = json.load(f)
-    t_hours = np.asarray(data["t_values"], float) / hour
-    p_mpa = np.asarray(data["p_values"], float) / MPa
-    return t_hours, p_mpa
+
+    # New preferred format
+    if "t_hours" in data and "p_MPa" in data:
+        t_hours = np.asarray(data["t_hours"], dtype=float)
+        p_mpa = np.asarray(data["p_MPa"], dtype=float)
+        return t_hours, p_mpa
+
+    # Raw keys you write in ScenarioTest.py
+    if "t_values_s" in data and "p_values_Pa" in data:
+        t_hours = np.asarray(data["t_values_s"], dtype=float) / hour
+        p_mpa = np.asarray(data["p_values_Pa"], dtype=float) / MPa
+        return t_hours, p_mpa
+
+    # Old legacy keys (if you still have older results)
+    if "t_values" in data and "p_values" in data:
+        t_hours = np.asarray(data["t_values"], dtype=float) / hour
+        p_mpa = np.asarray(data["p_values"], dtype=float) / MPa
+        return t_hours, p_mpa
+
+    raise KeyError(f"Pressure JSON has unexpected keys: {list(data.keys())}")
+
 
 
 # -------------------------

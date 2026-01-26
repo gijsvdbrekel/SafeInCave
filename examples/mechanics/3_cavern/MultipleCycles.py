@@ -410,7 +410,7 @@ def main():
     OPERATION_DAYS = 100
     SCHEDULE_MODE = "stretch"
     N_CYCLES = 1
-    dt_hours = 0.1
+    dt_hours = 2
 
     PRESSURE_SCENARIO = "sinus"
 

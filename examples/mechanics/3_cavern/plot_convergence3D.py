@@ -139,15 +139,49 @@ def collect_cases_nested(ROOT, target_scheme: str):
     return cases
 
 
+
+
+
 def read_pressure_from_case(case_path: str):
-    pjson = path_pressure_json(case_path)
+    t_hours, p_mpa = read_pressure_schedule(case_path)
+    if t_hours is None:
+        return None, None
+    return t_hours / 24.0, p_mpa
+
+
+
+def read_pressure_schedule(case_folder: str):
+    """
+    Returns (t_hours, p_MPa).
+    Supports both new JSON keys (t_hours/p_MPa) and old keys (t_values/p_values in s/Pa).
+    """
+    import os, json
+    import numpy as np
+
+    pjson = os.path.join(case_folder, "pressure_schedule.json")
     if not os.path.isfile(pjson):
         return None, None
+
     with open(pjson, "r") as f:
         data = json.load(f)
-    t_days = np.asarray(data["t_values"], float) / DAY
-    p_mpa = np.asarray(data["p_values"], float) / MPA
-    return t_days, p_mpa
+
+    # New format (preferred)
+    if "t_hours" in data and "p_MPa" in data:
+        t = np.asarray(data["t_hours"], dtype=float)
+        p = np.asarray(data["p_MPa"], dtype=float)
+        return t, p
+
+    # Old format (seconds / Pa)
+    if "t_values" in data and "p_values" in data:
+        # Import your unit constants in the calling file, or define here:
+        HOUR = 3600.0
+        MPA = 1e6
+        t = np.asarray(data["t_values"], dtype=float) / HOUR
+        p = np.asarray(data["p_values"], dtype=float) / MPA
+        return t, p
+
+    raise KeyError(f"Pressure JSON has unexpected keys: {list(data.keys())}")
+
 
 
 # ------------------------

@@ -681,8 +681,11 @@ def main():
         "scenario": PRESSURE_SCENARIO,
         "mode": SCHEDULE_MODE,
         "operation_days": OPERATION_DAYS,
-        "t_values": [float(t) for t in t_pressure],
-        "p_values": [float(p) for p in p_pressure],
+        "units": {"t_raw": "s", "p_raw": "Pa", "t": "hour", "p": "MPa"},
+        "t_values_s": [float(t) for t in t_pressure],
+        "p_values_Pa": [float(p) for p in p_pressure],
+        "t_hours": [float(t / ut.hour) for t in t_pressure],
+        "p_MPa": [float(p / ut.MPa) for p in p_pressure],
     }
 
     os.makedirs(output_folder, exist_ok=True)
