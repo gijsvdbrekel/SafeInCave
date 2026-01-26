@@ -13,14 +13,14 @@ import math
 # ============================================================
 #  SCENARIO SWITCHES (zet precies ÉÉN preset True)
 # ============================================================
-RUN_DESAI_ONLY = True            # spring + desai (alleen viscoplastisch)
-RUN_DISLOC_OLD_ONLY = False      # spring + dislocation (oude params)
+RUN_DESAI_ONLY = False            # spring + desai (alleen viscoplastisch)
+RUN_DISLOC_OLD_ONLY = True      # spring + dislocation (oude params)
 RUN_DISLOC_NEW_ONLY = False      # spring + dislocation (nieuwe params)
 RUN_FULL = False                 # spring + kelvin + disloc + pressure-solution + desai
 RUN_FULL_MINUS_DESAI = False     # spring + kelvin + disloc + pressure-solution (zonder desai)
 
 # Equilibrium: meestal wil je puur elastisch initialiseren (aanrader)
-EQUILIBRIUM_ELASTIC_ONLY = False
+EQUILIBRIUM_ELASTIC_ONLY = True
 
 # ============================================================
 #  FIXED RUN SETTINGS
@@ -36,7 +36,7 @@ p_gas_MPa_equilibrium = 15.0  # keep equilibrium consistent
 # ============================================================
 #  SOLVER SETTINGS
 # ============================================================
-# "gmres as preconditioner" bestaat niet; GMRES is de Krylov-solver.
+# GMRES is de Krylov-solver.
 # Hier: GMRES + ASM preconditioner (robuust voor niet-symmetrisch).
 KSP_TYPE = "gmres"   # "gmres" aanbevolen
 PC_TYPE = "asm"      # "asm" robuust; alternatief: "gamg" of "hypre" (indien beschikbaar)
@@ -135,8 +135,8 @@ def _output_interval_for_scenario():
     if RUN_DISLOC_OLD_ONLY or RUN_DISLOC_NEW_ONLY:
         return 1
     if RUN_FULL or RUN_FULL_MINUS_DESAI:
-        return 15
-    return 15
+        return 1
+    return 1
 
 
 def _equivalent_rate_from_tensor(eps_rate_3x3: to.Tensor) -> to.Tensor:
