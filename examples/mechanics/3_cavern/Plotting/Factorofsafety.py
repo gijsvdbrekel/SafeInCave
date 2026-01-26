@@ -13,6 +13,15 @@ DAY  = 24.0 * HOUR
 # ---------- consistent naming + colors ----------
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt"]
 
+ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
+
+SELECT = {
+    "pressure": "irregular",     # "sinus" / "irregular" / "csv_profile" / "linear" / None (=all)
+    "caverns": None,             # e.g. ["Regular", "Irregular"] or None (=all)
+    "case_contains": None,       # e.g. "365days" or "8cyc" or "desai_only" or None
+}
+
+
 def cavern_label_from_group(group_folder: str) -> str:
     """
     group folder looks like: Asymmetric_sinus_600 or Tilt_irregular_600
@@ -39,13 +48,7 @@ def build_color_map(labels):
         cycle = [f"C{i}" for i in range(10)]
     return {lab: cycle[i % len(cycle)] for i, lab in enumerate(labels)}
 
-def scheme_from_case_folder(case_folder_name: str) -> str:
-    low = case_folder_name.lower()
-    if low.startswith("case_sinus"):
-        return "sinus"
-    if low.startswith("case_irregular"):
-        return "irregular"
-    return ""
+
 
 # ---------- RD model ----------
 def q_dil_rd(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):
@@ -192,12 +195,43 @@ def write_FOS_paraview(case_folder, time_list, FOS, mesh_source_xdmf, out_folder
     print(f"[OK] Wrote ParaView FoS: {out_path}")
     return out_path
 
-# ---------- nested case collector for OutputNobian ----------
-def collect_cases_nested(ROOT: str, target_scheme: str):
+def path_pressure_json(case_folder):
+    return os.path.join(case_folder, "pressure_schedule.json")
+
+
+def read_case_pressure_scenario(case_path: str) -> str | None:
+    """
+    Read pressure scenario from pressure_schedule.json.
+    Preferred key: pressure_scenario
+    Fallback: scenario (only if it looks like a pressure scheme, not like 'desai_only')
+    """
+    pjson = path_pressure_json(case_path)
+    if not os.path.isfile(pjson):
+        return None
+
+    try:
+        with open(pjson, "r") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+
+    if isinstance(data, dict) and "pressure_scenario" in data:
+        v = data.get("pressure_scenario")
+        return str(v).lower() if v is not None else None
+
+    if isinstance(data, dict) and "scenario" in data:
+        v = str(data.get("scenario")).lower()
+        if v in ("sinus", "irregular", "csv_profile", "linear"):
+            return v
+
+    return None
+
+
+def collect_cases_nested(ROOT: str, target_pressure: str | None):
     """
     ROOT/<GROUP>/<CASE>/...
-    Filter by scheme using CASE folder name.
-    Returns list of dicts: {label, group, case_name, case_path}
+    Filter by pressure scenario using pressure_schedule.json (NOT folder name).
+    Returns list of dicts: {label, group, case_name, case_path, pressure_scenario}
     """
     cases = []
 
@@ -205,6 +239,8 @@ def collect_cases_nested(ROOT: str, target_scheme: str):
         group_path = os.path.join(ROOT, group)
         if not os.path.isdir(group_path):
             continue
+
+        # skip non-case groups
         if group.lower().startswith("pressure_"):
             continue
         if group.lower().startswith("_fos_outputs"):
@@ -216,20 +252,20 @@ def collect_cases_nested(ROOT: str, target_scheme: str):
             if not sub.lower().startswith("case_"):
                 continue
 
-            sc = scheme_from_case_folder(sub)
-            if sc != target_scheme:
-                continue
-
             case_path = os.path.join(group_path, sub)
             if not os.path.isdir(case_path):
                 continue
 
+            # filter on pressure scenario from JSON
+            pres = read_case_pressure_scenario(case_path)
+            if target_pressure is not None:
+                if (pres or "").lower() != target_pressure.lower():
+                    continue
+
             # must have sig
             try:
                 load_sig(case_path)
-            except Exception as e:
-                # keep it silent unless you want verbose:
-                # print(f"[SKIP] {group}/{sub}: {e}")
+            except Exception:
                 continue
 
             cases.append({
@@ -237,6 +273,7 @@ def collect_cases_nested(ROOT: str, target_scheme: str):
                 "group": group,
                 "case_name": sub,
                 "case_path": case_path,
+                "pressure_scenario": pres,
             })
 
     return cases
@@ -245,19 +282,35 @@ def main():
     if MPI.COMM_WORLD.rank != 0:
         return
 
-    ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
-    TARGET_PRESSURE = "irregular"   # "sinus" or "irregular"
+    target_pressure = SELECT.get("pressure", None)
 
     COMPRESSION_POSITIVE = True
     Q_TOL_MPA = 1e-3  # 1 kPa
 
-    cases = collect_cases_nested(ROOT, TARGET_PRESSURE)
+    cases = collect_cases_nested(ROOT, target_pressure)
     if not cases:
-        raise RuntimeError(f"No cases found for pressure scheme '{TARGET_PRESSURE}' with sig under {ROOT}")
+        raise RuntimeError(f"No cases found for pressure='{target_pressure}' with sig under {ROOT}")
+
+    # optional extra filters
+    cav_filter = SELECT.get("caverns", None)
+    contains = SELECT.get("case_contains", None)
+
+    filtered = []
+    for c in cases:
+        if cav_filter is not None:
+            # allow selecting by cavern folder name OR by label
+            if c["group"] not in cav_filter and c["label"] not in cav_filter:
+                continue
+        if contains is not None and contains.lower() not in c["case_name"].lower():
+            continue
+        filtered.append(c)
+
+    if not filtered:
+        raise RuntimeError(f"No cases left after filters SELECT={SELECT}")
 
     # consistent colors based on labels present
     labels_present = []
-    for c in cases:
+    for c in filtered:
         if c["label"] not in labels_present:
             labels_present.append(c["label"])
 
@@ -265,12 +318,22 @@ def main():
                     [l for l in labels_present if l not in CAVERN_ORDER]
     color_map = build_color_map(labels_sorted)
 
-    OUT = os.path.join(ROOT, "_FOS_outputs", TARGET_PRESSURE)
+    out_tag = (target_pressure if target_pressure is not None else "ALL")
+    OUT = os.path.join(ROOT, "_FOS_outputs", out_tag)
     os.makedirs(OUT, exist_ok=True)
 
     plt.figure(figsize=(12, 6))
 
-    for c in cases:
+    # (optional) pick first per cavern label; set to False if you want *all* cases
+    ONE_CASE_PER_CAVERN = True
+    if ONE_CASE_PER_CAVERN:
+        by_label = {}
+        for c in filtered:
+            if c["label"] not in by_label:
+                by_label[c["label"]] = c
+        filtered = list(by_label.values())
+
+    for c in filtered:
         lab = c["label"]
         col = color_map.get(lab, None)
 
@@ -286,16 +349,18 @@ def main():
         write_FOS_paraview(c["case_path"], time_list, FOS, mesh_source, OUT, field_name="FOS")
 
         fos_min = np.min(FOS, axis=1)
-        fos_min[~np.isfinite(fos_min)] = np.nan  # if everything masked
+        fos_min[~np.isfinite(fos_min)] = np.nan
 
         t_days = time_list / DAY
-        plt.plot(t_days, fos_min, linewidth=2.2, label=lab, color=col)
+        # label includes case name if you plot multiple cases per cavern
+        line_label = lab if ONE_CASE_PER_CAVERN else f"{lab} | {c['case_name']}"
+        plt.plot(t_days, fos_min, linewidth=2.2, label=line_label, color=col)
 
     plt.axhline(1.0, linewidth=1.5)
     plt.xlabel("Time (days)")
     plt.ylabel("FoS = q_dil(p, ψ) / q   (min over cells; q<tol ignored)")
     plt.grid(True, alpha=0.3)
-    plt.title(f"Factor of Safety over time (pressure scheme = {TARGET_PRESSURE})")
+    plt.title(f"Factor of Safety over time (pressure = {out_tag})")
 
     ax = plt.gca()
     handles, labels = ax.get_legend_handles_labels()
@@ -307,6 +372,7 @@ def main():
 
     plt.tight_layout()
     plt.show()
+
 
 if __name__ == "__main__":
     main()

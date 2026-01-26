@@ -19,6 +19,18 @@ MPa = 1e6
 # Which caverns to show (order)
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt"]
 
+# =============================================================================
+# USER SELECTION (edit only this block later)
+# =============================================================================
+ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
+
+SELECT = {
+    "pressure": "sinus",        # e.g. "sinus", "irregular", "csv_profile", "linear", or None (=all)
+    "caverns": None,            # e.g. ["Regular"] or ["Regular","Irregular"] or None (=all)
+    "case_contains": None,      # e.g. "365days" or "8cyc" or "desai_only" or None
+}
+
+
 
 # -------------------------
 # UI / layout (unchanged)
@@ -144,13 +156,7 @@ def cavern_label_from_group(group_folder: str) -> str:
     return group_folder.split("_")[0]
 
 
-def scheme_from_case_folder(case_folder_name: str) -> str:
-    low = case_folder_name.lower()
-    if low.startswith("case_sinus"):
-        return "sinus"
-    if low.startswith("case_irregular"):
-        return "irregular"
-    return ""
+
 
 
 def path_u_xdmf(case_folder):
@@ -173,10 +179,41 @@ def path_pressure_json(case_folder):
     return os.path.join(case_folder, "pressure_schedule.json")
 
 
-def collect_cases_nested(ROOT: str, target_scheme: str):
+def read_case_pressure_scenario(case_path: str) -> str | None:
     """
-    ROOT/<GROUP>/<CASE>/operation/...
-    Select based on CASE folder name (case_sinus... / case_irregular...)
+    Read pressure scenario from pressure_schedule.json to avoid relying on folder naming.
+    Returns lowercase string like: "sinus", "irregular", "csv_profile", "linear", ...
+    """
+    pjson = path_pressure_json(case_path)
+    if not os.path.isfile(pjson):
+        return None
+    try:
+        with open(pjson, "r") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+
+    # preferred key (your newer scripts)
+    if isinstance(data, dict) and "pressure_scenario" in data:
+        v = data.get("pressure_scenario")
+        return str(v).lower() if v is not None else None
+
+    # fallback key (some scripts wrote "scenario")
+    if isinstance(data, dict) and "scenario" in data:
+        v = data.get("scenario")
+        # only accept if it looks like a pressure scheme (not "desai_only")
+        v = str(v).lower()
+        if v in ("sinus", "irregular", "csv_profile", "linear"):
+            return v
+
+    return None
+
+
+def collect_cases_nested(ROOT: str, target_pressure: str | None):
+    """
+    ROOT/<CAVERN_FOLDER>/<CASE>/operation/...
+    Filter by pressure scheme from pressure_schedule.json:
+      target_pressure: e.g. "sinus", "irregular", "csv_profile", "linear" or None (=all)
     """
     cases = []
     for group in sorted(os.listdir(ROOT)):
@@ -191,14 +228,12 @@ def collect_cases_nested(ROOT: str, target_scheme: str):
         for sub in sorted(os.listdir(group_path)):
             if not sub.lower().startswith("case_"):
                 continue
-            if scheme_from_case_folder(sub) != target_scheme:
-                continue
 
             case_path = os.path.join(group_path, sub)
             if not os.path.isdir(case_path):
                 continue
 
-            # Required for stress dashboard
+            # required for dashboard
             needed = [
                 path_u_xdmf(case_path),
                 path_geom_msh(case_path),
@@ -206,19 +241,27 @@ def collect_cases_nested(ROOT: str, target_scheme: str):
                 path_q_xdmf(case_path),
             ]
             if not all(os.path.isfile(p) for p in needed):
-                print(f"[SKIP] {group}/{sub} missing required output files")
+                # keep quiet-ish; too spammy otherwise
                 continue
 
-            operation_folder = os.path.join(case_path, "operation")
+            pres = read_case_pressure_scenario(case_path)
+
+            # pressure filter (JSON-based)
+            if target_pressure is not None:
+                if (pres or "").lower() != target_pressure.lower():
+                    continue
+
             cases.append({
                 "label": label,
                 "group": group,
                 "case_name": sub,
                 "case_path": case_path,
-                "operation_folder": operation_folder,
+                "operation_folder": os.path.join(case_path, "operation"),
+                "pressure_scenario": pres,
             })
 
     return cases
+
 
 
 def read_pressure_schedule(case_path: str):
@@ -562,36 +605,49 @@ def show_dashboard_for_case(case_dict, *, n_bend_probes=None, offset_r=0.15):
     plt.show()
 
 
-# -------------------------
-# Main: choose scheme and show 6 figures
-# -------------------------
 def main():
-    ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
+    # 1) Collect matching cases (pressure based on JSON, NOT on folder name)
+    target_pressure = SELECT.get("pressure", None)
+    cases = collect_cases_nested(ROOT, target_pressure)
 
-    # Choose your scheme here:
-    PRESSURE_SCHEME = "sinus"   # "sinus" or "irregular"
-
-    cases = collect_cases_nested(ROOT, PRESSURE_SCHEME)
     if not cases:
-        raise RuntimeError(f"No cases found for scheme='{PRESSURE_SCHEME}' under {ROOT}")
+        raise RuntimeError(f"No cases found for pressure='{target_pressure}' under {ROOT}")
 
-    # Choose ONE case per cavern label (if multiple exist, just take the first)
-    by_label = {}
+    # 2) Optional extra filters (caverns + substring)
+    cav_filter = SELECT.get("caverns", None)
+    contains = SELECT.get("case_contains", None)
+
+    filtered = []
     for c in cases:
+        if cav_filter is not None:
+            # allow selecting by cavern folder name OR by pretty label
+            if c["group"] not in cav_filter and c["label"] not in cav_filter:
+                continue
+        if contains is not None and contains.lower() not in c["case_name"].lower():
+            continue
+        filtered.append(c)
+
+    if not filtered:
+        raise RuntimeError(f"No cases left after filters SELECT={SELECT}")
+
+    # 3) Pick ONE case per cavern label (first match, consistent)
+    by_label = {}
+    for c in filtered:
         if c["label"] not in by_label:
             by_label[c["label"]] = c
 
-    # Open up to 6 figures (in consistent order)
+    # 4) Show dashboards in your preferred order
     for lab in CAVERN_ORDER:
         if lab in by_label:
             show_dashboard_for_case(by_label[lab])
         else:
-            print(f"[WARN] No case found for cavern label '{lab}' in scheme '{PRESSURE_SCHEME}'")
+            print(f"[WARN] No case found for cavern label '{lab}' with SELECT={SELECT}")
 
-    # If there are labels not in CAVERN_ORDER, still show them (optional)
+    # 5) Optionally show labels not in CAVERN_ORDER (new cavern shapes in future)
     extras = [lab for lab in by_label.keys() if lab not in CAVERN_ORDER]
     for lab in sorted(extras):
         show_dashboard_for_case(by_label[lab])
+
 
 
 if __name__ == "__main__":

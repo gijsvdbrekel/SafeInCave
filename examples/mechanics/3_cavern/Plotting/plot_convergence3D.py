@@ -6,6 +6,8 @@ import meshio
 
 import safeincave.PostProcessingTools as post
 
+
+
 # Units
 DAY = 24.0 * 3600.0
 MPA = 1e6
@@ -18,6 +20,30 @@ CAVERN_PHYS_TAG = 29
 
 DEBUG_ONE_CASE = False  # zet True om 1 case te checken
 DEBUG_CASE_PATH = ""    # vul in als DEBUG_ONE_CASE=True
+
+
+
+# =============================================================================
+# USER SELECTION (edit only this block later)
+# =============================================================================
+ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
+
+SELECT = {
+    # Cavern folders inside OutputNobian: "Regular", "Irregular", "Tilt", ...
+    # None = all caverns
+    "caverns": None,                 # e.g. ["Regular"] or ["Regular","Irregular"] or None = all
+
+    # Pressure scheme from pressure_schedule.json: "sinus", "irregular", "csv_profile", "linear", ...
+    # None = all pressure schemes
+    "pressure": None,                # e.g. "sinus"
+
+    # Optional: only keep case folders containing substring
+    "case_contains": None,           # e.g. "365days" or "desai_only" or None
+
+    # Plot settings
+    "separate_per_pressure": True,   # True => 1 figure per pressure scheme found
+    "cavern_phys_tag": CAVERN_PHYS_TAG,
+}
 
 
 
@@ -152,12 +178,12 @@ def read_pressure_from_case(case_path: str):
 
 def read_pressure_schedule(case_folder: str):
     """
-    Returns (t_hours, p_MPa).
-    Supports both new JSON keys (t_hours/p_MPa) and old keys (t_values/p_values in s/Pa).
+    Returns (t_hours, p_MPa) or (None, None).
+    Supports:
+      - new: t_hours + p_MPa
+      - new: t_values_s + p_values_Pa
+      - old: t_values + p_values   (s/Pa)
     """
-    import os, json
-    import numpy as np
-
     pjson = os.path.join(case_folder, "pressure_schedule.json")
     if not os.path.isfile(pjson):
         return None, None
@@ -165,22 +191,24 @@ def read_pressure_schedule(case_folder: str):
     with open(pjson, "r") as f:
         data = json.load(f)
 
-    # New format (preferred)
     if "t_hours" in data and "p_MPa" in data:
         t = np.asarray(data["t_hours"], dtype=float)
         p = np.asarray(data["p_MPa"], dtype=float)
         return t, p
 
-    # Old format (seconds / Pa)
-    if "t_values" in data and "p_values" in data:
-        # Import your unit constants in the calling file, or define here:
-        HOUR = 3600.0
-        MPA = 1e6
-        t = np.asarray(data["t_values"], dtype=float) / HOUR
-        p = np.asarray(data["p_values"], dtype=float) / MPA
+    if "t_values_s" in data and "p_values_Pa" in data:
+        t = np.asarray(data["t_values_s"], dtype=float) / 3600.0
+        p = np.asarray(data["p_values_Pa"], dtype=float) / 1e6
         return t, p
 
-    raise KeyError(f"Pressure JSON has unexpected keys: {list(data.keys())}")
+    if "t_values" in data and "p_values" in data:
+        t = np.asarray(data["t_values"], dtype=float) / 3600.0
+        p = np.asarray(data["p_values"], dtype=float) / 1e6
+        return t, p
+
+    # unknown format
+    return None, None
+
 
 
 
@@ -459,6 +487,157 @@ def plot_scheme(ROOT: str, scheme: str, *, color_map, cavern_phys_tag: int = CAV
 
     return fig
 
+def read_case_pressure_scenario(case_path: str) -> str | None:
+    """
+    Returns pressure scenario string ("sinus","irregular","csv_profile",...)
+    from pressure_schedule.json, without confusing cavern folder names.
+    """
+    pjson = path_pressure_json(case_path)
+    if not os.path.isfile(pjson):
+        return None
+
+    try:
+        with open(pjson, "r") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+
+    # preferred key in your newer scripts
+    if isinstance(data, dict) and "pressure_scenario" in data:
+        val = data.get("pressure_scenario")
+        return str(val).lower() if val is not None else None
+
+    # fallback: some scripts store it under "scenario"
+    if isinstance(data, dict) and "scenario" in data:
+        val = data.get("scenario")
+        # only accept if it looks like a pressure scheme, not "desai_only" etc.
+        if str(val).lower() in ("sinus", "irregular", "csv_profile", "linear"):
+            return str(val).lower()
+
+    return None
+
+
+def collect_cases_all(ROOT: str):
+    """
+    Collect ALL cases (no scheme filtering via folder name).
+    Returns list of dicts:
+      {label, group, case_name, case_path, pressure_scenario}
+    """
+    cases = []
+    for group in sorted(os.listdir(ROOT)):
+        group_path = os.path.join(ROOT, group)
+        if not os.path.isdir(group_path):
+            continue
+        if group.lower().startswith("pressure_"):
+            continue
+
+        label = cavern_label_from_group(group)
+
+        for sub in sorted(os.listdir(group_path)):
+            if not sub.lower().startswith("case_"):
+                continue
+
+            case_path = os.path.join(group_path, sub)
+            if not os.path.isdir(case_path):
+                continue
+
+            # required for your 3D convergence method
+            u_xdmf = path_u_xdmf(case_path)
+            u_h5 = path_u_h5(case_path)
+            msh = path_geom_msh(case_path)
+            if not (os.path.isfile(u_xdmf) and os.path.isfile(u_h5) and os.path.isfile(msh)):
+                continue
+            if not is_valid_hdf5(u_h5):
+                continue
+
+            pres = read_case_pressure_scenario(case_path)
+
+            cases.append({
+                "label": label,
+                "group": group,
+                "case_name": sub,
+                "case_path": case_path,
+                "pressure_scenario": pres,  # <- from JSON, not from folder name
+                "has_pressure_json": os.path.isfile(path_pressure_json(case_path)),
+            })
+    return cases
+
+
+def filter_cases(cases, select: dict):
+    cavs = select.get("caverns", None)
+    pres = select.get("pressure", None)
+    contains = select.get("case_contains", None)
+
+    out = []
+    for c in cases:
+        if cavs is not None and c["group"] not in cavs and c["label"] not in cavs:
+            # allow selecting by raw folder name OR pretty label
+            continue
+        if pres is not None:
+            if (c["pressure_scenario"] or "").lower() != pres.lower():
+                continue
+        if contains is not None and contains.lower() not in c["case_name"].lower():
+            continue
+        out.append(c)
+    return out
+
+def plot_scheme_from_case_list(cases, *, title, color_map, cavern_phys_tag=CAVERN_PHYS_TAG):
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(13, 7), sharex=True,
+        gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12},
+    )
+    fig.suptitle(title, fontsize=12)
+
+    # --- convergence lines ---
+    plotted_any = False
+    for c in cases:
+        lab = c["label"]
+        col = color_map.get(lab, None)
+
+        try:
+            t_days, conv = compute_convergence_3d_percent(c["case_path"], cavern_phys_tag=cavern_phys_tag)
+        except Exception as e:
+            print(f"[SKIP] convergence {c['group']}/{c['case_name']}: {e}")
+            continue
+
+        ax1.plot(t_days, conv, linewidth=2.0, alpha=0.95, color=col, label=lab)
+        plotted_any = True
+
+    if not plotted_any:
+        ax1.text(0.5, 0.5, "No convergence curves could be plotted (all cases failed).",
+                 ha="center", va="center", transform=ax1.transAxes)
+
+    ax1.set_ylabel("Convergence (ΔV/V0) (%)")
+    ax1.grid(True, alpha=0.3)
+
+    # unique legend
+    handles, labs = ax1.get_legend_handles_labels()
+    uniq = {}
+    for h, l in zip(handles, labs):
+        uniq[l] = h
+    if uniq:
+        ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=9, frameon=True)
+
+    # --- pressure schedule: take first available in this selection ---
+    ref_t, ref_p = None, None
+    for c in cases:
+        t, p = read_pressure_from_case(c["case_path"])
+        if t is not None:
+            ref_t, ref_p = t, p
+            break
+
+    if ref_t is None:
+        ax2.text(0.5, 0.5, "No pressure_schedule.json found in selected cases.",
+                 ha="center", va="center", transform=ax2.transAxes)
+    else:
+        ax2.plot(ref_t, ref_p, linewidth=1.7)
+
+    ax2.set_ylabel("Pressure (MPa)")
+    ax2.set_xlabel("Time (days)")
+    ax2.grid(True, alpha=0.3)
+
+    return fig
+
 
 def main():
     if DEBUG_ONE_CASE:
@@ -471,34 +650,56 @@ def main():
         )
         print("DEBUG cavern facets:", facets.shape[0])
         print("DEBUG unique cavern vertices:", len(np.unique(facets.reshape(-1))))
+        return
 
-    
-    
-    ROOT = "/home/gvandenbrekel/SafeInCave/OutputNobian"
-    schemes = ("sinus", "irregular")
+    # 1) Index everything once
+    all_cases = collect_cases_all(ROOT)
 
-    # Build GLOBAL color map across all schemes (consistent colors everywhere)
-    all_cases = []
-    for s in schemes:
-        all_cases.extend(collect_cases_nested(ROOT, s))
+    if not all_cases:
+        raise RuntimeError(f"No cases found under {ROOT}")
 
-    all_labels = []
-    for c in all_cases:
-        if c["label"] not in all_labels:
-            all_labels.append(c["label"])
+    # 2) Apply selection filters (safe: pressure from JSON)
+    selected = filter_cases(all_cases, SELECT)
+    if not selected:
+        raise RuntimeError(f"No cases match SELECT filters: {SELECT}")
 
-    labels_sorted = [l for l in CAVERN_ORDER if l in all_labels] + \
-                    [l for l in all_labels if l not in CAVERN_ORDER]
+    # 3) Build GLOBAL color map across *selected* caverns
+    labels_present = []
+    for c in selected:
+        if c["label"] not in labels_present:
+            labels_present.append(c["label"])
+
+    labels_sorted = [l for l in CAVERN_ORDER if l in labels_present] + \
+                    [l for l in labels_present if l not in CAVERN_ORDER]
     global_cmap = build_color_map(labels_sorted)
 
-    # Plot per scheme
-    for s in schemes:
-        try:
-            plot_scheme(ROOT, s, color_map=global_cmap, cavern_phys_tag=CAVERN_PHYS_TAG)
-        except Exception as e:
-            print(f"[ERROR] {s}: {e}")
+    # 4) Decide plotting grouping
+    if SELECT.get("separate_per_pressure", False):
+        # group by pressure_scenario string
+        groups = {}
+        for c in selected:
+            key = c["pressure_scenario"] or "unknown_pressure"
+            groups.setdefault(key, []).append(c)
 
-    plt.show()
+        for pres_key, cases_here in sorted(groups.items()):
+            fig = plot_scheme_from_case_list(
+                cases_here,
+                title=f"3D cavern volume convergence – pressure: {pres_key}",
+                color_map=global_cmap,
+                cavern_phys_tag=SELECT.get("cavern_phys_tag", CAVERN_PHYS_TAG),
+            )
+        plt.show()
+
+    else:
+        # single plot with all selected cases together
+        fig = plot_scheme_from_case_list(
+            selected,
+            title="3D cavern volume convergence – selected cases",
+            color_map=global_cmap,
+            cavern_phys_tag=SELECT.get("cavern_phys_tag", CAVERN_PHYS_TAG),
+        )
+        plt.show()
+
 
 
 if __name__ == "__main__":

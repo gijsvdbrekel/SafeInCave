@@ -6,6 +6,38 @@ import meshio
 
 import safeincave.PostProcessingTools as post
 
+
+# =============================================================================
+# USER SELECTION (edit only this block later)
+# =============================================================================
+ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
+
+SELECT = {
+    # Cavern groups are folder names inside OutputNobian (Regular, Irregular, Tilt, ...)
+    # None = all
+    "caverns": None,      # e.g. ["Regular"] or ["Irregular"] or None = all
+
+    # Pressure scheme from pressure_schedule.json: "sinus", "irregular", "csv_profile", "linear", ...
+    # None = all
+    "pressure": "sinus",
+
+    # Scenario preset (ScenarioTest): "desai_only", "full", "full_minus_desai", "disloc_old_only", ...
+    # None = all
+    "scenario": None,
+
+    # Optional numeric filters
+    "n_cycles": None,
+    "operation_days": None,
+
+    # Optional substring filter on the case folder name
+    "case_name_contains": None,
+
+    # If True -> make one figure per cavern group
+    "separate_per_cavern": False,
+}
+
+
+
 MPA = 1e6
 HOUR = 3600.0
 DAY = 24.0 * HOUR
@@ -36,17 +68,7 @@ def cavern_label_from_group(group_folder: str) -> str:
         return "Irregular"
     return group_folder.split("_")[0]
 
-def pressure_scheme_from_group(group_folder: str) -> str:
-    """
-    group folder looks like: Asymmetric_sinus_600 -> sinus
-                             Tilt_irregular_600  -> irregular
-    """
-    low = group_folder.lower()
-    if "_irregular_" in low or low.endswith("_irregular") or "irregular" in low:
-        return "irregular"
-    if "_sinus_" in low or low.endswith("_sinus") or "sinus" in low:
-        return "sinus"
-    return ""
+
 
 def read_pressure_schedule(case_folder: str):
     """
@@ -339,113 +361,232 @@ def read_stress_paths(case_folder, probes_dict):
 
     return out
 
-def scheme_from_case_folder(case_folder_name: str) -> str:
-    low = case_folder_name.lower()
-    if low.startswith("case_sinus"):
-        return "sinus"
-    if low.startswith("case_irregular"):
-        return "irregular"
-    return ""
 
-def collect_cases_nested(ROOT, target_pressure: str):
+import re
+
+def _safe_read_json(path: str):
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def read_case_metadata(case_folder: str) -> dict:
     """
-    Returns list of (label, case_folder_path).
-    Detects pressure scheme from the case folder name: case_sinus(...) / case_irregular(...)
+    Reads pressure_schedule.json and returns metadata.
+
+    Key point:
+      - cavern_group comes from folder name: OutputNobian/<cavern_group>/<case_...>
+      - pressure_scenario comes ONLY from pressure_schedule.json (if possible)
+
+    This avoids "Irregular" cavern vs "irregular" pressure collisions.
     """
-    required_files = [path_u_xdmf, path_geom_msh, path_p_xdmf, path_q_xdmf]
+    meta = {
+        "case_folder": case_folder,
+        "case_name": os.path.basename(case_folder),
+        "cavern_group": os.path.basename(os.path.dirname(case_folder)),
+        "pressure_scenario": None,
+        "scenario": None,
+        "n_cycles": None,
+        "operation_days": None,
+        "mode": None,
+    }
 
-    cases = []
+    pjson = os.path.join(case_folder, "pressure_schedule.json")
+    data = _safe_read_json(pjson)
 
-    for group in sorted(os.listdir(ROOT)):
-        group_path = os.path.join(ROOT, group)
-        if not os.path.isdir(group_path):
+    if isinstance(data, dict):
+        # --- Scenario preset (ScenarioTest) ---
+        # In ScenarioTest.py this is stored as "scenario": "desai_only"/"full"/...
+        # In some older scripts "scenario" was used for pressure scheme -> handle that below.
+        meta["scenario"] = data.get("scenario", None)
+
+        # --- Pressure scheme ---
+        # Preferred key in your newer ScenarioTest: "pressure_scenario"
+        if "pressure_scenario" in data:
+            meta["pressure_scenario"] = data.get("pressure_scenario")
+        else:
+            # Some scripts store pressure scheme under "scenario"
+            sc = data.get("scenario", None)
+            if sc in ("sinus", "irregular", "csv_profile", "linear"):
+                meta["pressure_scenario"] = sc
+                meta["scenario"] = None  # don't treat pressure scheme as scenario preset
+
+        meta["mode"] = data.get("mode", None)
+        meta["n_cycles"] = data.get("n_cycles", None)
+        meta["operation_days"] = data.get("operation_days", None)
+        return meta
+
+    # ---- Fallback only if json missing (less reliable) ----
+    # Still: DO NOT use cavern_group to infer pressure.
+    name = meta["case_name"].lower()
+
+    # pressure scheme guessed from CASE folder name only
+    if "sinus" in name:
+        meta["pressure_scenario"] = "sinus"
+    elif "irregular" in name:
+        meta["pressure_scenario"] = "irregular"
+    elif "csv" in name:
+        meta["pressure_scenario"] = "csv_profile"
+    elif "linear" in name:
+        meta["pressure_scenario"] = "linear"
+
+    # scenario preset guessed from case name
+    for s in ["desai_only", "disloc_old_only", "disloc_new_only", "full_minus_desai", "full"]:
+        if f"_{s}_" in name or name.startswith(f"case_{s}_"):
+            meta["scenario"] = s
+
+    # numbers guessed from case name
+    m = re.search(r"(\d+)\s*cyc", name)
+    if m:
+        meta["n_cycles"] = int(m.group(1))
+    m = re.search(r"(\d+)\s*days", name)
+    if m:
+        meta["operation_days"] = int(m.group(1))
+
+    return meta
+
+
+def case_has_required_files(case_path: str) -> bool:
+    required = [
+        path_u_xdmf(case_path),
+        path_geom_msh(case_path),
+        path_p_xdmf(case_path),
+        path_q_xdmf(case_path),
+    ]
+    return all(os.path.isfile(p) for p in required)
+
+
+def index_all_cases(root: str) -> list[dict]:
+    """
+    Walks: ROOT/<cavern_group>/<case_*> and returns list of metadata dicts.
+    Skips Pressure_* folders.
+    """
+    out = []
+    for group in sorted(os.listdir(root)):
+        gpath = os.path.join(root, group)
+        if not os.path.isdir(gpath):
             continue
-
-        # skip pressure folders
         if group.lower().startswith("pressure_"):
             continue
 
-        cavern_label = cavern_label_from_group(group)
-
-        for sub in sorted(os.listdir(group_path)):
+        for sub in sorted(os.listdir(gpath)):
             if not sub.lower().startswith("case_"):
                 continue
-
-            # decide scheme from case folder name (robust!)
-            case_scheme = scheme_from_case_folder(sub)
-            if case_scheme != target_pressure:
+            cpath = os.path.join(gpath, sub)
+            if not os.path.isdir(cpath):
+                continue
+            if not case_has_required_files(cpath):
                 continue
 
-            case_path = os.path.join(group_path, sub)
-            if not os.path.isdir(case_path):
-                continue
+            out.append(read_case_metadata(cpath))
 
-            missing = []
-            for f in required_files:
-                fp = f(case_path)
-                if not os.path.isfile(fp):
-                    missing.append(fp)
-
-            if missing:
-                print(f"[SKIP] {group}/{sub} missing:")
-                for m in missing:
-                    print("   -", m)
-                continue
-
-            print(f"[OK] {group}/{sub}  -> label={cavern_label}, scheme={case_scheme}")
-            cases.append((cavern_label, case_path))
-
-    return cases
+    return out
 
 
-# ------------------------
-# Main
-# ------------------------
+def filter_cases(cases: list[dict], sel: dict) -> list[dict]:
+    def ok(m: dict) -> bool:
+        cavs = sel.get("caverns", None)
+        if cavs is not None and m["cavern_group"] not in cavs:
+            return False
+
+        p = sel.get("pressure", None)
+        if p is not None:
+            if (m.get("pressure_scenario") or "").lower() != p.lower():
+                return False
+
+        sc = sel.get("scenario", None)
+        if sc is not None:
+            if (m.get("scenario") or "").lower() != sc.lower():
+                return False
+
+        nc = sel.get("n_cycles", None)
+        if nc is not None and m.get("n_cycles", None) != nc:
+            return False
+
+        od = sel.get("operation_days", None)
+        if od is not None and m.get("operation_days", None) != od:
+            return False
+
+        contains = sel.get("case_name_contains", None)
+        if contains is not None and contains.lower() not in m["case_name"].lower():
+            return False
+
+        return True
+
+    return [m for m in cases if ok(m)]
+
+
+
+
 def main():
-    ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
-    TARGET_PRESSURE = "sinus"  # sinus or "irregular"
+    # 1) Index + filter cases
+    all_cases = index_all_cases(ROOT)
+    cases_meta = filter_cases(all_cases, SELECT)
 
-    cases = collect_cases_nested(ROOT, TARGET_PRESSURE)
-    if not cases:
-        raise RuntimeError(f"No '{TARGET_PRESSURE}' cases found under nested folders in {ROOT}.")
+    if not cases_meta:
+        # Laat meteen zien wat er wél gevonden is (handig debuggen)
+        print("[INFO] Found cases (unfiltered):")
+        for m in all_cases[:20]:
+            print(" -", m["cavern_group"], m["case_name"], "| pressure:", m.get("pressure_scenario"), "| scenario:", m.get("scenario"))
+        raise RuntimeError("No cases matched your SELECT filters. Check SELECT block at the top.")
 
-    # unique labels present
+    print(f"[OK] Selected {len(cases_meta)} case(s):")
+    for m in cases_meta:
+        print(" -", m["cavern_group"], "/", m["case_name"],
+              "| pressure:", m.get("pressure_scenario"),
+              "| scenario:", m.get("scenario"),
+              "| n_cycles:", m.get("n_cycles"),
+              "| days:", m.get("operation_days"))
+
+    # 2) Decide labels (= cavern groups)
     labels_present = []
-    for lab, _ in cases:
-        if lab not in labels_present:
-            labels_present.append(lab)
+    for m in cases_meta:
+        if m["cavern_group"] not in labels_present:
+            labels_present.append(m["cavern_group"])
 
+    # Keep your preferred ordering if you want
     labels_sorted = [l for l in CAVERN_ORDER if l in labels_present] + \
                     [l for l in labels_present if l not in CAVERN_ORDER]
+
     color_map = build_color_map(labels_sorted)
 
-    probe_types = ["top", "mid", "bottom", "bend1", "bend2"]
-
-    # build stress paths
+    # 3) Build stress paths per label (if multiple cases per label match, last one wins)
+    # If you expect multiple cases per same cavern, you should tighten SELECT or store list per label.
     stress_by_label = {}
-    for lab, folder in cases:
+    probes_by_label = {}
+
+    for m in cases_meta:
+        lab = m["cavern_group"]
+        folder = m["case_folder"]
+
         wall_points = load_wall_points(folder)
         probes = auto_generate_probes_from_wall_points(wall_points, n_bend_probes=2, min_gap_idx=5)
+
         stress_by_label[lab] = read_stress_paths(folder, probes)
+        probes_by_label[lab] = probes
 
-    # optional: shape plot for one label
-    TARGET_LABEL_FOR_SHAPE = "Asymmetric"
-    target_folder = None
-    for lab, folder in cases:
-        if lab == TARGET_LABEL_FOR_SHAPE:
-            target_folder = folder
-            break
+    # 4) Optional: shape plot for one cavern
+    TARGET_LABEL_FOR_SHAPE = labels_sorted[0] if labels_sorted else None
+    if TARGET_LABEL_FOR_SHAPE is not None:
+        # find that case folder
+        target_folder = None
+        for m in cases_meta:
+            if m["cavern_group"] == TARGET_LABEL_FOR_SHAPE:
+                target_folder = m["case_folder"]
+                break
 
-    if target_folder is not None:
-        wall_points, wall_u, _ = load_wall_points_and_u(target_folder)
-        probes = auto_generate_probes_from_wall_points(wall_points, n_bend_probes=2, min_gap_idx=5)
-        fig2, ax2 = plt.subplots(figsize=(6, 6))
-        plot_cavern_shape_with_probes(ax2, wall_points, wall_u, probes, scale=1.0)
-        ax2.set_title(f"{TARGET_LABEL_FOR_SHAPE} cavern shape + probes")
-    else:
-        print(f"[WARN] Could not find target cavern '{TARGET_LABEL_FOR_SHAPE}' for shape plot.")
+        if target_folder is not None:
+            wall_points, wall_u, _ = load_wall_points_and_u(target_folder)
+            probes = probes_by_label[TARGET_LABEL_FOR_SHAPE]
+            fig2, ax2 = plt.subplots(figsize=(6, 6))
+            plot_cavern_shape_with_probes(ax2, wall_points, wall_u, probes, scale=1.0)
+            ax2.set_title(f"{TARGET_LABEL_FOR_SHAPE} cavern shape + probes")
 
-    # p–q plots per probe type
+    # 5) p–q plots per probe type
+    probe_types = ["top", "mid", "bottom", "bend1", "bend2"]
+
     fig, axes = plt.subplots(2, 3, figsize=(16, 9))
     axes = axes.flatten()
 
@@ -466,22 +607,22 @@ def main():
         ax.set_ylabel("Von Mises q (MPa)")
         ax.grid(True, alpha=0.3)
 
-    # pressure schedule in bottom-right subplot (from Pressure_* folders)
+    # 6) Pressure schedule plot: take it from the first selected case (most robust)
     axp = axes[5]
-    tP, pP = read_pressure_schedule_from_pressure_folder(ROOT, f"Pressure_{TARGET_PRESSURE}")
-
-    if tP is None:
-        axp.text(0.5, 0.5, f"No pressure schedule found in Pressure_{TARGET_PRESSURE}*",
+    ref_case = cases_meta[0]["case_folder"]
+    tH, pMPa = read_pressure_schedule(ref_case)
+    if tH is None:
+        axp.text(0.5, 0.5, "No pressure_schedule.json found in selected case.",
                  ha="center", va="center", transform=axp.transAxes)
         axp.axis("off")
     else:
-        axp.plot(tP, pP, linewidth=2.0)
-        axp.set_title(f"Pressure schedule ({TARGET_PRESSURE})")
+        axp.plot(tH / 24.0, pMPa, linewidth=2.0)
+        axp.set_title("Pressure schedule (from selected case)")
         axp.set_xlabel("Time (days)")
         axp.set_ylabel("Pressure (MPa)")
         axp.grid(True, alpha=0.3)
 
-    # legend once
+    # 7) Legend once
     handles = []
     labels = []
     for lab in labels_sorted:
@@ -497,13 +638,16 @@ def main():
         frameon=True
     )
 
-    fig.suptitle(f"p–q stress paths per probe type ({TARGET_PRESSURE} cases)", y=0.98, fontsize=14)
+    ptxt = SELECT["pressure"] if SELECT["pressure"] is not None else "mixed"
+    stxt = SELECT["scenario"] if SELECT["scenario"] is not None else "mixed"
+    fig.suptitle(f"p–q stress paths | pressure={ptxt} | scenario={stxt}", y=0.98, fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.92])
 
     plt.show()
 
 if __name__ == "__main__":
     main()
+
 
 
 
