@@ -424,9 +424,9 @@ def main():
 
     # --- Overburden & side burden depend on cavern set (600 vs 1200) ---
     if CAVERN_TYPE.endswith("600"):
-        p_ref = 18.2 * ut.MPa
+        p_ref = 17.5 * ut.MPa
     elif CAVERN_TYPE.endswith("1200"):
-        p_ref = 20.1 * ut.MPa
+        p_ref = 19.3 * ut.MPa
     else:
         raise ValueError(f"Cannot infer cavern set (600/1200) from CAVERN_TYPE='{CAVERN_TYPE}'")
 

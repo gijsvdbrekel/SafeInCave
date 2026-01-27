@@ -171,7 +171,7 @@ def plot_dilatancy_boundary(ax,
         sgn = np.sign(I1_MPa)
         sgn[sgn == 0.0] = 1.0
         denom = (np.sqrt(3.0) * np.cos(psi_rad) - D2 * np.sin(psi_rad))
-        sqrtJ2 = D1 * ((I1_MPa / (sgn * sigma_ref)) ** m) / denom + T0
+        sqrtJ2 = (D1 * ((I1_MPa / (sgn * sigma_ref)) ** m) + T0) / denom 
         return np.sqrt(3.0) * sqrtJ2
 
     psi_c = -np.pi/6.0
@@ -361,7 +361,7 @@ def read_stress_paths(case_folder, probes_dict):
     out = {}
     for key, probe_xyz in probes_dict.items():
         idx = post.find_closest_point(probe_xyz, points_p)
-        p = -p_elems[:, idx] / (3.0 * MPA)   # your “/3” correction
+        p = -p_elems[:, idx] / MPA   # Here was the old /3 corrections
         q =  q_elems[:, idx] / MPA
         out[key] = (p, q)
 

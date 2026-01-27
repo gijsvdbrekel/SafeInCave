@@ -9,7 +9,7 @@ import csv
 import numpy as np
 import gmsh
 
-DIR = "/home/gvandenbrekel/SafeInCave/VolumeCalculation/Gmsh_1200k_3D"
+DIR = "/home/gvandenbrekel/SafeInCave/VolumeCalculation/Gmsh_600k_3D"
 OUT_CSV = os.path.join(DIR, "cavern_volumes.csv")
 
 

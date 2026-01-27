@@ -26,7 +26,7 @@ ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
 
 SELECT = {
     "pressure": "sinus",        # e.g. "sinus", "irregular", "csv_profile", "linear", or None (=all)
-    "caverns": None,            # e.g. ["Regular"] or ["Regular","Irregular"] or None (=all)
+    "caverns": ["Irregular"],            # e.g. ["Regular"] or ["Regular","Irregular"] or None (=all)
     "case_contains": None,      # e.g. "365days" or "8cyc" or "desai_only" or None
 }
 
@@ -448,7 +448,7 @@ def plot_dilatancy_boundaries_all(ax, p_min=0.01, p_max=40.0, npts=500, show_leg
         sgn = np.sign(I1_MPa)
         sgn[sgn == 0.0] = 1.0
         denom = (np.sqrt(3.0) * np.cos(psi_rad) - D2 * np.sin(psi_rad))
-        sqrtJ2_ = D1 * ((I1_MPa / (sgn * sigma_ref)) ** m) / denom + T0
+        sqrtJ2_ = (D1 * ((I1_MPa / (sgn * sigma_ref)) ** m) + T0) / denom 
         return np.sqrt(3.0) * sqrtJ2_
 
     psi_c = -np.pi / 6.0

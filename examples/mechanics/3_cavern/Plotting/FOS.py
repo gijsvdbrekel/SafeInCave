@@ -67,7 +67,7 @@ def q_dil_rd(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):
     denom = (np.sqrt(3.0) * np.cos(psi) - D2 * np.sin(psi))
     denom = np.where(np.abs(denom) < 1e-12, np.sign(denom) * 1e-12, denom)
 
-    sqrtJ2_dil = D1 * ((absI1 / sigma_ref) ** m) / denom + T0
+    sqrtJ2_dil = (D1 * ((absI1 / sigma_ref) ** m) + T0) / denom 
     q_dil = np.sqrt(3.0) * sqrtJ2_dil
     return q_dil
 

@@ -1,20 +1,3 @@
-"""
-EBN_CSV.py
-==========
-Volledig simulatiescript met CSV-drukprofiel, ZONDER pandas (dus geen "module pandas not found"),
-met:
-- GMRES + ASM (ipv CG)
-- continuity fix: p_operation[0] = p_eq
-- startup ramp (bijv. 24 uur) om NaNs bij start operation te voorkomen
-- duidelijke prints die NA de fix/ramp komen
-
-PAS AAN BOVENAAN:
-- CSV_FILE_PATH
-- OPERATION_DAYS, dt_hours
-- SCHEDULE_MODE: "direct" | "stretch" | "repeat"
-- RAMP_HOURS
-- (optioneel) USE_DESAI tijdelijk False zetten om te isoleren
-"""
 
 import safeincave as sf
 import safeincave.Utils as ut
@@ -377,9 +360,9 @@ def main():
 
     # burdens
     if CAVERN_TYPE.endswith("600"):
-        p_ref = 18.2 * ut.MPa
+        p_ref = 17.5 * ut.MPa
     elif CAVERN_TYPE.endswith("1200"):
-        p_ref = 20.1 * ut.MPa
+        p_ref = 19.3 * ut.MPa
     else:
         raise ValueError(f"Cannot infer cavern set from {CAVERN_TYPE}")
 
