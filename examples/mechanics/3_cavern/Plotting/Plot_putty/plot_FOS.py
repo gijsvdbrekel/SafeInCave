@@ -1,15 +1,12 @@
-# =========================
-# SCRIPT 1 — save figure as image (.png)
-# =========================
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 from mpi4py import MPI
 import dolfinx as dfx
 import json
+import xml.etree.ElementTree as ET
 
 import safeincave.PostProcessingTools as post
-
 from case_index import detect_layout_and_collect_cases, filter_cases
 
 MPA  = 1e6
@@ -33,6 +30,11 @@ CAVERN_PHYS_TAG = 29
 OUT_DIR = os.path.join(ROOT, "_figures")
 SHOW = False
 DPI = 180
+
+# --- XDMF output ---
+WRITE_XDMF = True
+XDMF_SUBDIR = os.path.join("operation", "_fos_outputs")  # created inside each case folder
+XDMF_FILENAME = "fos.xdmf"  # will also generate fos.h5 next to it
 
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
 SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full", None]
@@ -63,7 +65,90 @@ def load_sig(case_folder):
     if sig_path is None:
         raise FileNotFoundError(f"Missing sig for {case_folder}")
     _, t, sig_vals = post.read_cell_tensor(sig_path)
-    return np.asarray(t, float), np.asarray(sig_vals, float)
+    return np.asarray(t, float), np.asarray(sig_vals, float), sig_path
+
+# -----------------------------
+# Robustly read mesh name from XDMF (so read_mesh uses the correct Grid name)
+# -----------------------------
+def _infer_xdmf_mesh_grid_name(xdmf_path: str) -> str:
+    """
+    Try to infer the Grid 'Name' attribute from an XDMF file.
+    Falls back to common defaults if parsing fails.
+    """
+    # Common defaults seen in dolfinx outputs
+    fallbacks = ["Grid", "mesh", "Mesh", "domain", "Domain"]
+    try:
+        tree = ET.parse(xdmf_path)
+        root = tree.getroot()
+        # XDMF is typically: Xdmf/Domain/Grid
+        for grid in root.iter():
+            if grid.tag.lower().endswith("grid"):
+                name = grid.attrib.get("Name") or grid.attrib.get("name")
+                if name:
+                    return name
+    except Exception:
+        pass
+    return fallbacks[0]
+
+def _read_mesh_from_sig_xdmf(sig_xdmf_path: str):
+    grid_name = _infer_xdmf_mesh_grid_name(sig_xdmf_path)
+    # Try inferred name first, then fallbacks
+    candidates = [grid_name, "Grid", "mesh", "Mesh", "domain", "Domain"]
+    tried = []
+    with dfx.io.XDMFFile(MPI.COMM_SELF, sig_xdmf_path, "r") as xf:
+        last_err = None
+        for name in candidates:
+            if name in tried:
+                continue
+            tried.append(name)
+            try:
+                mesh = xf.read_mesh(name=name)
+                return mesh, name
+            except Exception as e:
+                last_err = e
+                continue
+    raise RuntimeError(
+        f"Could not read mesh from {sig_xdmf_path}. Tried Grid names: {tried}. "
+        f"Last error: {last_err}"
+    )
+
+def write_fos_xdmf_from_sig(case_folder: str, sig_xdmf_path: str, time_list: np.ndarray, FOS: np.ndarray):
+    """
+    Write FoS per cell (DG0) to XDMF/HDF5 time series for ParaView.
+    Uses mesh embedded in sig.xdmf to preserve cell ordering.
+    """
+    out_dir = os.path.join(case_folder, XDMF_SUBDIR)
+    os.makedirs(out_dir, exist_ok=True)
+    out_xdmf = os.path.join(out_dir, XDMF_FILENAME)
+
+    mesh, used_name = _read_mesh_from_sig_xdmf(sig_xdmf_path)
+
+    V0 = dfx.fem.functionspace(mesh, ("DG", 0))
+    fos_fun = dfx.fem.Function(V0)
+    fos_fun.name = "FoS"
+
+    # Local cell count (COMM_SELF -> this is the full mesh on rank0)
+    ncells = mesh.topology.index_map(mesh.topology.dim).size_local
+    if FOS.shape[1] != ncells:
+        raise RuntimeError(
+            f"[FoS XDMF] Cell count mismatch for case={case_folder}\n"
+            f"  FOS has ncells={FOS.shape[1]}\n"
+            f"  mesh (from sig.xdmf grid '{used_name}') has ncells={ncells}\n"
+            "This means you are NOT aligned with the mesh used to write sig.xdmf."
+        )
+
+    # ParaView generally handles NaN better than inf
+    FOS_write = np.asarray(FOS, float).copy()
+    FOS_write[~np.isfinite(FOS_write)] = np.nan
+
+    with dfx.io.XDMFFile(MPI.COMM_SELF, out_xdmf, "w") as xw:
+        xw.write_mesh(mesh)
+        for it, t in enumerate(time_list):
+            fos_fun.x.array[:] = FOS_write[it, :]
+            xw.write_function(fos_fun, t=float(t))
+
+    # This will create an .h5 next to .xdmf automatically (dolfinx XDMFFile behavior).
+    print("[SAVED XDMF]", out_xdmf, "(+ .h5)")
 
 def q_dil_rd(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):
     p = np.asarray(p_MPa, dtype=float)
@@ -200,8 +285,12 @@ def main():
         ls = cavern_styles.get(cav, "-")
         label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
 
-        time_list, sig_vals = load_sig(c["case_path"])
+        time_list, sig_vals, sig_path = load_sig(c["case_path"])
         FOS = compute_FOS(sig_vals, compression_positive=COMPRESSION_POSITIVE, q_tol_MPa=Q_TOL_MPA)
+
+        # --- write FoS field for ParaView ---
+        if WRITE_XDMF:
+            write_fos_xdmf_from_sig(c["case_path"], sig_path, time_list, FOS)
 
         fos_min_global = np.nanmin(np.where(np.isfinite(FOS), FOS, np.nan), axis=1)
 
@@ -215,7 +304,6 @@ def main():
         t_days = time_list / DAY
 
         plt.plot(t_days, fos_min_global, lw=2.2, color=col, linestyle=ls, label=f"{label} — global min")
-        # keep means thinner; same color (scenario) but different alpha
         plt.plot(t_days, roof_stats["mean"],  lw=1.6, color=col, linestyle="--", alpha=0.9, label=f"{label} — roof mean")
         plt.plot(t_days, mid_stats["mean"],   lw=1.6, color=col, linestyle="-.", alpha=0.9, label=f"{label} — mid mean")
         plt.plot(t_days, floor_stats["mean"], lw=1.6, color=col, linestyle=":",  alpha=0.9, label=f"{label} — floor mean")
@@ -247,6 +335,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
