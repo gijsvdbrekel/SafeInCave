@@ -1,56 +1,50 @@
-#!/usr/bin/env python3
 import os
 import json
 import numpy as np
-
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
-from mpi4py import MPI
 import dolfinx as dfx
+from mpi4py import MPI
 
 import safeincave.PostProcessingTools as post
-from case_index import detect_layout_and_collect_cases, filter_cases, one_case_per_cavern_label
-
+from case_index import detect_layout_and_collect_cases, filter_cases
 
 DAY = 24.0 * 3600.0
 MPA = 1e6
 
-CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
-CAVERN_PHYS_TAG = 29
-
-# =============================================================================
-# USER SELECTION
-# =============================================================================
 ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/3_cavern/output"
 
 SELECT = {
+    "caverns": ["Regular"],
     "pressure": "sinus",
-    "scenario": None,           # <-- NOW POSSIBLE
-    "caverns": None,
-    "n_cycles": None,
-    "operation_days": None,
+    "scenario": ["disloc_old_only", "disloc_new_only"],
     "case_contains": None,
-    "one_case_per_cavern": True,
-    "separate_per_pressure": False,
-    "cavern_phys_tag": CAVERN_PHYS_TAG,
 }
 
-OUTDIR = os.path.join(ROOT, "_plots")
-OUTNAME = "convergence_3d.png"
-DPI = 220
+CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
+SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full", None]
 
+CAVERN_PHYS_TAG = 29
+OUT_DIR = os.path.join(ROOT, "_figures")
+SHOW = False
+DPI = 180
 
-def build_color_map(labels):
+def build_color_map_for_scenarios(scenarios):
     cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
     if not cycle:
         cycle = [f"C{i}" for i in range(10)]
-    return {lab: cycle[i % len(cycle)] for i, lab in enumerate(labels)}
+    scenarios = list(scenarios)
+    return {sc: cycle[i % len(cycle)] for i, sc in enumerate(scenarios)}
 
+def build_linestyle_map_for_caverns(cav_labels):
+    styles = ["-", "--", "-.", ":"]
+    cav_labels = list(cav_labels)
+    return {lab: styles[i % len(styles)] for i, lab in enumerate(cav_labels)}
 
 def path_u_xdmf(case_folder):
     return os.path.join(case_folder, "operation", "u", "u.xdmf")
+
+def path_u_h5(case_folder):
+    return os.path.join(case_folder, "operation", "u", "u.h5")
 
 def path_geom_msh(case_folder):
     return os.path.join(case_folder, "operation", "mesh", "geom.msh")
@@ -58,30 +52,32 @@ def path_geom_msh(case_folder):
 def path_pressure_json(case_folder):
     return os.path.join(case_folder, "pressure_schedule.json")
 
+def is_valid_hdf5(h5_path: str) -> bool:
+    try:
+        with open(h5_path, "rb") as f:
+            return f.read(8) == b"\x89HDF\r\n\x1a\n"
+    except Exception:
+        return False
 
 def read_pressure_schedule(case_folder: str):
     pjson = path_pressure_json(case_folder)
     if not os.path.isfile(pjson):
         return None, None
-
     with open(pjson, "r") as f:
         data = json.load(f)
-
     if "t_hours" in data and "p_MPa" in data:
-        t = np.asarray(data["t_hours"], float) / 24.0
+        t = np.asarray(data["t_hours"], float)
         p = np.asarray(data["p_MPa"], float)
         return t, p
     if "t_values_s" in data and "p_values_Pa" in data:
-        t = np.asarray(data["t_values_s"], float) / DAY
-        p = np.asarray(data["p_values_Pa"], float) / MPA
+        t = np.asarray(data["t_values_s"], float) / 3600.0
+        p = np.asarray(data["p_values_Pa"], float) / 1e6
         return t, p
     if "t_values" in data and "p_values" in data:
-        t = np.asarray(data["t_values"], float) / DAY
-        p = np.asarray(data["p_values"], float) / MPA
+        t = np.asarray(data["t_values"], float) / 3600.0
+        p = np.asarray(data["p_values"], float) / 1e6
         return t, p
-
     return None, None
-
 
 def _area_vectors(points_xyz: np.ndarray, tri: np.ndarray):
     p0 = points_xyz[tri[:, 0]]
@@ -89,20 +85,16 @@ def _area_vectors(points_xyz: np.ndarray, tri: np.ndarray):
     p2 = points_xyz[tri[:, 2]]
     return 0.5 * np.cross(p1 - p0, p2 - p0)
 
-
 def extract_cavern_facets_from_msh_dolfinx(geom_msh_path: str, cavern_tag: int = 29):
-    mesh, cell_tags, facet_tags = dfx.io.gmshio.read_from_msh(geom_msh_path, MPI.COMM_SELF, 0)
+    mesh, cell_tags, facet_tags = dfx.io.gmshio.read_from_msh(geom_msh_path, MPI.COMM_WORLD, 0)
     if facet_tags is None:
         raise RuntimeError("No facet tags were read from the .msh")
-
     fdim = mesh.topology.dim - 1
     cavern_facets = facet_tags.find(cavern_tag)
     if cavern_facets.size == 0:
         raise RuntimeError(f"No facets found with physical tag {cavern_tag}")
-
     mesh.topology.create_connectivity(fdim, 0)
     f2v = mesh.topology.connectivity(fdim, 0)
-
     facets = []
     for f in cavern_facets:
         verts = f2v.links(int(f))
@@ -112,17 +104,15 @@ def extract_cavern_facets_from_msh_dolfinx(geom_msh_path: str, cavern_tag: int =
     X = mesh.geometry.x.copy()
     return X, facets
 
-
 def orient_area_vectors_outward(points: np.ndarray, tris: np.ndarray, area_vecs: np.ndarray):
     center = np.mean(points[np.unique(tris.reshape(-1))], axis=0)
     tri_centroids = (points[tris[:, 0]] + points[tris[:, 1]] + points[tris[:, 2]]) / 3.0
     v = tri_centroids - center
     s = np.einsum("ij,ij->i", area_vecs, v)
     flip = s < 0.0
-    out = area_vecs.copy()
-    out[flip] *= -1.0
-    return out
-
+    area_vecs2 = area_vecs.copy()
+    area_vecs2[flip] *= -1.0
+    return area_vecs2
 
 def compute_convergence_3d_percent(case_path: str, cavern_phys_tag: int = 29):
     geom_msh = path_geom_msh(case_path)
@@ -140,15 +130,12 @@ def compute_convergence_3d_percent(case_path: str, cavern_phys_tag: int = 29):
         raise RuntimeError(f"Invalid V0={V0}")
 
     points_xdmf, time_list, u_field = post.read_node_vector(u_xdmf)
-    if u_field.ndim != 3 or u_field.shape[2] != 3:
-        raise RuntimeError(f"Unexpected u_field shape {u_field.shape}")
 
     mapping = post.build_mapping(pts_msh, points_xdmf)
     tri_xdmf = np.vectorize(mapping.__getitem__)(tris_msh).astype(int)
-
     v0, v1, v2 = tri_xdmf[:, 0], tri_xdmf[:, 1], tri_xdmf[:, 2]
-    u_ref = u_field[0]
 
+    u_ref = u_field[0]
     Nt = u_field.shape[0]
     dV = np.zeros(Nt, dtype=float)
     for k in range(Nt):
@@ -163,101 +150,94 @@ def compute_convergence_3d_percent(case_path: str, cavern_phys_tag: int = 29):
     conv_pct[0] = 0.0
     return t_days, conv_pct
 
+def main():
+    os.makedirs(OUT_DIR, exist_ok=True)
 
-def plot_cases(cases, title, color_map, cavern_phys_tag):
-    fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(13, 7), sharex=True,
-        gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12},
-    )
-    fig.suptitle(title, fontsize=12)
+    all_cases = detect_layout_and_collect_cases(ROOT)
+    # keep only convergence-required
+    kept = []
+    for m in all_cases:
+        cp = m["case_path"]
+        ok = (
+            os.path.isfile(path_u_xdmf(cp)) and
+            os.path.isfile(path_u_h5(cp)) and
+            os.path.isfile(path_geom_msh(cp)) and
+            is_valid_hdf5(path_u_h5(cp))
+        )
+        if ok:
+            kept.append(m)
+    all_cases = kept
 
-    plotted_any = False
+    cases = filter_cases(all_cases, SELECT)
+    if not cases:
+        print("[DEBUG] Found (first 20):")
+        for m in all_cases[:20]:
+            print(" -", m.get("cavern_label"), m.get("scenario_preset"), m.get("pressure_scenario"), m.get("case_name"))
+        raise RuntimeError(f"No cases matched SELECT={SELECT}")
+
+    # one case per (cavern, scenario)
+    by_series = {}
     for c in cases:
-        lab = c["cavern_label"]
-        col = color_map.get(lab, None)
+        key = (c.get("cavern_label"), c.get("scenario_preset"))
+        if key not in by_series:
+            by_series[key] = c
+    cases = list(by_series.values())
+
+    cavs = sorted({c.get("cavern_label") for c in cases}, key=lambda x: (CAVERN_ORDER.index(x) if x in CAVERN_ORDER else 999, x))
+    scs = sorted({c.get("scenario_preset") for c in cases}, key=lambda x: (SCENARIO_ORDER.index(x) if x in SCENARIO_ORDER else 999, str(x)))
+
+    scenario_colors = build_color_map_for_scenarios(scs)
+    cavern_styles = build_linestyle_map_for_caverns(cavs)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 7), sharex=True,
+                                   gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
+    fig.suptitle(f"3D cavern volume convergence | pressure={SELECT.get('pressure')}")
+
+    # plot convergence
+    for c in cases:
+        cav = c.get("cavern_label")
+        sc = c.get("scenario_preset")
+        col = scenario_colors.get(sc, "C0")
+        ls = cavern_styles.get(cav, "-")
+        label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
         try:
-            t_days, conv = compute_convergence_3d_percent(c["case_path"], cavern_phys_tag=cavern_phys_tag)
+            t_days, conv = compute_convergence_3d_percent(c["case_path"], cavern_phys_tag=CAVERN_PHYS_TAG)
         except Exception as e:
-            print(f"[SKIP] {c['case_name']} convergence: {e}")
+            print(f"[SKIP] {cav}/{sc}: {e}")
             continue
-
-        ax1.plot(t_days, conv, linewidth=2.0, alpha=0.95, color=col, label=lab)
-        plotted_any = True
-
-    if not plotted_any:
-        ax1.text(0.5, 0.5, "No convergence curves could be plotted.", ha="center", va="center", transform=ax1.transAxes)
+        ax1.plot(t_days, conv, linewidth=2.0, color=col, linestyle=ls, alpha=0.95, label=label)
 
     ax1.set_ylabel("Convergence (ΔV/V0) (%)")
     ax1.grid(True, alpha=0.3)
 
-    handles, labs = ax1.get_legend_handles_labels()
+    # dedup legend
+    h, l = ax1.get_legend_handles_labels()
     uniq = {}
-    for h, l in zip(handles, labs):
-        if l not in uniq:
-            uniq[l] = h
+    for hh, ll in zip(h, l):
+        if ll not in uniq:
+            uniq[ll] = hh
     if uniq:
         ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=9, frameon=True)
 
-    # pressure schedule from first available
-    ref_t, ref_p = None, None
-    for c in cases:
-        t, p = read_pressure_schedule(c["case_path"])
-        if t is not None:
-            ref_t, ref_p = t, p
-            break
-
-    if ref_t is None:
-        ax2.text(0.5, 0.5, "No pressure_schedule.json found", ha="center", va="center", transform=ax2.transAxes)
+    # pressure schedule from first case
+    tH, pMPa = read_pressure_schedule(cases[0]["case_path"])
+    if tH is None:
+        ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
     else:
-        ax2.plot(ref_t, ref_p, linewidth=1.7)
-
+        ax2.plot(tH / 24.0, pMPa, linewidth=1.7)
     ax2.set_ylabel("Pressure (MPa)")
     ax2.set_xlabel("Time (days)")
     ax2.grid(True, alpha=0.3)
-    return fig
 
+    outname = f"convergence_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
+    outpath = os.path.join(OUT_DIR, outname.replace(" ", ""))
+    fig.savefig(outpath, dpi=DPI)
+    print("[SAVED]", outpath)
 
-def main():
-    if MPI.COMM_WORLD.rank != 0:
-        return
-
-    all_cases = detect_layout_and_collect_cases(ROOT)
-    selected = filter_cases(all_cases, SELECT)
-    if not selected:
-        print("[INFO] Found cases (unfiltered):")
-        for m in all_cases[:40]:
-            print(" -", m["case_name"], "| pressure:", m.get("pressure_scenario"),
-                  "| scenario:", m.get("scenario_preset"), "| cavern:", m.get("cavern_label"))
-        raise RuntimeError(f"No cases match SELECT={SELECT}")
-
-    if SELECT.get("one_case_per_cavern", True):
-        selected = one_case_per_cavern_label(selected)
-
-    labels_present = []
-    for c in selected:
-        if c["cavern_label"] not in labels_present:
-            labels_present.append(c["cavern_label"])
-
-    labels_sorted = [l for l in CAVERN_ORDER if l in labels_present] + [l for l in labels_present if l not in CAVERN_ORDER]
-    color_map = build_color_map(labels_sorted)
-
-    ptxt = SELECT.get("pressure") or "ALL"
-    stxt = SELECT.get("scenario") or "ANY"
-
-    fig = plot_cases(
-        selected,
-        title=f"3D cavern volume convergence | pressure={ptxt} | scenario={stxt}",
-        color_map=color_map,
-        cavern_phys_tag=SELECT.get("cavern_phys_tag", CAVERN_PHYS_TAG),
-    )
-
-    os.makedirs(OUTDIR, exist_ok=True)
-    outpath = os.path.join(OUTDIR, OUTNAME)
-    fig.tight_layout()
-    fig.savefig(outpath, dpi=DPI, bbox_inches="tight")
+    if SHOW:
+        plt.show()
     plt.close(fig)
-    print("[OK] Saved:", outpath)
-
 
 if __name__ == "__main__":
     main()
+
