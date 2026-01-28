@@ -4,7 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import meshio
 
-from case_index import detect_layout_and_collect_cases, filter_cases
+try:
+    from case_index import detect_layout_and_collect_cases, filter_cases
+except ModuleNotFoundError:
+    from case_Index import detect_layout_and_collect_cases, filter_cases
 
 DAY = 24.0 * 3600.0
 MPA = 1e6
@@ -15,17 +18,17 @@ MPA = 1e6
 ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/3_cavern/output"
 
 SELECT_BASE = {
-    "caverns": ["Regular"],      # or None
-    "pressure": "sinus",         # or None
-    "n_cycles": 8,               # or None
-    "operation_days": 365,       # or None
-    "case_contains": "regular600",  # optional, or None
+    "caverns": ["Regular"],     # try also ["regular600"] if needed
+    "pressure": "sinus",
+    "n_cycles": 8,
+    "operation_days": 365,
+    "case_contains": None,
 }
 
 SCEN_OLD = "disloc_old_only"
 SCEN_NEW = "disloc_new_only"
 
-PICK_PEAK = "last"   # "first" or "last"
+PICK_PEAK = "last"  # "first" or "last"
 
 OUT_DIR = os.path.join(ROOT, "_figures")
 SHOW = False
@@ -64,16 +67,14 @@ def read_pressure_schedule(case_folder: str):
         p_mpa = np.asarray(data["p_values"], float) / MPA
         return t_s, p_mpa
 
-    raise RuntimeError(f"Unknown pressure JSON format keys: {list(data.keys())}")
+    raise RuntimeError(f"Unknown pressure JSON keys: {list(data.keys())}")
 
 def pick_peak_timestep_index(t_s, p_mpa):
     p = np.asarray(p_mpa)
     peaks = np.where((p[1:-1] > p[:-2]) & (p[1:-1] > p[2:]))[0] + 1
     if peaks.size == 0:
         return int(np.argmax(p))
-    if PICK_PEAK == "first":
-        return int(peaks[0])
-    return int(peaks[-1])
+    return int(peaks[0] if PICK_PEAK == "first" else peaks[-1])
 
 def read_cell_scalar_timeseries(xdmf_path: str):
     if not os.path.isfile(xdmf_path):
@@ -101,32 +102,34 @@ def read_cell_scalar_timeseries(xdmf_path: str):
             key = list(cell_data.keys())[0]
 
         arr_blocks = cell_data[key]
-        if isinstance(arr_blocks, list):
-            arr = np.asarray(arr_blocks[0], float)
-        else:
-            arr = np.asarray(arr_blocks, float)
-
+        arr = np.asarray(arr_blocks[0] if isinstance(arr_blocks, list) else arr_blocks, float)
         vals.append(arr)
 
     return np.asarray(times, float), vals
 
-def bin_median_trend(x, y, nbins=30):
-    x = np.asarray(x)
-    y = np.asarray(y)
-    mask = np.isfinite(x) & np.isfinite(y)
-    x = x[mask]; y = y[mask]
-    if x.size < 10:
+def bin_median_trend(x, y, nbins=35):
+    x = np.asarray(x); y = np.asarray(y)
+    m = np.isfinite(x) & np.isfinite(y)
+    x = x[m]; y = y[m]
+    if x.size < 100:
         return None, None
-
-    edges = np.linspace(np.nanmin(x), np.nanmax(x), nbins + 1)
+    edges = np.linspace(np.min(x), np.max(x), nbins + 1)
     xm, ym = [], []
     for i in range(nbins):
-        m = (x >= edges[i]) & (x < edges[i+1])
-        if np.count_nonzero(m) < 30:
+        mi = (x >= edges[i]) & (x < edges[i+1])
+        if np.count_nonzero(mi) < 30:
             continue
         xm.append(0.5 * (edges[i] + edges[i+1]))
-        ym.append(np.nanmedian(y[m]))
+        ym.append(np.median(y[mi]))
     return np.asarray(xm), np.asarray(ym)
+
+def newest_case(candidates):
+    def mtime(m):
+        try:
+            return os.path.getmtime(m["case_path"])
+        except Exception:
+            return -1.0
+    return sorted(candidates, key=mtime)[-1]
 
 def pick_case_for_scenario(all_cases_meta, scenario_name: str):
     sel = dict(SELECT_BASE)
@@ -143,37 +146,32 @@ def pick_case_for_scenario(all_cases_meta, scenario_name: str):
             keep.append(m)
 
     if not keep:
-        print(f"\n[DEBUG] No usable case for scenario='{scenario_name}' with SELECT_BASE={SELECT_BASE}")
-        print("[DEBUG] First 20 found cases (label | scen | press | name):")
-        for m in all_cases_meta[:20]:
-            print(" -", m.get("cavern_label"), m.get("scenario_preset"), m.get("pressure_scenario"), m.get("case_name"))
-        raise RuntimeError(f"No usable case found for scenario='{scenario_name}'")
+        print(f"\n[ERROR] No usable case for scenario='{scenario_name}' with SELECT_BASE={SELECT_BASE}")
+        print("[DEBUG] Try setting caverns to ['regular600'] or setting case_contains='regular600'")
+        raise RuntimeError("Selection matched nothing. Fix SELECT_BASE or case naming.")
 
-    return keep[-1]["case_path"], keep[-1]
+    chosen = newest_case(keep)
+    return chosen["case_path"], chosen
 
-def plot_old_vs_new(case_old: str, case_new: str, meta_old: dict, meta_new: dict):
+def plot_old_vs_new(case_old: str, case_new: str, meta_old: dict):
     tag = f"{meta_old.get('cavern_label')}|p={meta_old.get('pressure_scenario')}|{meta_old.get('n_cycles')}cyc|{meta_old.get('operation_days')}d"
     tag = tag.replace(" ", "")
 
-    # choose peak timestep based on schedule (assume same schedule)
     t_sched_s, p_sched_mpa = read_pressure_schedule(case_old)
     i_peak = pick_peak_timestep_index(t_sched_s, p_sched_mpa)
     target_t = t_sched_s[i_peak]
 
-    # read time series
     q_old_t, q_old_list = read_cell_scalar_timeseries(path_field_xdmf(case_old, "q_elems"))
     r_old_t, r_old_list = read_cell_scalar_timeseries(path_field_xdmf(case_old, "eps_ne_rate_eq_disloc"))
 
     q_new_t, q_new_list = read_cell_scalar_timeseries(path_field_xdmf(case_new, "q_elems"))
     r_new_t, r_new_list = read_cell_scalar_timeseries(path_field_xdmf(case_new, "eps_ne_rate_eq_disloc"))
 
-    # nearest output timestep to target_t
     k_old = int(np.argmin(np.abs(q_old_t - target_t)))
     k_new = int(np.argmin(np.abs(q_new_t - target_t)))
 
     q_old = np.asarray(q_old_list[k_old], float) / MPA
     r_old = np.asarray(r_old_list[k_old], float)
-
     q_new = np.asarray(q_new_list[k_new], float) / MPA
     r_new = np.asarray(r_new_list[k_new], float)
 
@@ -188,10 +186,10 @@ def plot_old_vs_new(case_old: str, case_new: str, meta_old: dict, meta_new: dict
     ax.scatter(x_old, y_old, s=4, alpha=0.25, label="OLD dislocation")
     ax.scatter(x_new, y_new, s=4, alpha=0.25, label="NEW dislocation")
 
-    xm, ym = bin_median_trend(x_old, y_old, nbins=35)
+    xm, ym = bin_median_trend(x_old, y_old)
     if xm is not None:
         ax.plot(xm, ym, linewidth=2.0, label="OLD median trend")
-    xm, ym = bin_median_trend(x_new, y_new, nbins=35)
+    xm, ym = bin_median_trend(x_new, y_new)
     if xm is not None:
         ax.plot(xm, ym, linewidth=2.0, label="NEW median trend")
 
@@ -214,14 +212,16 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
     all_cases = detect_layout_and_collect_cases(ROOT)
+    if not all_cases:
+        raise RuntimeError(f"No cases found under ROOT={ROOT}")
 
     case_old, meta_old = pick_case_for_scenario(all_cases, SCEN_OLD)
-    case_new, meta_new = pick_case_for_scenario(all_cases, SCEN_NEW)
+    case_new, _ = pick_case_for_scenario(all_cases, SCEN_NEW)
 
     print("OLD case:", case_old)
     print("NEW case:", case_new)
 
-    fig, fig2, tag = plot_old_vs_new(case_old, case_new, meta_old, meta_new)
+    fig, fig2, tag = plot_old_vs_new(case_old, case_new, meta_old)
 
     p1 = os.path.join(OUT_DIR, f"disloc_effect_scatter_{tag}_peak={PICK_PEAK}.png")
     p2 = os.path.join(OUT_DIR, f"disloc_effect_pressure_{tag}_peak={PICK_PEAK}.png")
@@ -235,8 +235,7 @@ def main():
     if SHOW:
         plt.show()
 
-    plt.close(fig)
-    plt.close(fig2)
+    plt.close(fig); plt.close(fig2)
 
 if __name__ == "__main__":
     main()

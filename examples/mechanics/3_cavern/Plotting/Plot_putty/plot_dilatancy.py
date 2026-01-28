@@ -7,7 +7,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
+
 import meshio
+from mpi4py import MPI
+import dolfinx as dfx
 
 import safeincave.PostProcessingTools as post
 from case_index import detect_layout_and_collect_cases, filter_cases, one_case_per_cavern_label
@@ -20,6 +23,7 @@ hour = 3600.0
 day = 24.0 * hour
 MPa = 1e6
 
+CAVERN_PHYS_TAG = 29
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
 
 # =============================================================================
@@ -29,16 +33,23 @@ ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/3_cavern/output"
 
 SELECT = {
     "pressure": "sinus",
-    "scenario": None,        # <-- NOW POSSIBLE
-    "caverns": ["Irregular"],  # or None
+    "scenario": None,          # can be None or list like ["disloc_old_only","disloc_new_only"]
+    "caverns": None,  # or None
     "n_cycles": None,
     "operation_days": None,
     "case_contains": None,
     "one_case_per_cavern": True,
+    "t_step": "last",          # "last" or int
+}
 
-    # NEW: which timestep to render in the dashboard
-    # "last" or an int (0..Nt-1)
-    "t_step": "last",
+# --- profile extraction settings (IMPORTANT for 3D meshes) ---
+PROFILE = {
+    # slice axis for building a 2D profile out of 3D cavern surface points
+    # "y" usually works well for caverns centered around y=0
+    "slice_axis": "y",         # "x" or "y"
+    "slice_center": "auto",    # "auto" or float (e.g. 0.0)
+    "slice_tol_m": "auto",     # "auto" or float in meters (e.g. 1.0)
+    "max_points": 800,         # downsample to keep plots light
 }
 
 OUTDIR = os.path.join(ROOT, "_plots_dashboard")
@@ -62,7 +73,6 @@ def create_layout():
     gs = GridSpec(18, 19, figure=fig)
 
     ax_info = fig.add_subplot(gs[0:2, 0:19])
-
     ax_shape = fig.add_subplot(gs[3:12, 0:4])
 
     ax00 = fig.add_subplot(gs[3:7, 5:9])
@@ -96,49 +106,176 @@ def read_pressure_schedule(case_path: str):
     if "t_hours" in data and "p_MPa" in data:
         return np.asarray(data["t_hours"], float), np.asarray(data["p_MPa"], float)
     if "t_values_s" in data and "p_values_Pa" in data:
-        return np.asarray(data["t_values_s"], float)/hour, np.asarray(data["p_values_Pa"], float)/MPa
+        return np.asarray(data["t_values_s"], float) / hour, np.asarray(data["p_values_Pa"], float) / MPa
     if "t_values" in data and "p_values" in data:
-        return np.asarray(data["t_values"], float)/hour, np.asarray(data["p_values"], float)/MPa
+        return np.asarray(data["t_values"], float) / hour, np.asarray(data["p_values"], float) / MPa
     return None, None
 
 
 # -------------------------
-# WallProfile + probes
+# 3D cavern surface -> 2D profile helpers
+# -------------------------
+def _axis_index(ax: str) -> int:
+    ax = str(ax).lower()
+    if ax == "x":
+        return 0
+    if ax == "y":
+        return 1
+    if ax == "z":
+        return 2
+    raise ValueError("slice_axis must be 'x','y', or 'z'")
+
+def read_cavern_surface_vertices_from_msh(geom_msh_path: str, cavern_tag: int = 29):
+    """
+    Returns unique vertex indices on cavern boundary facets (tag=cavern_tag),
+    plus the coordinate array X (Nnodes,3).
+    """
+    mesh, cell_tags, facet_tags = dfx.io.gmshio.read_from_msh(geom_msh_path, MPI.COMM_SELF, 0)
+    if facet_tags is None:
+        raise RuntimeError("No facet_tags found in geom.msh (cannot locate cavern surface).")
+
+    dim = mesh.topology.dim
+    fdim = dim - 1
+    cavern_facets = facet_tags.find(cavern_tag)
+    if cavern_facets.size == 0:
+        raise RuntimeError(f"No facets found with physical tag {cavern_tag} in {geom_msh_path}")
+
+    mesh.topology.create_connectivity(fdim, 0)
+    f2v = mesh.topology.connectivity(fdim, 0)
+
+    verts = []
+    for f in cavern_facets:
+        vs = f2v.links(int(f))
+        for v in vs:
+            verts.append(int(v))
+    verts = np.unique(np.asarray(verts, dtype=int))
+    X = mesh.geometry.x.copy()
+    return X, verts
+
+def build_profile_indices_from_surface_points(X: np.ndarray, surface_verts: np.ndarray,
+                                             *, slice_axis="y", slice_center="auto", slice_tol_m="auto",
+                                             max_points=800):
+    """
+    Pick a thin slice through the cavern surface point cloud.
+    Returns selected vertex indices (into X).
+    """
+    ai = _axis_index(slice_axis)
+    pts = X[surface_verts]
+
+    # choose center
+    if slice_center == "auto":
+        c0 = float(np.median(pts[:, ai]))
+    else:
+        c0 = float(slice_center)
+
+    # choose tolerance
+    if slice_tol_m == "auto":
+        # start with 1% of span on that axis, minimum 0.25m
+        span = float(np.nanmax(pts[:, ai]) - np.nanmin(pts[:, ai]))
+        tol = max(0.25, 0.01 * span)
+    else:
+        tol = float(slice_tol_m)
+
+    # enlarge tol if too few points
+    for _ in range(8):
+        mask = np.abs(pts[:, ai] - c0) <= tol
+        pick = surface_verts[mask]
+        if pick.size >= 60:
+            break
+        tol *= 1.8
+
+    if pick.size < 10:
+        raise RuntimeError(
+            f"Could not build a profile slice: only {pick.size} points found. "
+            f"Try PROFILE['slice_axis']='x' or set PROFILE['slice_center'] to a better value."
+        )
+
+    # downsample (keep extremes in z)
+    if pick.size > max_points:
+        # keep points sorted by z and take evenly spaced
+        z = X[pick, 2]
+        order = np.argsort(z)
+        pick = pick[order]
+        idx = np.linspace(0, pick.size - 1, max_points).astype(int)
+        pick = pick[idx]
+
+    return pick, {"slice_axis": slice_axis, "slice_center": c0, "slice_tol_m": tol, "n_points": int(pick.size)}
+
+
+# -------------------------
+# WallProfile + probes (3D-proof)
 # -------------------------
 class WallProfileData:
+    """
+    Provides a 2D-ish wall profile in x-z using either:
+      - line elements (if present), OR
+      - cavern surface slice (3D) if no line elements exist.
+    """
     def __init__(self, operation_folder, scale=1.0):
-        points, self.time_list, u_field = post.read_node_vector(os.path.join(operation_folder, "u", "u.xdmf"))
+        u_xdmf = os.path.join(operation_folder, "u", "u.xdmf")
+        geom_msh = os.path.join(operation_folder, "mesh", "geom.msh")
 
-        reader_msh = meshio.read(os.path.join(operation_folder, "mesh", "geom.msh"))
-        points_msh = reader_msh.points
+        points_xdmf, self.time_list, u_field = post.read_node_vector(u_xdmf)  # (Nt,N,3)
+        self.points_xdmf = points_xdmf
+        self.u_field = u_field
+        self.scale = float(scale)
 
+        # --- attempt A: line cells (2D meshes) ---
         wall_idx = None
-        if hasattr(reader_msh, "cells_dict") and "line" in reader_msh.cells_dict:
-            wall_idx = np.unique(reader_msh.cells_dict["line"].flatten())
-        else:
-            for cell_block in reader_msh.cells:
-                if getattr(cell_block, "type", None) == "line":
-                    wall_idx = np.unique(cell_block.data.flatten())
-                    break
+        try:
+            reader_msh = meshio.read(geom_msh)
+            points_msh = reader_msh.points
+
+            if hasattr(reader_msh, "cells_dict") and "line" in reader_msh.cells_dict:
+                wall_idx = np.unique(reader_msh.cells_dict["line"].flatten())
+            else:
+                for cell_block in reader_msh.cells:
+                    if getattr(cell_block, "type", None) == "line":
+                        wall_idx = np.unique(cell_block.data.flatten())
+                        break
+
+            if wall_idx is not None and wall_idx.size > 0:
+                mapping = post.build_mapping(points_msh, points_xdmf)
+                wall_idx = np.asarray([mapping[int(i)] for i in wall_idx], dtype=int)
+                self.profile_note = "profile from mesh 'line' cells"
+                self.profile_meta = {}
+            else:
+                wall_idx = None
+        except Exception:
+            wall_idx = None
+
+        # --- attempt B: 3D cavern surface slice ---
         if wall_idx is None:
-            raise ValueError("No 'line' cells found in mesh (wall profile)")
+            X, surface_verts = read_cavern_surface_vertices_from_msh(geom_msh, cavern_tag=CAVERN_PHYS_TAG)
+            pick_msh, meta = build_profile_indices_from_surface_points(
+                X, surface_verts,
+                slice_axis=PROFILE["slice_axis"],
+                slice_center=PROFILE["slice_center"],
+                slice_tol_m=PROFILE["slice_tol_m"],
+                max_points=PROFILE["max_points"],
+            )
+            mapping = post.build_mapping(X, points_xdmf)
+            wall_idx = np.asarray([mapping[int(i)] for i in pick_msh], dtype=int)
+            self.profile_note = "profile from cavern surface slice (3D)"
+            self.profile_meta = meta
 
-        mapping = post.build_mapping(points_msh, points)
-        wall_idx = np.asarray([mapping[int(i)] for i in wall_idx], dtype=int)
+        # store
+        self.wall_idx = wall_idx
+        self.wall_points = points_xdmf[wall_idx]             # (Nw,3)
+        self.wall_u = u_field[:, wall_idx, :]                # (Nt,Nw,3)
 
-        self.wall_points = points[wall_idx]
-        self.wall_u = u_field[:, wall_idx]
-
-        sorted_idx = np.argsort(self.wall_points[:, 2])
-        self.wall_points = self.wall_points[sorted_idx]
-        self.wall_u = self.wall_u[:, sorted_idx]
-        self.scale = scale
+        # sort by z for a clean profile curve
+        order = np.argsort(self.wall_points[:, 2])
+        self.wall_points = self.wall_points[order]
+        self.wall_u = self.wall_u[:, order, :]
+        self.wall_idx = self.wall_idx[order]
 
     def get_wall_coordinates(self, time_step: int):
         return self.wall_points + self.scale * self.wall_u[time_step, :]
 
 
-def auto_generate_probes(wall_profile: WallProfileData, n_bend_probes: int = 2, min_gap=5):
+def auto_generate_probes(wall_profile: WallProfileData, n_bend_probes: int = 2, min_gap=10):
+    # Use x-z curve behavior; points are 3D but we probe based on x-z curvature
     pts = wall_profile.wall_points
     x = pts[:, 0]
     z = pts[:, 2]
@@ -155,9 +292,9 @@ def auto_generate_probes(wall_profile: WallProfileData, n_bend_probes: int = 2, 
     ddx = np.gradient(dx)
     ddz = np.gradient(dz)
 
-    denom = (dx*dx + dz*dz)**1.5
+    denom = (dx * dx + dz * dz) ** 1.5
     denom[denom == 0.0] = np.inf
-    curvature = np.abs(dx*ddz - dz*ddx) / denom
+    curvature = np.abs(dx * ddz - dz * ddx) / denom
     curvature[np.isnan(curvature)] = 0.0
 
     idx_all = np.argsort(curvature)[::-1]
@@ -167,7 +304,7 @@ def auto_generate_probes(wall_profile: WallProfileData, n_bend_probes: int = 2, 
 
     bend = []
     for i in idx_all:
-        if len(bend) >= n_bend_probes:
+        if len(bend) >= int(n_bend_probes):
             break
         if int(i) in base:
             continue
@@ -199,23 +336,33 @@ class StressPath:
 def plot_shape(ax, wall: WallProfileData, t_step: int, probes):
     w0 = wall.get_wall_coordinates(0)
     wt = wall.get_wall_coordinates(t_step)
+
     ax.plot(w0[:, 0], w0[:, 2], "-", linewidth=2, label="Initial")
     ax.plot(wt[:, 0], wt[:, 2], "-", linewidth=2, label=f"t_step={t_step}")
+
     for i, pr in enumerate(probes):
         ax.scatter(pr[0], pr[2], s=60, edgecolors="black")
+
     ax.set_xlabel("x (m)")
     ax.set_ylabel("z (m)")
     ax.axis("equal")
     ax.legend(fontsize=8, frameon=True)
 
+    # annotate extraction mode
+    txt = wall.profile_note
+    if wall.profile_meta:
+        m = wall.profile_meta
+        txt += f"\n(slice {m['slice_axis']}={m['slice_center']:.3f} ± {m['slice_tol_m']:.3f} m, N={m['n_points']})"
+    ax.text(0.02, 0.02, txt, transform=ax.transAxes, fontsize=7, va="bottom")
 
-def plot_pressure(ax, case_path: str, t_step: int, n_steps: int):
+
+def plot_pressure(ax, case_path: str, t_step: int):
     tH, pMPa = read_pressure_schedule(case_path)
     if tH is None:
         ax.text(0.5, 0.5, "No pressure_schedule.json", ha="center", va="center", transform=ax.transAxes)
         return
     ax.plot(tH, pMPa, linewidth=2)
-    idx = min(int(t_step), len(tH)-1)
+    idx = min(int(t_step), len(tH) - 1)
     ax.scatter([tH[idx]], [pMPa[idx]], s=50, edgecolors="black", zorder=10)
     ax.set_xlabel("Time (hours)")
     ax.set_ylabel("Pressure (MPa)")
@@ -258,7 +405,7 @@ def render_dashboard(case_meta: dict):
     )
 
     plot_shape(ax_shape, wall, t_step, probes)
-    plot_pressure(ax_pressure, case_path, t_step, Nt)
+    plot_pressure(ax_pressure, case_path, t_step)
 
     n_use = min(len(stress_axes), probes.shape[0])
     for i in range(n_use):
@@ -280,7 +427,7 @@ def main():
     selected = filter_cases(all_cases, SELECT)
     if not selected:
         print("[INFO] Found cases (unfiltered):")
-        for m in all_cases[:40]:
+        for m in all_cases[:60]:
             print(" -", m["case_name"], "| pressure:", m.get("pressure_scenario"),
                   "| scenario:", m.get("scenario_preset"), "| cavern:", m.get("cavern_label"))
         raise RuntimeError(f"No cases match SELECT={SELECT}")
