@@ -1,3 +1,6 @@
+# =========================
+# SCRIPT 1 — save figure as image (.png)
+# =========================
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -244,5 +247,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 

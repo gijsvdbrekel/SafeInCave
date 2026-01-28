@@ -1,3 +1,6 @@
+# =========================
+# SCRIPT 2 — GUI version (plt.show())
+# =========================
 import os
 import json
 import numpy as np
@@ -456,11 +459,6 @@ def main():
                 label=f"{lab} – mid mean FoS")
         plt.plot(t_days, floor_stats["mean"], ls="--", lw=2.0, color=c_floor,
                 label=f"{lab} – floor mean FoS")
-
-        
-
-
-
 
         # Optional conservative lines (keep if you want; comment out if you don’t)
         plt.plot(t_days, roof_stats["p05"],  ls="-.", lw=1.2, color=col, alpha=0.9)
