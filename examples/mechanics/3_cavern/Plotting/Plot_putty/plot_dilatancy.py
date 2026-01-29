@@ -23,26 +23,52 @@ hour = 3600.0
 day = 24.0 * hour
 MPa = 1e6
 
-CAVERN_PHYS_TAG = 29
-CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
+# =============================================================================
+# USER CONFIGURATION - Edit this section to customize the plot
+# =============================================================================
 
-# =============================================================================
-# USER SELECTION
-# =============================================================================
+# --- Output folder containing simulation results ---
 ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/3_cavern/output"
 
+# --- Case selection filters ---
+# Set any filter to None to include all values for that parameter
 SELECT = {
-    "pressure": "sinus",
-    "scenario": None,          # can be None or list like ["disloc_old_only","disloc_new_only"]
-    "caverns": None,  # or None
-    "n_cycles": None,
-    "operation_days": None,
-    "case_contains": None,
-    "one_case_per_cavern": True,
-    "t_step": "last",          # "last" or int
+    "caverns": None,                           # e.g. ["Regular", "Tilted"] or None for all
+    "pressure": "sinus",                       # "sinus", "linear", "irregular", "csv_profile", or None
+    "scenario": None,                          # e.g. ["full", "desai_only"] or None
+    "n_cycles": None,                          # e.g. 10, 50, or None for any
+    "operation_days": None,                    # e.g. 365, or None for any
+    "case_contains": None,                     # substring filter on case name, or None
+    "one_case_per_cavern": True,               # only one case per cavern shape
+    "t_step": "last",                          # "last" or specific timestep index (int)
 }
 
-# --- profile extraction settings (IMPORTANT for 3D meshes) ---
+# --- Color coding by cavern shape ---
+CAVERN_COLORS = {
+    "Asymmetric":    "#1f77b4",   # blue
+    "Irregular":     "#ff7f0e",   # orange
+    "IrregularFine": "#d62728",   # red
+    "Multichamber":  "#2ca02c",   # green
+    "Regular":       "#9467bd",   # purple
+    "Teardrop":      "#8c564b",   # brown
+    "Tilt":          "#e377c2",   # pink
+}
+
+# --- Linestyle coding by scenario ---
+SCENARIO_LINESTYLES = {
+    "disloc_old_only":  "-",
+    "disloc_new_only":  "--",
+    "desai_only":       "-.",
+    "full_minus_desai": ":",
+    "full":             (0, (3, 1, 1, 1)),  # dash-dot-dot
+    None:               "-",
+}
+
+# --- Ordering for legend ---
+CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
+SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full", None]
+
+# --- Profile extraction settings (IMPORTANT for 3D meshes) ---
 PROFILE = {
     # slice axis for building a 2D profile out of 3D cavern surface points
     # "y" usually works well for caverns centered around y=0
@@ -52,8 +78,41 @@ PROFILE = {
     "max_points": 800,         # downsample to keep plots light
 }
 
+# --- Other settings ---
+CAVERN_PHYS_TAG = 29          # Physical tag for cavern boundary in mesh
 OUTDIR = os.path.join(ROOT, "_plots_dashboard")
 DPI = 220
+SHOW = False                  # Show plot interactively after saving
+
+# =============================================================================
+# END OF USER CONFIGURATION
+# =============================================================================
+
+
+def get_cavern_color(cavern_label):
+    """Get color for a cavern label, with fallback."""
+    return CAVERN_COLORS.get(cavern_label, "#333333")
+
+
+def get_scenario_linestyle(scenario):
+    """Get linestyle for a scenario, with fallback."""
+    return SCENARIO_LINESTYLES.get(scenario, "-")
+
+
+def print_config_summary():
+    """Print configuration summary at startup."""
+    print("=" * 60)
+    print("DILATANCY DASHBOARD PLOT CONFIGURATION")
+    print("=" * 60)
+    print(f"  ROOT:              {ROOT}")
+    print(f"  Time step:         {SELECT.get('t_step', 'last')}")
+    print(f"  One per cavern:    {SELECT.get('one_case_per_cavern', True)}")
+    print(f"  Caverns:           {SELECT.get('caverns', 'all')}")
+    print(f"  Pressure:          {SELECT.get('pressure', 'all')}")
+    print(f"  Scenario:          {SELECT.get('scenario', 'all')}")
+    print(f"  Contains:          {SELECT.get('case_contains', 'any')}")
+    print(f"  Profile slice:     axis={PROFILE['slice_axis']}, center={PROFILE['slice_center']}")
+    print("=" * 60)
 
 
 # -------------------------
@@ -333,12 +392,13 @@ class StressPath:
             self.q_probes[i, :] = self.q_elems[:, idx] / MPa
 
 
-def plot_shape(ax, wall: WallProfileData, t_step: int, probes):
+def plot_shape(ax, wall: WallProfileData, t_step: int, probes, cavern_label=None):
     w0 = wall.get_wall_coordinates(0)
     wt = wall.get_wall_coordinates(t_step)
 
-    ax.plot(w0[:, 0], w0[:, 2], "-", linewidth=2, label="Initial")
-    ax.plot(wt[:, 0], wt[:, 2], "-", linewidth=2, label=f"t_step={t_step}")
+    color = get_cavern_color(cavern_label) if cavern_label else "#1f77b4"
+    ax.plot(w0[:, 0], w0[:, 2], "-", linewidth=2, color="#888888", alpha=0.7, label="Initial")
+    ax.plot(wt[:, 0], wt[:, 2], "-", linewidth=2, color=color, label=f"t_step={t_step}")
 
     for i, pr in enumerate(probes):
         ax.scatter(pr[0], pr[2], s=60, edgecolors="black")
@@ -356,21 +416,23 @@ def plot_shape(ax, wall: WallProfileData, t_step: int, probes):
     ax.text(0.02, 0.02, txt, transform=ax.transAxes, fontsize=7, va="bottom")
 
 
-def plot_pressure(ax, case_path: str, t_step: int):
+def plot_pressure(ax, case_path: str, t_step: int, cavern_label=None):
     tH, pMPa = read_pressure_schedule(case_path)
     if tH is None:
         ax.text(0.5, 0.5, "No pressure_schedule.json", ha="center", va="center", transform=ax.transAxes)
         return
-    ax.plot(tH, pMPa, linewidth=2)
+    color = get_cavern_color(cavern_label) if cavern_label else "#1f77b4"
+    ax.plot(tH, pMPa, linewidth=2, color=color)
     idx = min(int(t_step), len(tH) - 1)
-    ax.scatter([tH[idx]], [pMPa[idx]], s=50, edgecolors="black", zorder=10)
+    ax.scatter([tH[idx]], [pMPa[idx]], s=50, color=color, edgecolors="black", zorder=10)
     ax.set_xlabel("Time (hours)")
     ax.set_ylabel("Pressure (MPa)")
 
 
-def plot_stress(ax, sp: StressPath, i_probe: int, t_step: int):
-    ax.plot(sp.p_probes[i_probe], sp.q_probes[i_probe], linewidth=2)
-    ax.scatter([sp.p_probes[i_probe, t_step]], [sp.q_probes[i_probe, t_step]], s=40, edgecolors="black", zorder=10)
+def plot_stress(ax, sp: StressPath, i_probe: int, t_step: int, cavern_label=None):
+    color = get_cavern_color(cavern_label) if cavern_label else "#1f77b4"
+    ax.plot(sp.p_probes[i_probe], sp.q_probes[i_probe], linewidth=2, color=color)
+    ax.scatter([sp.p_probes[i_probe, t_step]], [sp.q_probes[i_probe, t_step]], s=40, color=color, edgecolors="black", zorder=10)
     ax.set_xlabel("p (MPa)")
     ax.set_ylabel("q (MPa)")
     ax.grid(True, alpha=0.25)
@@ -404,12 +466,12 @@ def render_dashboard(case_meta: dict):
         fontsize=11
     )
 
-    plot_shape(ax_shape, wall, t_step, probes)
-    plot_pressure(ax_pressure, case_path, t_step)
+    plot_shape(ax_shape, wall, t_step, probes, cavern_label=case_meta.get("cavern_label"))
+    plot_pressure(ax_pressure, case_path, t_step, cavern_label=case_meta.get("cavern_label"))
 
     n_use = min(len(stress_axes), probes.shape[0])
     for i in range(n_use):
-        plot_stress(stress_axes[i], sp, i, t_step)
+        plot_stress(stress_axes[i], sp, i, t_step, cavern_label=case_meta.get("cavern_label"))
         stress_axes[i].set_title(f"Probe {i}", fontsize=9)
     for j in range(n_use, len(stress_axes)):
         stress_axes[j].axis("off")
@@ -418,11 +480,16 @@ def render_dashboard(case_meta: dict):
     outname = f"dashboard_{case_meta.get('cavern_label','Unknown')}_{case_meta['case_name']}.png"
     outpath = os.path.join(OUTDIR, outname)
     fig.savefig(outpath, dpi=DPI, bbox_inches="tight")
+    print("[SAVED]", outpath)
+
+    if SHOW:
+        plt.show()
     plt.close(fig)
-    print("[OK] Saved:", outpath)
 
 
 def main():
+    print_config_summary()
+
     all_cases = detect_layout_and_collect_cases(ROOT)
     selected = filter_cases(all_cases, SELECT)
     if not selected:
@@ -434,6 +501,8 @@ def main():
 
     if SELECT.get("one_case_per_cavern", True):
         selected = one_case_per_cavern_label(selected)
+
+    print(f"[INFO] Processing {len(selected)} case(s)...")
 
     # order by preferred cavern order
     by_label = {c["cavern_label"]: c for c in selected}

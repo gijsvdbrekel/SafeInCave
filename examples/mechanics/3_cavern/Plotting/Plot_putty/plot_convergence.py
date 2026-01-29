@@ -11,34 +11,71 @@ from case_index import detect_layout_and_collect_cases, filter_cases
 DAY = 24.0 * 3600.0
 MPA = 1e6
 
+# =============================================================================
+# USER CONFIGURATION - Edit this section to customize the plot
+# =============================================================================
+
+# --- Output folder containing simulation results ---
 ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/3_cavern/output"
 
+# --- Case selection filters ---
+# Set any filter to None to include all values for that parameter
 SELECT = {
-    "caverns": ["Regular"],
-    "pressure": "sinus",
-    "scenario": ["disloc_old_only", "disloc_new_only"],
-    "case_contains": None,
+    "caverns": ["Regular"],                    # e.g. ["Regular", "Tilted"] or None for all
+    "pressure": "sinus",                       # "sinus", "linear", "irregular", "csv_profile", or None
+    "scenario": ["full", "full_minus_desai"],  # e.g. ["full", "desai_only"] or None
+    "case_contains": None,                     # substring filter on case name, or None
 }
 
+# --- Plot mode ---
+# "combined" = all cases on one figure
+# "separate" = one figure per case
+PLOT_MODE = "combined"
+
+# --- Color coding by cavern shape ---
+CAVERN_COLORS = {
+    "Asymmetric":    "#1f77b4",   # blue
+    "Irregular":     "#ff7f0e",   # orange
+    "IrregularFine": "#d62728",   # red
+    "Multichamber":  "#2ca02c",   # green
+    "Regular":       "#9467bd",   # purple
+    "Teardrop":      "#8c564b",   # brown
+    "Tilt":          "#e377c2",   # pink
+}
+
+# --- Linestyle coding by scenario ---
+SCENARIO_LINESTYLES = {
+    "disloc_old_only":  "-",
+    "disloc_new_only":  "--",
+    "desai_only":       "-.",
+    "full_minus_desai": ":",
+    "full":             (0, (3, 1, 1, 1)),  # dash-dot-dot
+    None:               "-",
+}
+
+# --- Ordering for legend ---
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
 SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full", None]
 
-CAVERN_PHYS_TAG = 29
+# --- Other settings ---
+CAVERN_PHYS_TAG = 29          # Physical tag for cavern boundary in mesh
 OUT_DIR = os.path.join(ROOT, "_figures")
-SHOW = False
+SHOW = False                  # Show plot interactively after saving
 DPI = 180
 
-def build_color_map_for_scenarios(scenarios):
-    cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
-    if not cycle:
-        cycle = [f"C{i}" for i in range(10)]
-    scenarios = list(scenarios)
-    return {sc: cycle[i % len(cycle)] for i, sc in enumerate(scenarios)}
+# =============================================================================
+# END OF USER CONFIGURATION
+# =============================================================================
 
-def build_linestyle_map_for_caverns(cav_labels):
-    styles = ["-", "--", "-.", ":"]
-    cav_labels = list(cav_labels)
-    return {lab: styles[i % len(styles)] for i, lab in enumerate(cav_labels)}
+
+def get_cavern_color(cavern_label):
+    """Get color for a cavern label, with fallback."""
+    return CAVERN_COLORS.get(cavern_label, "#333333")
+
+
+def get_scenario_linestyle(scenario):
+    """Get linestyle for a scenario, with fallback."""
+    return SCENARIO_LINESTYLES.get(scenario, "-")
 
 def path_u_xdmf(case_folder):
     return os.path.join(case_folder, "operation", "u", "u.xdmf")
@@ -150,55 +187,31 @@ def compute_convergence_3d_percent(case_path: str, cavern_phys_tag: int = 29):
     conv_pct[0] = 0.0
     return t_days, conv_pct
 
-def main():
-    os.makedirs(OUT_DIR, exist_ok=True)
+def print_config_summary():
+    """Print configuration summary at startup."""
+    print("=" * 60)
+    print("CONVERGENCE PLOT CONFIGURATION")
+    print("=" * 60)
+    print(f"  ROOT:        {ROOT}")
+    print(f"  PLOT_MODE:   {PLOT_MODE}")
+    print(f"  Caverns:     {SELECT.get('caverns', 'all')}")
+    print(f"  Pressure:    {SELECT.get('pressure', 'all')}")
+    print(f"  Scenario:    {SELECT.get('scenario', 'all')}")
+    print(f"  Contains:    {SELECT.get('case_contains', 'any')}")
+    print("=" * 60)
 
-    all_cases = detect_layout_and_collect_cases(ROOT)
-    # keep only convergence-required
-    kept = []
-    for m in all_cases:
-        cp = m["case_path"]
-        ok = (
-            os.path.isfile(path_u_xdmf(cp)) and
-            os.path.isfile(path_u_h5(cp)) and
-            os.path.isfile(path_geom_msh(cp)) and
-            is_valid_hdf5(path_u_h5(cp))
-        )
-        if ok:
-            kept.append(m)
-    all_cases = kept
 
-    cases = filter_cases(all_cases, SELECT)
-    if not cases:
-        print("[DEBUG] Found (first 20):")
-        for m in all_cases[:20]:
-            print(" -", m.get("cavern_label"), m.get("scenario_preset"), m.get("pressure_scenario"), m.get("case_name"))
-        raise RuntimeError(f"No cases matched SELECT={SELECT}")
-
-    # one case per (cavern, scenario)
-    by_series = {}
-    for c in cases:
-        key = (c.get("cavern_label"), c.get("scenario_preset"))
-        if key not in by_series:
-            by_series[key] = c
-    cases = list(by_series.values())
-
-    cavs = sorted({c.get("cavern_label") for c in cases}, key=lambda x: (CAVERN_ORDER.index(x) if x in CAVERN_ORDER else 999, x))
-    scs = sorted({c.get("scenario_preset") for c in cases}, key=lambda x: (SCENARIO_ORDER.index(x) if x in SCENARIO_ORDER else 999, str(x)))
-
-    scenario_colors = build_color_map_for_scenarios(scs)
-    cavern_styles = build_linestyle_map_for_caverns(cavs)
-
+def plot_combined(cases):
+    """Plot all cases on a single figure."""
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 7), sharex=True,
                                    gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
     fig.suptitle(f"3D cavern volume convergence | pressure={SELECT.get('pressure')}")
 
-    # plot convergence
     for c in cases:
         cav = c.get("cavern_label")
         sc = c.get("scenario_preset")
-        col = scenario_colors.get(sc, "C0")
-        ls = cavern_styles.get(cav, "-")
+        col = get_cavern_color(cav)
+        ls = get_scenario_linestyle(sc)
         label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
         try:
             t_days, conv = compute_convergence_3d_percent(c["case_path"], cavern_phys_tag=CAVERN_PHYS_TAG)
@@ -237,6 +250,95 @@ def main():
     if SHOW:
         plt.show()
     plt.close(fig)
+
+
+def plot_separate(cases):
+    """Plot each case on its own figure."""
+    for c in cases:
+        cav = c.get("cavern_label")
+        sc = c.get("scenario_preset")
+        col = get_cavern_color(cav)
+        label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
+
+        try:
+            t_days, conv = compute_convergence_3d_percent(c["case_path"], cavern_phys_tag=CAVERN_PHYS_TAG)
+        except Exception as e:
+            print(f"[SKIP] {cav}/{sc}: {e}")
+            continue
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True,
+                                       gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
+        fig.suptitle(f"Convergence: {label}")
+
+        ax1.plot(t_days, conv, linewidth=2.0, color=col, alpha=0.95, label=label)
+        ax1.set_ylabel("Convergence (ΔV/V0) (%)")
+        ax1.grid(True, alpha=0.3)
+        ax1.legend(loc="best", fontsize=9, frameon=True)
+
+        tH, pMPa = read_pressure_schedule(c["case_path"])
+        if tH is None:
+            ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
+        else:
+            ax2.plot(tH / 24.0, pMPa, linewidth=1.7)
+        ax2.set_ylabel("Pressure (MPa)")
+        ax2.set_xlabel("Time (days)")
+        ax2.grid(True, alpha=0.3)
+
+        safe_name = c.get("case_name", "unknown").replace(" ", "_")
+        outname = f"convergence_{safe_name}.png"
+        outpath = os.path.join(OUT_DIR, outname)
+        fig.savefig(outpath, dpi=DPI)
+        print("[SAVED]", outpath)
+
+        if SHOW:
+            plt.show()
+        plt.close(fig)
+
+
+def main():
+    print_config_summary()
+    os.makedirs(OUT_DIR, exist_ok=True)
+
+    all_cases = detect_layout_and_collect_cases(ROOT)
+    # keep only convergence-required
+    kept = []
+    for m in all_cases:
+        cp = m["case_path"]
+        ok = (
+            os.path.isfile(path_u_xdmf(cp)) and
+            os.path.isfile(path_u_h5(cp)) and
+            os.path.isfile(path_geom_msh(cp)) and
+            is_valid_hdf5(path_u_h5(cp))
+        )
+        if ok:
+            kept.append(m)
+    all_cases = kept
+
+    cases = filter_cases(all_cases, SELECT)
+    if not cases:
+        print("[DEBUG] Found (first 20):")
+        for m in all_cases[:20]:
+            print(" -", m.get("cavern_label"), m.get("scenario_preset"), m.get("pressure_scenario"), m.get("case_name"))
+        raise RuntimeError(f"No cases matched SELECT={SELECT}")
+
+    # one case per (cavern, scenario)
+    by_series = {}
+    for c in cases:
+        key = (c.get("cavern_label"), c.get("scenario_preset"))
+        if key not in by_series:
+            by_series[key] = c
+    cases = list(by_series.values())
+
+    print(f"[INFO] Processing {len(cases)} case(s)...")
+
+    if PLOT_MODE.lower() == "combined":
+        plot_combined(cases)
+    elif PLOT_MODE.lower() == "separate":
+        plot_separate(cases)
+    else:
+        print(f"[WARNING] Unknown PLOT_MODE '{PLOT_MODE}', using 'combined'")
+        plot_combined(cases)
+
 
 if __name__ == "__main__":
     main()

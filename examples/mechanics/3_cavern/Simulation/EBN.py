@@ -15,37 +15,154 @@ import numpy as np
 import csv
 
 
-# =========================
-# USER SETTINGS
-# =========================
-CAVERN_TYPE = "regular600"
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                           USER CONFIGURATION                                  ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Modify the settings below to configure your simulation.                      ║
+# ║  This script uses CSV-based pressure profiles (e.g., real operational data).  ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 
-PRESSURE_SCENARIO = "csv_profile"   # fixed here
-SCHEDULE_MODE = "direct"            # "direct" | "stretch" | "repeat"
+# ── CAVERN SELECTION ───────────────────────────────────────────────────────────
+# CAVERN_SHAPE: Choose one of:
+#   "regular"      - Standard cylindrical cavern
+#   "tilted"       - Tilted/inclined cavern
+#   "teardrop"     - Teardrop-shaped cavern
+#   "asymmetric"   - Asymmetric cavern geometry
+#   "irregular"    - Irregular/complex shape
+#   "multichamber" - Multi-chamber cavern
+
+CAVERN_SHAPE = "regular"
+
+# CAVERN_SIZE: Choose one of:
+#   600  - 600,000 m³ volume
+#   1200 - 1,200,000 m³ volume
+
+CAVERN_SIZE = 600
+
+# ── CSV PRESSURE FILE ──────────────────────────────────────────────────────────
+# CSV_FILE_PATH: Path to the pressure profile CSV file
+# Expected columns: Druk_MPa or Druk_bar (hourly values)
+
+CSV_FILE_PATH = "drukprofiel_zoutcaverne_2035_8760u.csv"
+
+# ── SCHEDULE SETTINGS ──────────────────────────────────────────────────────────
+# SCHEDULE_MODE: How to use the CSV pressure data:
+#   "direct"  - Use hourly CSV values directly (periodic over CSV length)
+#   "stretch" - Stretch/compress CSV data over OPERATION_DAYS with N_CYCLES
+#   "repeat"  - Repeat the year-pattern until OPERATION_DAYS reached
+
+SCHEDULE_MODE = "direct"
+
+# OPERATION_DAYS: Total simulation duration in days
 OPERATION_DAYS = 365
+
+# N_CYCLES: Number of cycles (only used with "stretch" mode)
+N_CYCLES = 1
+
+# ── TIME STEP ──────────────────────────────────────────────────────────────────
+# dt_hours: Time step size in hours
 dt_hours = 2.0
 
-# Start-up smoothing to avoid NaNs at operation start
-RAMP_HOURS = 24.0                   # try 6, 12, 24, 48
+# ── PRESSURE CONSTRAINTS ───────────────────────────────────────────────────────
+# CLAMP_MIN_MPA: Minimum allowed pressure (MPa)
+# CLAMP_MAX_MPA: Maximum allowed pressure (MPa)
+
 CLAMP_MIN_MPA = 6.0
 CLAMP_MAX_MPA = 20.0
 
-# Equilibrium pressure (MPa) must match your equilibrium BC cavern pressure
+# ── EQUILIBRIUM SETTINGS ───────────────────────────────────────────────────────
+# P_EQ_MPA: Initial equilibrium pressure (MPa) - must match equilibrium BC
 P_EQ_MPA = 15.0
 
-# If you suspect Desai triggers NaNs, set False to test
+# RAMP_HOURS: Startup ramp duration to avoid NaNs at operation start
+#             (smoothly transitions from equilibrium to first CSV pressure)
+RAMP_HOURS = 24.0
+
+# ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
+# USE_DESAI: Enable Desai viscoplastic model (set False if causing NaN issues)
 USE_DESAI = True
 
-# CSV file path (relative or absolute)
-CSV_FILE_PATH = "drukprofiel_zoutcaverne_2035_8760u.csv"
-
-# Output
+# ── OUTPUT ─────────────────────────────────────────────────────────────────────
 OUTPUT_ROOT = "output"
 
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                        END OF USER CONFIGURATION                              ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 
-# =========================
-# Helpers / Units
-# =========================
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUTOMATIC CONFIGURATION (do not modify below unless you know what you're doing)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Valid options for validation
+VALID_SHAPES = ["regular", "tilted", "teardrop", "asymmetric", "irregular", "multichamber"]
+VALID_SIZES = [600, 1200]
+VALID_MODES = ["direct", "stretch", "repeat"]
+
+# Cavern z_max values (top of cavern elevation in meters)
+Z_MAX_BY_CAVERN = {
+    "regular600": 315.26,
+    "tilted600": 345.67,
+    "teardrop600": 353.15,
+    "asymmetric600": 338.89,
+    "irregular600": 319.86,
+    "multichamber600": 334.14,
+    "regular1200": 393.21,
+    "tilted1200": 430.78,
+    "teardrop1200": 445.06,
+    "asymmetric1200": 422.76,
+    "irregular1200": 402.21,
+    "multichamber1200": 420.82,
+}
+
+# Reference pressure by cavern size (for overburden/sideburden)
+P_REF_BY_SIZE = {
+    600: 17.5,   # MPa
+    1200: 19.3,  # MPa
+}
+
+
+def validate_configuration():
+    """Validate user configuration and return derived values."""
+    errors = []
+
+    if CAVERN_SHAPE not in VALID_SHAPES:
+        errors.append(f"CAVERN_SHAPE '{CAVERN_SHAPE}' invalid. Choose from: {VALID_SHAPES}")
+    if CAVERN_SIZE not in VALID_SIZES:
+        errors.append(f"CAVERN_SIZE '{CAVERN_SIZE}' invalid. Choose from: {VALID_SIZES}")
+    if SCHEDULE_MODE not in VALID_MODES:
+        errors.append(f"SCHEDULE_MODE '{SCHEDULE_MODE}' invalid. Choose from: {VALID_MODES}")
+    if OPERATION_DAYS <= 0:
+        errors.append(f"OPERATION_DAYS must be positive, got {OPERATION_DAYS}")
+    if N_CYCLES <= 0:
+        errors.append(f"N_CYCLES must be positive, got {N_CYCLES}")
+    if dt_hours <= 0:
+        errors.append(f"dt_hours must be positive, got {dt_hours}")
+    if CLAMP_MIN_MPA >= CLAMP_MAX_MPA:
+        errors.append(f"CLAMP_MIN_MPA ({CLAMP_MIN_MPA}) must be less than CLAMP_MAX_MPA ({CLAMP_MAX_MPA})")
+    if not os.path.isfile(CSV_FILE_PATH):
+        errors.append(f"CSV_FILE_PATH not found: {CSV_FILE_PATH}")
+
+    if errors:
+        raise ValueError("Configuration errors:\n  - " + "\n  - ".join(errors))
+
+    # Derived values
+    cavern_type = f"{CAVERN_SHAPE}{CAVERN_SIZE}"
+    grid_folder = f"cavern_{CAVERN_SHAPE}_{CAVERN_SIZE}_3D"
+    z_max = Z_MAX_BY_CAVERN[cavern_type]
+    p_ref_mpa = P_REF_BY_SIZE[CAVERN_SIZE]
+
+    return {
+        "cavern_type": cavern_type,
+        "grid_folder": grid_folder,
+        "z_max": z_max,
+        "p_ref_mpa": p_ref_mpa,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════════════
 DAY_H = 24.0
 
 
@@ -335,36 +452,37 @@ def apply_startup_ramp(t_pressure, p_pressure, *, p_start_pa, ramp_hours, dt_hou
         p_pressure[k] = (1.0 - a) * p_start_pa + a * p_target
 
 
-# =========================
-# Main
-# =========================
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ══════════════════════════════════════════════════════════════════════════════
 def main():
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_regular_600_3D")
+    # Validate configuration and get derived values
+    config = validate_configuration()
+
+    # Print configuration summary
+    if MPI.COMM_WORLD.rank == 0:
+        print("=" * 70)
+        print("SIMULATION CONFIGURATION (CSV Pressure Profile)")
+        print("=" * 70)
+        print(f"  Cavern:     {config['cavern_type']} ({CAVERN_SHAPE}, {CAVERN_SIZE},000 m³)")
+        print(f"  CSV file:   {CSV_FILE_PATH}")
+        print(f"  Mode:       {SCHEDULE_MODE}")
+        print(f"  Days:       {OPERATION_DAYS}")
+        print(f"  Cycles:     {N_CYCLES}" if SCHEDULE_MODE == "stretch" else f"  Cycles:     N/A (mode={SCHEDULE_MODE})")
+        print(f"  dt:         {dt_hours} hours")
+        print(f"  Ramp:       {RAMP_HOURS} hours")
+        print(f"  Clamp:      [{CLAMP_MIN_MPA}, {CLAMP_MAX_MPA}] MPa")
+        print(f"  Desai:      {'enabled' if USE_DESAI else 'disabled'}")
+        print(f"  Grid:       {config['grid_folder']}")
+        print("=" * 70)
+
+    # Load grid
+    grid_path = os.path.join("..", "..", "..", "grids", config["grid_folder"])
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
-    Z_MAX_BY_CAVERN = {
-        "regular600": 315.26,
-        "tilted600": 345.67,
-        "teardrop600": 353.15,
-        "asymmetric600": 338.89,
-        "irregular600": 319.86,
-        "multichamber600": 334.14,
-        "regular1200": 393.21,
-        "tilted1200":  430.78,
-        "teardrop1200":  445.06,
-        "asymmetric1200":  422.76,
-        "irregular1200":  402.21,
-        "multichamber1200":  420.82,
-    }
-    z_max = Z_MAX_BY_CAVERN[CAVERN_TYPE]
-
-    # burdens
-    if CAVERN_TYPE.endswith("600"):
-        p_ref = 17.5 * ut.MPa
-    elif CAVERN_TYPE.endswith("1200"):
-        p_ref = 19.3 * ut.MPa
-    else:
-        raise ValueError(f"Cannot infer cavern set from {CAVERN_TYPE}")
+    # Get derived values
+    z_max = config["z_max"]
+    p_ref = config["p_ref_mpa"] * ut.MPa
 
     side_burden = p_ref
     over_burden = p_ref
@@ -450,7 +568,7 @@ def main():
 
     output_folder = os.path.join(
         OUTPUT_ROOT,
-        f"case_{PRESSURE_SCENARIO}_{SCHEDULE_MODE}_{OPERATION_DAYS}days_{CAVERN_TYPE}"
+        f"case_csv_{SCHEDULE_MODE}_{OPERATION_DAYS}days_{config['cavern_type']}"
     )
 
     out_eq_dir = os.path.join(output_folder, "equilibrium")
@@ -557,8 +675,12 @@ def main():
     # Save schedule json
     os.makedirs(output_folder, exist_ok=True)
     pressure_data = {
-        "scenario": PRESSURE_SCENARIO,
+        "cavern_type": config["cavern_type"],
+        "cavern_shape": CAVERN_SHAPE,
+        "cavern_size_m3": CAVERN_SIZE * 1000,
+        "scenario": "csv_profile",
         "mode": SCHEDULE_MODE,
+        "n_cycles": N_CYCLES,
         "operation_days": OPERATION_DAYS,
         "csv_file": os.path.basename(CSV_FILE_PATH),
         "dt_hours": dt_hours,

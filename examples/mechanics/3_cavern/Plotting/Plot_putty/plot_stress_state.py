@@ -10,36 +10,92 @@ from case_index import (
     filter_cases,
 )
 
-# =============================================================================
-# USER SELECTION
-# =============================================================================
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                           USER CONFIGURATION                                  ║
+# ╠══════════════════════════════════════════════════════════════════════════════╣
+# ║  Modify the settings below to configure which cases to plot.                  ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+# ── OUTPUT FOLDER ──────────────────────────────────────────────────────────────
+# ROOT: Path to the output folder containing simulation results
 ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/3_cavern/output"
 
+# ── CASE SELECTION ─────────────────────────────────────────────────────────────
+# SELECT: Filter which cases to plot (set to None to include all)
+#
+# Available filters:
+#   "caverns"        - Cavern shapes to include: ["Regular", "Irregular", ...] or None for all
+#   "pressure"       - Pressure scenario: "sinus", "linear", "irregular", "csv_profile", or None
+#   "scenario"       - Material scenario(s): ["disloc_old_only", "full", ...] or None
+#   "n_cycles"       - Number of cycles (int) or None
+#   "operation_days" - Operation duration (int) or None
+#   "case_contains"  - Substring match in case name or None
+
 SELECT = {
-    # can be None OR list OR string
-    "caverns": None,                 # e.g. ["Regular"] or ["regular600"] or None
-    "pressure": "sinus",             # "sinus"/"irregular"/"linear"/"csv_profile"/None
-    "scenario": ["disloc_old_only", "disloc_new_only"],  # preset(s) from ScenarioTest, or None
+    "caverns": None,                                      # e.g. ["Regular", "Irregular"]
+    "pressure": "sinus",                                  # "sinus"/"irregular"/"linear"/"csv_profile"
+    "scenario": ["full", "full_minus_desai"],   # from ScenarioTest.py
     "n_cycles": None,
     "operation_days": None,
     "case_contains": None,
 }
 
-# If True: pick only one case per (cavern, scenario) to avoid duplicates
+# ── PLOT OPTIONS ───────────────────────────────────────────────────────────────
+# ONE_CASE_PER_SERIES: If True, pick only one case per (cavern, scenario) to avoid duplicates
 ONE_CASE_PER_SERIES = True
 
-# Headless output
+# PLOT_MODE: How to arrange the plots
+#   "combined"  - All cases in one figure (overlay stress paths)
+#   "separate"  - One figure per case
+PLOT_MODE = "combined"
+
+# ── DILATANCY BOUNDARIES ───────────────────────────────────────────────────────
+# Choose which dilatancy boundaries to show on stress path plots
+# Available: "ratigan_027", "ratigan_018", "spiers", "devries_comp", "devries_ext"
+SHOW_DILATANCY = ["ratigan_027", "spiers", "devries_comp", "devries_ext"]
+
+# ── OUTPUT SETTINGS ────────────────────────────────────────────────────────────
 OUT_DIR = os.path.join(ROOT, "_figures")
-SHOW = False
+SHOW = False       # Set True to display plots interactively (requires GUI)
 DPI = 180
 
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                        END OF USER CONFIGURATION                              ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONSTANTS
+# ══════════════════════════════════════════════════════════════════════════════
 MPA = 1e6
 HOUR = 3600.0
 DAY = 24.0 * HOUR
 
-# Stable ordering for legend/grouping
+# Ordering for consistent legend/colors
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
 SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full", None]
+
+# Color and linestyle definitions
+CAVERN_COLORS = {
+    "Regular": "#1f77b4",       # blue
+    "Irregular": "#ff7f0e",     # orange
+    "Tilted": "#2ca02c",        # green
+    "Tilt": "#2ca02c",          # green (alias)
+    "Teardrop": "#d62728",      # red
+    "Asymmetric": "#9467bd",    # purple
+    "Multichamber": "#8c564b",  # brown
+    "IrregularFine": "#e377c2", # pink
+}
+
+SCENARIO_LINESTYLES = {
+    "disloc_old_only": "-",
+    "disloc_new_only": "--",
+    "desai_only": "-.",
+    "full_minus_desai": ":",
+    "full": "-",
+    None: "-",
+}
 
 # ------------------------
 # Plot helpers
@@ -87,28 +143,80 @@ def read_pressure_schedule(case_folder: str):
 
     return None, None
 
-def plot_dilatancy_boundary(ax,
-                            D1=0.683, D2=0.512, m=0.75, T0=1.5,
-                            sigma_ref=1.0,  # MPa
-                            p_min=0.01, p_max=40.0, npts=400):
-    p = np.linspace(p_min, p_max, npts)    # MPa
-    I1 = 3.0 * p                           # MPa
+def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=40.0, npts=500):
+    """
+    Plot selected dilatancy boundaries in p–q space (MPa).
 
-    def q_from_I1(I1_MPa, psi_rad):
+    Available boundaries:
+      - ratigan_027: Ratigan 1991 (D=0.27)
+      - ratigan_018: Ratigan 1991 (D=0.18)
+      - spiers:      Spiers 1988 (D=0.27, b=1.9 MPa)
+      - devries_comp: De Vries 2005 - compression branch
+      - devries_ext:  De Vries 2005 - extension branch
+
+    Args:
+        ax: matplotlib axis
+        show_boundaries: list of boundary names to show, or None for all
+        p_min, p_max: pressure range (MPa)
+        npts: number of points for curves
+    """
+    if show_boundaries is None:
+        show_boundaries = ["ratigan_027", "ratigan_018", "spiers", "devries_comp", "devries_ext"]
+
+    p = np.linspace(p_min, p_max, npts)
+    I1 = 3.0 * p  # First stress invariant
+
+    def q_from_sqrtJ2(sqrtJ2):
+        return np.sqrt(3.0) * sqrtJ2
+
+    # Dilatancy boundary colors and styles
+    boundary_styles = {
+        "ratigan_027":  {"color": "#7570b3", "linestyle": "--", "linewidth": 1.3, "alpha": 0.85},
+        "ratigan_018":  {"color": "#7570b3", "linestyle": ":",  "linewidth": 1.3, "alpha": 0.85},
+        "spiers":       {"color": "#66a61e", "linestyle": "-.", "linewidth": 1.3, "alpha": 0.85},
+        "devries_comp": {"color": "#e7298a", "linestyle": "-",  "linewidth": 1.5, "alpha": 0.90},
+        "devries_ext":  {"color": "#e7298a", "linestyle": "--", "linewidth": 1.5, "alpha": 0.90},
+    }
+
+    # --- Ratigan (1991): sqrt(J2) = D * I1 ---
+    if "ratigan_027" in show_boundaries:
+        D = 0.27
+        sqrtJ2 = D * I1
+        ax.plot(p, q_from_sqrtJ2(sqrtJ2), label="Ratigan 1991 (D=0.27)",
+                **boundary_styles["ratigan_027"])
+
+    if "ratigan_018" in show_boundaries:
+        D = 0.18
+        sqrtJ2 = D * I1
+        ax.plot(p, q_from_sqrtJ2(sqrtJ2), label="Ratigan 1991 (D=0.18)",
+                **boundary_styles["ratigan_018"])
+
+    # --- Spiers (1988): sqrt(J2) = D*I1 + b ---
+    if "spiers" in show_boundaries:
+        D_sp, b_sp = 0.27, 1.9  # MPa
+        sqrtJ2 = D_sp * I1 + b_sp
+        ax.plot(p, q_from_sqrtJ2(sqrtJ2), label="Spiers 1988",
+                **boundary_styles["spiers"])
+
+    # --- De Vries (2005) ---
+    def devries_q(I1_MPa, psi_rad, D1=0.683, D2=0.512, T0=1.50, m=0.75, sigma_ref=1.0):
         sgn = np.sign(I1_MPa)
         sgn[sgn == 0.0] = 1.0
         denom = (np.sqrt(3.0) * np.cos(psi_rad) - D2 * np.sin(psi_rad))
-        sqrtJ2 = (D1 * ((I1_MPa / (sgn * sigma_ref)) ** m) + T0) / denom
-        return np.sqrt(3.0) * sqrtJ2
+        sqrtJ2_ = D1 * ((I1_MPa / (sgn * sigma_ref)) ** m) / denom + T0
+        return np.sqrt(3.0) * sqrtJ2_
 
-    psi_c = -np.pi/6.0
-    psi_e =  np.pi/6.0
+    psi_comp = -np.pi / 6.0  # compression: ψ = -30°
+    psi_ext = np.pi / 6.0    # extension: ψ = +30°
 
-    q_c = q_from_I1(I1, psi_c)
-    q_e = q_from_I1(I1, psi_e)
+    if "devries_comp" in show_boundaries:
+        ax.plot(p, devries_q(I1, psi_comp), label="De Vries 2005 (comp)",
+                **boundary_styles["devries_comp"])
 
-    ax.plot(p, q_c, "-", linewidth=1.2, alpha=0.9, label="RD – compression")
-    ax.plot(p, q_e, "-", linewidth=1.2, alpha=0.9, label="RD – extension")
+    if "devries_ext" in show_boundaries:
+        ax.plot(p, devries_q(I1, psi_ext), label="De Vries 2005 (ext)",
+                **boundary_styles["devries_ext"])
+
 
 def get_wall_indices_from_msh(msh_path):
     msh = meshio.read(msh_path)
@@ -246,8 +354,155 @@ def pick_one_case_per_series(cases_meta):
 # =============================================================================
 # MAIN
 # =============================================================================
+def get_case_color_and_style(cavern_label, scenario_preset):
+    """Get color (by cavern) and linestyle (by scenario) for a case."""
+    color = CAVERN_COLORS.get(cavern_label, "#333333")
+    linestyle = SCENARIO_LINESTYLES.get(scenario_preset, "-")
+    return color, linestyle
+
+
+def plot_combined(cases_meta, stress_by_series):
+    """Plot all cases combined in one figure."""
+    probe_types = ["top", "mid", "bottom", "bend1", "bend2"]
+
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+    axes = axes.flatten()
+
+    for i, ptype in enumerate(probe_types):
+        ax = axes[i]
+
+        # Plot dilatancy boundaries (only show legend on first plot)
+        plot_dilatancy_boundaries(ax, show_boundaries=SHOW_DILATANCY)
+
+        for (cav, sc), d in stress_by_series.items():
+            p, q = d[ptype]
+            color, linestyle = get_case_color_and_style(cav, sc)
+            label = f"{cav} | {sc}" if sc is not None else f"{cav}"
+
+            ax.plot(p, q, linewidth=2.0, color=color, linestyle=linestyle, label=label)
+            ax.scatter(p[-1], q[-1], s=30, edgecolors="black", linewidths=0.6,
+                       color=color, zorder=5)
+
+        ax.set_title(f"p–q stress path: {ptype}")
+        ax.set_xlabel("Mean stress p (MPa)")
+        ax.set_ylabel("Von Mises q (MPa)")
+        ax.grid(True, alpha=0.3)
+
+    # Pressure schedule subplot: show first matched case
+    axp = axes[5]
+    tH, pMPa = read_pressure_schedule(cases_meta[0]["case_path"])
+    if tH is None:
+        axp.text(0.5, 0.5, "No pressure_schedule.json found.",
+                 ha="center", va="center", transform=axp.transAxes)
+        axp.axis("off")
+    else:
+        axp.plot(tH / 24.0, pMPa, linewidth=2.0, color="#1f77b4")
+        axp.set_title("Pressure schedule")
+        axp.set_xlabel("Time (days)")
+        axp.set_ylabel("Pressure (MPa)")
+        axp.grid(True, alpha=0.3)
+
+    # Deduplicate legend (show unique case labels + dilatancy boundaries)
+    handles, labels = axes[0].get_legend_handles_labels()
+    uniq = {}
+    for h, l in zip(handles, labels):
+        if l not in uniq:
+            uniq[l] = h
+    fig.legend(uniq.values(), uniq.keys(), loc="upper center", bbox_to_anchor=(0.5, 0.96),
+               ncol=min(5, len(uniq)), frameon=True, fontsize=9)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
+
+    outname = f"pq_paths_combined_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
+    outpath = os.path.join(OUT_DIR, outname.replace(" ", "").replace("'", "").replace("[", "").replace("]", ""))
+    fig.savefig(outpath, dpi=DPI)
+    print("[SAVED]", outpath)
+
+    if SHOW:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_separate(cases_meta, stress_by_series):
+    """Plot each case in a separate figure."""
+    probe_types = ["top", "mid", "bottom", "bend1", "bend2"]
+
+    for (cav, sc), d in stress_by_series.items():
+        fig, axes = plt.subplots(2, 3, figsize=(14, 8))
+        axes = axes.flatten()
+
+        case_label = f"{cav} | {sc}" if sc is not None else f"{cav}"
+        color, linestyle = get_case_color_and_style(cav, sc)
+
+        for i, ptype in enumerate(probe_types):
+            ax = axes[i]
+
+            # Plot dilatancy boundaries
+            plot_dilatancy_boundaries(ax, show_boundaries=SHOW_DILATANCY)
+
+            p, q = d[ptype]
+            ax.plot(p, q, linewidth=2.5, color=color, linestyle=linestyle, label=case_label)
+            ax.scatter(p[-1], q[-1], s=40, edgecolors="black", linewidths=0.8,
+                       color=color, zorder=5)
+
+            ax.set_title(f"p–q stress path: {ptype}")
+            ax.set_xlabel("Mean stress p (MPa)")
+            ax.set_ylabel("Von Mises q (MPa)")
+            ax.grid(True, alpha=0.3)
+            if i == 0:
+                ax.legend(loc="upper left", fontsize=9, frameon=True)
+
+        # Pressure schedule subplot
+        axp = axes[5]
+        # Find the case metadata for this series
+        case_path = None
+        for m in cases_meta:
+            if m.get("cavern_label") == cav and m.get("scenario_preset") == sc:
+                case_path = m["case_path"]
+                break
+
+        if case_path:
+            tH, pMPa = read_pressure_schedule(case_path)
+            if tH is not None:
+                axp.plot(tH / 24.0, pMPa, linewidth=2.0, color=color)
+                axp.set_title("Pressure schedule")
+                axp.set_xlabel("Time (days)")
+                axp.set_ylabel("Pressure (MPa)")
+                axp.grid(True, alpha=0.3)
+            else:
+                axp.text(0.5, 0.5, "No pressure data", ha="center", va="center", transform=axp.transAxes)
+                axp.axis("off")
+        else:
+            axp.axis("off")
+
+        fig.suptitle(f"Stress State: {case_label}", fontsize=12, fontweight="bold")
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+        safe_name = f"{cav}_{sc}".replace(" ", "_").replace("/", "_")
+        outname = f"pq_paths_{safe_name}.png"
+        outpath = os.path.join(OUT_DIR, outname)
+        fig.savefig(outpath, dpi=DPI)
+        print("[SAVED]", outpath)
+
+        if SHOW:
+            plt.show()
+        plt.close(fig)
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
+
+    # Print configuration summary
+    print("=" * 70)
+    print("PLOT STRESS STATE - Configuration")
+    print("=" * 70)
+    print(f"  ROOT:       {ROOT}")
+    print(f"  Pressure:   {SELECT.get('pressure')}")
+    print(f"  Scenario:   {SELECT.get('scenario')}")
+    print(f"  Caverns:    {SELECT.get('caverns')}")
+    print(f"  Plot mode:  {PLOT_MODE}")
+    print(f"  Dilatancy:  {SHOW_DILATANCY}")
+    print("=" * 70)
 
     all_cases = detect_layout_and_collect_cases(ROOT)
     # Keep only cases that actually have the fields we need for this plot
@@ -263,87 +518,35 @@ def main():
     if ONE_CASE_PER_SERIES:
         cases_meta = pick_one_case_per_series(cases_meta)
 
-    # Order caverns for linestyle mapping
-    cav_labels = []
-    scenarios = []
+    print(f"[INFO] Found {len(cases_meta)} case(s) to plot:")
     for m in cases_meta:
-        if m.get("cavern_label") not in cav_labels:
-            cav_labels.append(m.get("cavern_label"))
-        if m.get("scenario_preset") not in scenarios:
-            scenarios.append(m.get("scenario_preset"))
-
-    cav_labels_sorted = [c for c in CAVERN_ORDER if c in cav_labels] + [c for c in cav_labels if c not in CAVERN_ORDER]
-    scenarios_sorted = [s for s in SCENARIO_ORDER if s in scenarios] + [s for s in scenarios if s not in SCENARIO_ORDER]
-
-    scenario_colors = build_color_map_for_scenarios(scenarios_sorted)
-    cavern_styles = build_linestyle_map_for_caverns(cav_labels_sorted)
+        print(f"  - {m.get('cavern_label')} | {m.get('scenario_preset')} | {m.get('case_name')}")
 
     # Build stress paths
     stress_by_series = {}  # key -> dict(probe -> (p,q))
     for m in cases_meta:
         folder = m["case_path"]
-        wall_points = load_wall_points(folder)
-        probes = auto_generate_probes_from_wall_points(wall_points, n_bend_probes=2, min_gap_idx=5)
-        series_key = (m.get("cavern_label"), m.get("scenario_preset"))
-        stress_by_series[series_key] = read_stress_paths(folder, probes)
+        try:
+            wall_points = load_wall_points(folder)
+            probes = auto_generate_probes_from_wall_points(wall_points, n_bend_probes=2, min_gap_idx=5)
+            series_key = (m.get("cavern_label"), m.get("scenario_preset"))
+            stress_by_series[series_key] = read_stress_paths(folder, probes)
+        except Exception as e:
+            print(f"[WARN] Skipping {m.get('case_name')}: {e}")
 
-    probe_types = ["top", "mid", "bottom", "bend1", "bend2"]
+    if not stress_by_series:
+        raise RuntimeError("No valid stress data could be loaded.")
 
-    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
-    axes = axes.flatten()
-
-    for i, ptype in enumerate(probe_types):
-        ax = axes[i]
-        plot_dilatancy_boundary(ax)
-
-        for (cav, sc), d in stress_by_series.items():
-            p, q = d[ptype]
-            col = scenario_colors.get(sc, "C0")
-            ls = cavern_styles.get(cav, "-")
-            label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
-
-            ax.plot(p, q, linewidth=2.0, color=col, linestyle=ls, label=label)
-            ax.scatter(p[-1], q[-1], s=30, edgecolors="black", linewidths=0.6,
-                       color=col, zorder=5)
-
-        ax.set_title(f"p–q stress path: {ptype}")
-        ax.set_xlabel("Mean stress p (MPa)")
-        ax.set_ylabel("Von Mises q (MPa)")
-        ax.grid(True, alpha=0.3)
-
-    # Pressure schedule subplot: show first matched case
-    axp = axes[5]
-    tH, pMPa = read_pressure_schedule(cases_meta[0]["case_path"])
-    if tH is None:
-        axp.text(0.5, 0.5, "No pressure_schedule.json found.",
-                 ha="center", va="center", transform=axp.transAxes)
-        axp.axis("off")
+    # Plot based on mode
+    if PLOT_MODE == "combined":
+        plot_combined(cases_meta, stress_by_series)
+    elif PLOT_MODE == "separate":
+        plot_separate(cases_meta, stress_by_series)
     else:
-        axp.plot(tH / 24.0, pMPa, linewidth=2.0)
-        axp.set_title("Pressure schedule (from first selected case)")
-        axp.set_xlabel("Time (days)")
-        axp.set_ylabel("Pressure (MPa)")
-        axp.grid(True, alpha=0.3)
+        print(f"[WARN] Unknown PLOT_MODE '{PLOT_MODE}', defaulting to combined")
+        plot_combined(cases_meta, stress_by_series)
 
-    # Deduplicate legend
-    handles, labels = axes[0].get_legend_handles_labels()
-    uniq = {}
-    for h, l in zip(handles, labels):
-        if l not in uniq:
-            uniq[l] = h
-    fig.legend(uniq.values(), uniq.keys(), loc="upper center", bbox_to_anchor=(0.5, 0.94),
-               ncol=min(6, len(uniq)), frameon=True)
-
-    fig.tight_layout(rect=[0, 0, 1, 0.92])
-
-    outname = f"pq_paths_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
-    outpath = os.path.join(OUT_DIR, outname.replace(" ", ""))
-    fig.savefig(outpath, dpi=DPI)
-    print("[SAVED]", outpath)
-
-    if SHOW:
-        plt.show()
-    plt.close(fig)
+    print("[DONE]")
 
 if __name__ == "__main__":
     main()

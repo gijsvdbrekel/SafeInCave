@@ -14,42 +14,75 @@ HOUR = 3600.0
 DAY  = 24.0 * HOUR
 
 # =============================================================================
-# USER SELECTION
+# USER CONFIGURATION - Edit this section to customize the plot
 # =============================================================================
+
+# --- Output folder containing simulation results ---
 ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/3_cavern/output"
 
+# --- Case selection filters ---
+# Set any filter to None to include all values for that parameter
 SELECT = {
-    "pressure": "sinus",
-    "caverns": ["Regular"],  # can be None or list
-    "scenario": ["disloc_old_only", "disloc_new_only"],  # can be None or list
-    "case_contains": None,
+    "caverns": ["Regular"],                    # e.g. ["Regular", "Tilted"] or None for all
+    "pressure": "sinus",                       # "sinus", "linear", "irregular", "csv_profile", or None
+    "scenario": ["full", "full_minus_desai"],  # e.g. ["full", "desai_only"] or None
+    "case_contains": None,                     # substring filter on case name, or None
 }
 
-CAVERN_PHYS_TAG = 29
+# --- Plot mode ---
+# "combined" = all cases on one figure
+# "separate" = one figure per case
+PLOT_MODE = "combined"
 
-OUT_DIR = os.path.join(ROOT, "_figures")
-SHOW = False
-DPI = 180
+# --- Color coding by cavern shape ---
+CAVERN_COLORS = {
+    "Asymmetric":    "#1f77b4",   # blue
+    "Irregular":     "#ff7f0e",   # orange
+    "IrregularFine": "#d62728",   # red
+    "Multichamber":  "#2ca02c",   # green
+    "Regular":       "#9467bd",   # purple
+    "Teardrop":      "#8c564b",   # brown
+    "Tilt":          "#e377c2",   # pink
+}
 
-# --- XDMF output ---
-WRITE_XDMF = True
-XDMF_SUBDIR = os.path.join("operation", "_fos_outputs")  # created inside each case folder
-XDMF_FILENAME = "fos.xdmf"  # will also generate fos.h5 next to it
+# --- Linestyle coding by scenario ---
+SCENARIO_LINESTYLES = {
+    "disloc_old_only":  "-",
+    "disloc_new_only":  "--",
+    "desai_only":       "-.",
+    "full_minus_desai": ":",
+    "full":             (0, (3, 1, 1, 1)),  # dash-dot-dot
+    None:               "-",
+}
 
+# --- Ordering for legend ---
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
 SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full", None]
 
-def build_color_map_for_scenarios(scenarios):
-    cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
-    if not cycle:
-        cycle = [f"C{i}" for i in range(10)]
-    scenarios = list(scenarios)
-    return {sc: cycle[i % len(cycle)] for i, sc in enumerate(scenarios)}
+# --- Other settings ---
+CAVERN_PHYS_TAG = 29          # Physical tag for cavern boundary in mesh
+OUT_DIR = os.path.join(ROOT, "_figures")
+SHOW = False                  # Show plot interactively after saving
+DPI = 180
 
-def build_linestyle_map_for_caverns(cav_labels):
-    styles = ["-", "--", "-.", ":"]
-    cav_labels = list(cav_labels)
-    return {lab: styles[i % len(styles)] for i, lab in enumerate(cav_labels)}
+# --- XDMF output for ParaView ---
+WRITE_XDMF = True             # Write FoS field to XDMF for ParaView visualization
+XDMF_SUBDIR = os.path.join("operation", "_fos_outputs")  # created inside each case folder
+XDMF_FILENAME = "fos.xdmf"    # will also generate fos.h5 next to it
+
+# =============================================================================
+# END OF USER CONFIGURATION
+# =============================================================================
+
+
+def get_cavern_color(cavern_label):
+    """Get color for a cavern label, with fallback."""
+    return CAVERN_COLORS.get(cavern_label, "#333333")
+
+
+def get_scenario_linestyle(scenario):
+    """Get linestyle for a scenario, with fallback."""
+    return SCENARIO_LINESTYLES.get(scenario, "-")
 
 def pick_existing(*paths):
     for p in paths:
@@ -236,9 +269,151 @@ def fos_series_stats(FOS, cell_idx):
     out["p05"]  = np.nanpercentile(vals, 5.0, axis=1)
     return out
 
+def print_config_summary():
+    """Print configuration summary at startup."""
+    print("=" * 60)
+    print("FACTOR OF SAFETY (FOS) PLOT CONFIGURATION")
+    print("=" * 60)
+    print(f"  ROOT:        {ROOT}")
+    print(f"  PLOT_MODE:   {PLOT_MODE}")
+    print(f"  WRITE_XDMF:  {WRITE_XDMF}")
+    print(f"  Caverns:     {SELECT.get('caverns', 'all')}")
+    print(f"  Pressure:    {SELECT.get('pressure', 'all')}")
+    print(f"  Scenario:    {SELECT.get('scenario', 'all')}")
+    print(f"  Contains:    {SELECT.get('case_contains', 'any')}")
+    print("=" * 60)
+
+
+def plot_combined(cases):
+    """Plot all cases on a single figure."""
+    COMPRESSION_POSITIVE = True
+    Q_TOL_MPA = 1e-3
+
+    plt.figure(figsize=(14, 7))
+
+    for c in cases:
+        cav = c.get("cavern_label")
+        sc = c.get("scenario_preset")
+        col = get_cavern_color(cav)
+        ls = get_scenario_linestyle(sc)
+        label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
+
+        try:
+            time_list, sig_vals, sig_path = load_sig(c["case_path"])
+            FOS = compute_FOS(sig_vals, compression_positive=COMPRESSION_POSITIVE, q_tol_MPa=Q_TOL_MPA)
+
+            if WRITE_XDMF:
+                write_fos_xdmf_from_sig(c["case_path"], sig_path, time_list, FOS)
+
+            fos_min_global = np.nanmin(np.where(np.isfinite(FOS), FOS, np.nan), axis=1)
+
+            geom_msh = os.path.join(c["case_path"], "operation", "mesh", "geom.msh")
+            slices = extract_cavern_wall_cells_slices(geom_msh, cavern_phys_tag=CAVERN_PHYS_TAG, top_fraction=0.20, bottom_fraction=0.20)
+
+            roof_stats  = fos_series_stats(FOS, slices["roof"])
+            mid_stats   = fos_series_stats(FOS, slices["mid"])
+            floor_stats = fos_series_stats(FOS, slices["floor"])
+
+            t_days = time_list / DAY
+
+            plt.plot(t_days, fos_min_global, lw=2.2, color=col, linestyle=ls, label=f"{label} — global min")
+            plt.plot(t_days, roof_stats["mean"],  lw=1.6, color=col, linestyle="--", alpha=0.7, label=f"{label} — roof mean")
+            plt.plot(t_days, mid_stats["mean"],   lw=1.6, color=col, linestyle="-.", alpha=0.7, label=f"{label} — mid mean")
+            plt.plot(t_days, floor_stats["mean"], lw=1.6, color=col, linestyle=":",  alpha=0.7, label=f"{label} — floor mean")
+
+        except Exception as e:
+            print(f"[SKIP] {cav}/{sc}: {e}")
+            continue
+
+    plt.axhline(1.0, color="k", lw=1.2, label="FoS = 1.0 (critical)")
+    plt.xlabel("Time (days)")
+    plt.ylabel("FoS (–)")
+    plt.grid(True, alpha=0.3)
+    plt.title(f"Factor of Safety over time | pressure={SELECT.get('pressure')}")
+
+    ax = plt.gca()
+    handles, labels = ax.get_legend_handles_labels()
+    uniq = {}
+    for h, l in zip(handles, labels):
+        if l not in uniq:
+            uniq[l] = h
+    ax.legend(uniq.values(), uniq.keys(), fontsize=8, frameon=True, loc="best")
+
+    plt.tight_layout()
+
+    outname = f"fos_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
+    outpath = os.path.join(OUT_DIR, outname.replace(" ", ""))
+    plt.savefig(outpath, dpi=DPI)
+    print("[SAVED]", outpath)
+
+    if SHOW:
+        plt.show()
+    plt.close()
+
+
+def plot_separate(cases):
+    """Plot each case on its own figure."""
+    COMPRESSION_POSITIVE = True
+    Q_TOL_MPA = 1e-3
+
+    for c in cases:
+        cav = c.get("cavern_label")
+        sc = c.get("scenario_preset")
+        col = get_cavern_color(cav)
+        label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
+
+        try:
+            time_list, sig_vals, sig_path = load_sig(c["case_path"])
+            FOS = compute_FOS(sig_vals, compression_positive=COMPRESSION_POSITIVE, q_tol_MPa=Q_TOL_MPA)
+
+            if WRITE_XDMF:
+                write_fos_xdmf_from_sig(c["case_path"], sig_path, time_list, FOS)
+
+            fos_min_global = np.nanmin(np.where(np.isfinite(FOS), FOS, np.nan), axis=1)
+
+            geom_msh = os.path.join(c["case_path"], "operation", "mesh", "geom.msh")
+            slices = extract_cavern_wall_cells_slices(geom_msh, cavern_phys_tag=CAVERN_PHYS_TAG, top_fraction=0.20, bottom_fraction=0.20)
+
+            roof_stats  = fos_series_stats(FOS, slices["roof"])
+            mid_stats   = fos_series_stats(FOS, slices["mid"])
+            floor_stats = fos_series_stats(FOS, slices["floor"])
+
+            t_days = time_list / DAY
+
+        except Exception as e:
+            print(f"[SKIP] {cav}/{sc}: {e}")
+            continue
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(t_days, fos_min_global, lw=2.2, color=col, label=f"Global min")
+        plt.plot(t_days, roof_stats["mean"],  lw=1.6, color=col, linestyle="--", alpha=0.7, label=f"Roof mean")
+        plt.plot(t_days, mid_stats["mean"],   lw=1.6, color=col, linestyle="-.", alpha=0.7, label=f"Mid mean")
+        plt.plot(t_days, floor_stats["mean"], lw=1.6, color=col, linestyle=":",  alpha=0.7, label=f"Floor mean")
+
+        plt.axhline(1.0, color="k", lw=1.2, label="FoS = 1.0 (critical)")
+        plt.xlabel("Time (days)")
+        plt.ylabel("FoS (–)")
+        plt.grid(True, alpha=0.3)
+        plt.title(f"Factor of Safety: {label}")
+        plt.legend(fontsize=8, frameon=True, loc="best")
+        plt.tight_layout()
+
+        safe_name = c.get("case_name", "unknown").replace(" ", "_")
+        outname = f"fos_{safe_name}.png"
+        outpath = os.path.join(OUT_DIR, outname)
+        plt.savefig(outpath, dpi=DPI)
+        print("[SAVED]", outpath)
+
+        if SHOW:
+            plt.show()
+        plt.close()
+
+
 def main():
     if MPI.COMM_WORLD.rank != 0:
         return
+
+    print_config_summary()
     os.makedirs(OUT_DIR, exist_ok=True)
 
     all_cases = detect_layout_and_collect_cases(ROOT)
@@ -267,71 +442,16 @@ def main():
             by_series[key] = c
     cases = list(by_series.values())
 
-    cavs = sorted({c.get("cavern_label") for c in cases}, key=lambda x: (CAVERN_ORDER.index(x) if x in CAVERN_ORDER else 999, x))
-    scs = sorted({c.get("scenario_preset") for c in cases}, key=lambda x: (SCENARIO_ORDER.index(x) if x in SCENARIO_ORDER else 999, str(x)))
+    print(f"[INFO] Processing {len(cases)} case(s)...")
 
-    scenario_colors = build_color_map_for_scenarios(scs)
-    cavern_styles = build_linestyle_map_for_caverns(cavs)
+    if PLOT_MODE.lower() == "combined":
+        plot_combined(cases)
+    elif PLOT_MODE.lower() == "separate":
+        plot_separate(cases)
+    else:
+        print(f"[WARNING] Unknown PLOT_MODE '{PLOT_MODE}', using 'combined'")
+        plot_combined(cases)
 
-    plt.figure(figsize=(14, 7))
-
-    COMPRESSION_POSITIVE = True
-    Q_TOL_MPA = 1e-3
-
-    for c in cases:
-        cav = c.get("cavern_label")
-        sc = c.get("scenario_preset")
-        col = scenario_colors.get(sc, "C0")
-        ls = cavern_styles.get(cav, "-")
-        label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
-
-        time_list, sig_vals, sig_path = load_sig(c["case_path"])
-        FOS = compute_FOS(sig_vals, compression_positive=COMPRESSION_POSITIVE, q_tol_MPa=Q_TOL_MPA)
-
-        # --- write FoS field for ParaView ---
-        if WRITE_XDMF:
-            write_fos_xdmf_from_sig(c["case_path"], sig_path, time_list, FOS)
-
-        fos_min_global = np.nanmin(np.where(np.isfinite(FOS), FOS, np.nan), axis=1)
-
-        geom_msh = os.path.join(c["case_path"], "operation", "mesh", "geom.msh")
-        slices = extract_cavern_wall_cells_slices(geom_msh, cavern_phys_tag=CAVERN_PHYS_TAG, top_fraction=0.20, bottom_fraction=0.20)
-
-        roof_stats  = fos_series_stats(FOS, slices["roof"])
-        mid_stats   = fos_series_stats(FOS, slices["mid"])
-        floor_stats = fos_series_stats(FOS, slices["floor"])
-
-        t_days = time_list / DAY
-
-        plt.plot(t_days, fos_min_global, lw=2.2, color=col, linestyle=ls, label=f"{label} — global min")
-        plt.plot(t_days, roof_stats["mean"],  lw=1.6, color=col, linestyle="--", alpha=0.9, label=f"{label} — roof mean")
-        plt.plot(t_days, mid_stats["mean"],   lw=1.6, color=col, linestyle="-.", alpha=0.9, label=f"{label} — mid mean")
-        plt.plot(t_days, floor_stats["mean"], lw=1.6, color=col, linestyle=":",  alpha=0.9, label=f"{label} — floor mean")
-
-    plt.axhline(1.0, color="k", lw=1.2)
-    plt.xlabel("Time (days)")
-    plt.ylabel("FoS (–)")
-    plt.grid(True, alpha=0.3)
-    plt.title(f"Factor of Safety over time | pressure={SELECT.get('pressure')}")
-
-    ax = plt.gca()
-    handles, labels = ax.get_legend_handles_labels()
-    uniq = {}
-    for h, l in zip(handles, labels):
-        if l not in uniq:
-            uniq[l] = h
-    ax.legend(uniq.values(), uniq.keys(), fontsize=8, frameon=True, loc="best")
-
-    plt.tight_layout()
-
-    outname = f"fos_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
-    outpath = os.path.join(OUT_DIR, outname.replace(" ", ""))
-    plt.savefig(outpath, dpi=DPI)
-    print("[SAVED]", outpath)
-
-    if SHOW:
-        plt.show()
-    plt.close()
 
 if __name__ == "__main__":
     main()
