@@ -388,7 +388,7 @@ def build_time_list_by_dp_limit(t_final, p_of_t, *, dt_min, dt_max, dp_max):
 # -----------------------------
 def main():
     # Read grid
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_original")
+    grid_path = os.path.join("..", "..", "..", "..", "grids", "cavern_irregular_original")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Define output folder

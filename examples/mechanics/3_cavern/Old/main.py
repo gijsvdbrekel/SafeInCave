@@ -30,7 +30,7 @@ class LinearMomentumMod(sf.LinearMomentum):
 
 def main():
 	# Read grid
-	grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular")
+	grid_path = os.path.join("..", "..", "..", "..", "grids", "cavern_irregular")
 	grid = sf.GridHandlerGMSH("geom", grid_path)
 
 	# Define output folder

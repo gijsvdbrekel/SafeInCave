@@ -384,7 +384,7 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 def main():
     # Read grid
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular_600_3D")
+    grid_path = os.path.join("..", "..", "..", "..", "grids", "cavern_irregular_600_3D")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
 

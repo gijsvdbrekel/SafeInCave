@@ -844,7 +844,7 @@ def main():
         print("=" * 70)
 
     # Load grid
-    grid_path = os.path.join("..", "..", "..", "grids", config["grid_folder"])
+    grid_path = os.path.join("..", "..", "..", "..", "grids", config["grid_folder"])
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Get derived values

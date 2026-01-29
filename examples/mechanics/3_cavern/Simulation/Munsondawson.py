@@ -283,7 +283,7 @@ def make_material(mom_eq, parts, *,
 def main():
     _validate_scenario()
 
-    grid_path = os.path.join("..", "..", "..", "grids", "cavern_regular_600_3D")
+    grid_path = os.path.join("..", "..", "..", "..", "grids", "cavern_regular_600_3D")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     Z_MAX_BY_CAVERN = {

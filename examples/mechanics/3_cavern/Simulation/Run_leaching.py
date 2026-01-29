@@ -41,7 +41,7 @@ CAVERN_SIZE = 600
 #   "linear"  - Linear decrease from lithostatic to operational pressure
 #   "stepped" - Stepped decrease with plateaus (more realistic)
 
-LEACHING_MODE = "linear"
+LEACHING_MODE = "stepped"
 
 # LEACHING_DAYS: Duration of leaching phase in days (default ~0.25 year = 91 days)
 LEACHING_DAYS = 91
@@ -57,7 +57,7 @@ STEPPED_N_STEPS = 6
 #   The leaching phase ends when pressure reaches this fraction of the initial lithostatic pressure.
 #   All operational pressure schemes will start from this pressure (p_leach_end).
 #   Example: 0.30 means leaching ends at 30% of lithostatic pressure.
-LEACHING_END_FRACTION = 0.30
+LEACHING_END_FRACTION = 0.40
 
 # ── PRESSURE SCENARIO ──────────────────────────────────────────────────────────
 # PRESSURE_SCENARIO: Choose one of:
@@ -66,7 +66,7 @@ LEACHING_END_FRACTION = 0.30
 #   "irregular" - Irregular/spline-smoothed pressure profile
 #   "csv"       - Load pressure profile from CSV file (e.g., real operational data)
 
-PRESSURE_SCENARIO = "sinus"
+PRESSURE_SCENARIO = "csv"
 
 # ── SINUS SETTINGS (only used when PRESSURE_SCENARIO = "sinus") ────────────────
 # P_AMPLITUDE_MPA: Amplitude (MPa) - half the peak-to-peak range
@@ -99,7 +99,7 @@ SCHEDULE_MODE = "stretch"
 OPERATION_DAYS = 365
 
 # N_CYCLES: Number of pressure cycles (only used with "stretch" mode)
-N_CYCLES = 10
+N_CYCLES = 5
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
 # dt_hours: Time step size in hours (for operation phase)
@@ -968,7 +968,7 @@ def main():
         print("=" * 70)
 
     # Load grid
-    grid_path = os.path.join("..", "..", "..", "grids", config["grid_folder"])
+    grid_path = os.path.join("..", "..", "..", "..", "grids", config["grid_folder"])
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Get derived values
