@@ -57,7 +57,7 @@ SCENARIO_LINESTYLES = {
 SCENARIO_COLORS = {
     "disloc_old_only":  "#1f77b4",   # blue
     "disloc_new_only":  "#ff7f0e",   # orange
-    "desai_only":       "#2ca02c",   # green
+    "desai_only":       "#2bbd2b",   # green
     "full_minus_desai": "#d62728",   # red
     "full":             "#9467bd",   # purple
     None:               "#333333",   # dark gray

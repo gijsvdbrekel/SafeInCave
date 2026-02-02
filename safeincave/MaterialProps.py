@@ -1486,6 +1486,247 @@ class ViscoplasticDesai(NonElasticElement):
         return H
 
 
+class MunsonDawsonCreep(NonElasticElement):
+    """
+    Munson–Dawson creep law (steady-state + transient) with internal variable zeta.
+
+    From the provided formula sheet:
+      epsdot_vp_ij = (d sigma / d sigma_ij) * F * epsdot_ss
+      zeta_dot     = (F - 1) * epsdot_ss
+      epsdot_ss    = A * exp(-Q/(R T)) * sigma^n
+      sigma        = sqrt(3 J2)  with  J2 = 1/2 s_ij s_ij
+      eps_t*       = K0 * exp(c T) * (sigma/mu)^m
+      Delta        = alpha_w + beta_w * log10(sigma/mu)
+      F = exp( Delta * (1 - zeta/eps_t*)^2 )      when zeta <= eps_t*
+      F = exp( -delta * (1 - zeta/eps_t*)^2 )     when zeta >= eps_t*
+
+    Parameters
+    ----------
+    A : torch.Tensor
+        Pre-exponential factor for steady-state creep, shape (N,).
+    Q : torch.Tensor
+        Activation energy, shape (N,).
+    n : torch.Tensor
+        Stress exponent for steady-state creep, shape (N,).
+    K0 : torch.Tensor
+        Transient strain threshold coefficient, shape (N,).
+    c : torch.Tensor
+        Temperature coefficient for transient threshold (1/K), shape (N,).
+    m : torch.Tensor
+        Stress exponent for transient threshold, shape (N,).
+    alpha_w : torch.Tensor
+        Work-hardening parameter, shape (N,).
+    beta_w : torch.Tensor
+        Work-hardening parameter, shape (N,).
+    delta : torch.Tensor
+        Recovery parameter, shape (N,).
+    mu : torch.Tensor
+        Shear modulus (Pa), shape (N,).
+    name : str, optional
+        Element name, by default "creep_munson_dawson".
+
+    Attributes
+    ----------
+    zeta, zeta_old : torch.Tensor
+        Internal transient state variable (current and previous), shape (N,).
+    F : torch.Tensor
+        Transient function value per element, shape (N,).
+
+    Notes
+    -----
+    - Uses deviatoric flow direction d sigma / d sigma_ij = (3/2) s_ij / sigma.
+    - Stress is assumed in Pa; mu in Pa; sigma/mu is dimensionless.
+    - Temperature T in Kelvin; c in 1/K.
+    """
+
+    def __init__(self,
+                 A: to.Tensor,
+                 Q: to.Tensor,
+                 n: to.Tensor,
+                 K0: to.Tensor,
+                 c: to.Tensor,
+                 m: to.Tensor,
+                 alpha_w: to.Tensor,
+                 beta_w: to.Tensor,
+                 delta: to.Tensor,
+                 mu: to.Tensor,
+                 name: str = "creep_munson_dawson"):
+        super().__init__(A.shape[0])
+        self.name = name
+
+        self.R = 8.32  # consistent with other creep classes
+
+        # Steady-state params
+        self.A = A.to(dtype=to.float64)
+        self.Q = Q.to(dtype=to.float64)
+        self.n = n.to(dtype=to.float64)
+
+        # Transient params
+        self.K0 = K0.to(dtype=to.float64)
+        self.c = c.to(dtype=to.float64)
+        self.m = m.to(dtype=to.float64)
+        self.alpha_w = alpha_w.to(dtype=to.float64)
+        self.beta_w = beta_w.to(dtype=to.float64)
+        self.delta = delta.to(dtype=to.float64)
+
+        # Shear modulus (Pa), must be provided from your elastic parameters
+        self.mu = mu.to(dtype=to.float64)
+
+        # Internal variable zeta (start at 0 unless you set otherwise)
+        self.zeta = to.zeros(self.n_elems, dtype=to.float64)
+        self.zeta_old = self.zeta.clone()
+
+        # Store F for debugging/output if you want later
+        self.F = to.ones(self.n_elems, dtype=to.float64)
+
+    def update_internal_variables(self) -> None:
+        """
+        Commit zeta after converged time step.
+
+        Returns
+        -------
+        None
+        """
+        self.zeta_old = self.zeta.clone()
+
+    def compute_eps_ne_rate(self, stress_vec: to.Tensor, phi1: float, Temp: to.Tensor,
+                            return_eps_ne: bool = False):
+        """
+        Compute Munson-Dawson creep strain rate from current stress.
+
+        Parameters
+        ----------
+        stress_vec : torch.Tensor
+            Stress tensor per element, shape (N, 3, 3).
+        phi1 : float
+            Time integration factor (dt*theta), unused here.
+        Temp : torch.Tensor
+            Temperature per element (N,) in Kelvin.
+        return_eps_ne : bool, default=False
+            If True, return the rate; else store it.
+
+        Returns
+        -------
+        None or torch.Tensor
+            (N, 3, 3) if `return_eps_ne=True`, else `None`.
+        """
+        # Deviatoric stress
+        s_xx = stress_vec[:, 0, 0]
+        s_yy = stress_vec[:, 1, 1]
+        s_zz = stress_vec[:, 2, 2]
+        s_xy = stress_vec[:, 0, 1]
+        s_xz = stress_vec[:, 0, 2]
+        s_yz = stress_vec[:, 1, 2]
+
+        sigma_mean = (s_xx + s_yy + s_zz) / 3.0
+        s_dev = stress_vec.clone()
+        s_dev[:, 0, 0] = s_xx - sigma_mean
+        s_dev[:, 1, 1] = s_yy - sigma_mean
+        s_dev[:, 2, 2] = s_zz - sigma_mean
+
+        # sigma = sqrt(3 J2) = von Mises equivalent stress (Pa)
+        sigma = to.sqrt(
+            0.5 * (
+                (s_xx - s_yy) ** 2 + (s_xx - s_zz) ** 2 + (s_yy - s_zz) ** 2
+                + 6.0 * (s_xy ** 2 + s_xz ** 2 + s_yz ** 2)
+            )
+        )
+
+        # Avoid divide-by-zero
+        sigma_safe = to.clamp(sigma, min=1e-30)
+        mu_safe = to.clamp(self.mu, min=1e-30)
+
+        # Steady-state scalar strain-rate magnitude (1/s)
+        epsdot_ss = self.A * to.exp(-self.Q / (self.R * Temp)) * (sigma_safe ** self.n)
+
+        # Transient threshold strain eps_t* (dimensionless)
+        ratio = to.clamp(sigma_safe / mu_safe, min=1e-30)
+        eps_t_star = self.K0 * to.exp(self.c * Temp) * (ratio ** self.m)
+        eps_t_star = to.clamp(eps_t_star, min=1e-30)
+
+        # Delta = alpha_w + beta_w log10(sigma/mu)
+        Delta_cap = self.alpha_w + self.beta_w * (to.log10(ratio))
+
+        # r = 1 - zeta/eps_t*
+        r = 1.0 - (self.zeta_old / eps_t_star)
+        r2 = r * r
+
+        # Piecewise F
+        F = to.ones_like(epsdot_ss)
+        mask = self.zeta_old <= eps_t_star
+        F[mask] = to.exp(Delta_cap[mask] * r2[mask])
+        F[~mask] = to.exp(-self.delta[~mask] * r2[~mask])
+
+        self.F = F.clone()
+
+        # Flow direction: d sigma / d sigma_ij = (3/2) * s_dev_ij / sigma
+        flow_dir = (1.5 / sigma_safe)[:, None, None] * s_dev
+
+        # Total MD creep rate tensor
+        eps_rate = flow_dir * (F * epsdot_ss)[:, None, None]
+
+        if return_eps_ne:
+            return eps_rate
+        else:
+            self.eps_ne_rate = eps_rate
+
+    def compute_B_and_H_over_h(self, stress: to.Tensor, dt: float, theta: float, Temp: to.Tensor):
+        """
+        Compute B and H/h for the Munson-Dawson model.
+
+        zeta evolution:
+            zeta_dot = (F - 1) * epsdot_ss
+        We integrate it explicitly using zeta_old (stable and keeps Newton iterations clean):
+            zeta = zeta_old + dt * zeta_dot
+
+        Parameters
+        ----------
+        stress : torch.Tensor
+            Stress per element, shape (N, 3, 3).
+        dt : float
+            Time step.
+        theta : float
+            Time integration parameter.
+        Temp : torch.Tensor
+            Temperature per element.
+
+        Returns
+        -------
+        B : torch.Tensor
+            Driving term, shape (N, 3, 3). Returns zeros.
+        H_over_h : torch.Tensor
+            Linearization ratio, shape (N, 6, 6). Returns zeros.
+        """
+        # Recompute rate + F using current stress but zeta_old
+        self.compute_eps_ne_rate(stress, dt * theta, Temp, return_eps_ne=False)
+
+        # Recompute epsdot_ss consistently here (same as in compute_eps_ne_rate)
+        s_xx = stress[:, 0, 0]
+        s_yy = stress[:, 1, 1]
+        s_zz = stress[:, 2, 2]
+        s_xy = stress[:, 0, 1]
+        s_xz = stress[:, 0, 2]
+        s_yz = stress[:, 1, 2]
+
+        sigma = to.sqrt(
+            0.5 * (
+                (s_xx - s_yy) ** 2 + (s_xx - s_zz) ** 2 + (s_yy - s_zz) ** 2
+                + 6.0 * (s_xy ** 2 + s_xz ** 2 + s_yz ** 2)
+            )
+        )
+        sigma_safe = to.clamp(sigma, min=1e-30)
+        epsdot_ss = self.A * to.exp(-self.Q / (self.R * Temp)) * (sigma_safe ** self.n)
+
+        # Explicit update of zeta
+        zeta_dot = (self.F - 1.0) * epsdot_ss
+        self.zeta = self.zeta_old + dt * zeta_dot
+
+        # No additional B / H coupling terms (keep minimal & non-invasive)
+        B = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
+        H_over_h = to.zeros((self.n_elems, 6, 6), dtype=to.float64)
+        return B, H_over_h
+
+
 
 
 

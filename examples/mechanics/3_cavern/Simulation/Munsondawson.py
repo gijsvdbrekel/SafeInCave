@@ -15,8 +15,8 @@ import math
 # ============================================================
 #  SCENARIO SWITCHES (zet precies ÉÉN preset True)
 # ============================================================
-RUN_FULL_MINUS_DESAI = True   # Kelvin + disloc(CCC) + pressure-solution
-RUN_MD_ONLY          = False  # Elastic + Munson–Dawson (steady + transient)
+RUN_FULL             = False   # Kelvin + disloc(CCC) + pressure-solution + Desai
+RUN_MD_ONLY          = True  # Elastic + Munson–Dawson (steady + transient)
 RUN_MD_STEADY_ONLY   = False  # Elastic + Munson–Dawson (steady-only) => transient uit
 RUN_FULL_MD          = False  # Kelvin + pressure-solution + Munson–Dawson (steady + transient)
 
@@ -29,7 +29,7 @@ EQUILIBRIUM_ELASTIC_ONLY = True
 # ============================================================
 CAVERN_TYPE = "regular600"
 OPERATION_DAYS = 365
-N_CYCLES = 10
+N_CYCLES = 8
 dt_hours = 2.0
 
 PRESSURE_SCENARIO = "sinus"
@@ -89,8 +89,8 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 
 def _scenario_name():
-    if RUN_FULL_MINUS_DESAI:
-        return "full_minus_desai"
+    if RUN_FULL:
+        return "full"
     if RUN_MD_ONLY:
         return "md_only"
     if RUN_MD_STEADY_ONLY:
@@ -101,11 +101,11 @@ def _scenario_name():
 
 
 def _validate_scenario():
-    flags = [RUN_FULL_MINUS_DESAI, RUN_MD_ONLY, RUN_MD_STEADY_ONLY, RUN_FULL_MD]
+    flags = [RUN_FULL, RUN_MD_ONLY, RUN_MD_STEADY_ONLY, RUN_FULL_MD]
     if sum(bool(x) for x in flags) != 1:
         raise ValueError(
             "Zet precies één scenario True: "
-            "RUN_FULL_MINUS_DESAI, RUN_MD_ONLY, RUN_MD_STEADY_ONLY, RUN_FULL_MD"
+            "RUN_FULL, RUN_MD_ONLY, RUN_MD_STEADY_ONLY, RUN_FULL_MD"
         )
 
 
@@ -231,6 +231,21 @@ def build_base_material_parts(mom_eq):
         name="munson_dawson"
     )
 
+    # ---- Desai Viscoplastic ----
+    mu_1 = 5.3665857009859815e-11 * to.ones(mom_eq.n_elems)
+    N_1 = 3.1 * to.ones(mom_eq.n_elems)
+    n_desai = 3.0 * to.ones(mom_eq.n_elems)
+    a_1 = 1.965018496922832e-05 * to.ones(mom_eq.n_elems)
+    eta_vp = 0.8275682807874163 * to.ones(mom_eq.n_elems)
+    beta_1 = 0.0048 * to.ones(mom_eq.n_elems)
+    beta_desai = 0.995 * to.ones(mom_eq.n_elems)
+    m_desai = -0.5 * to.ones(mom_eq.n_elems)
+    gamma_desai = 0.095 * to.ones(mom_eq.n_elems)
+    alpha_0 = 0.0022 * to.ones(mom_eq.n_elems)
+    sigma_t = 5.0 * to.ones(mom_eq.n_elems)
+    desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n_desai, beta_1, beta_desai,
+                                  m_desai, gamma_desai, sigma_t, alpha_0, "desai")
+
     return {
         "salt_density": salt_density,
         "rho": rho,
@@ -239,8 +254,9 @@ def build_base_material_parts(mom_eq):
         "disloc_old": creep_disloc_old,
         "pressure_solution": creep_pressure,
         "munson_dawson": md,
+        "desai": desai,
 
-        # ook handig om deze te bewaren voor “steady-only” variant:
+        # ook handig om deze te bewaren voor "steady-only" variant:
         "md_K0_transient": K0_md,
     }
 
@@ -250,7 +266,8 @@ def make_material(mom_eq, parts, *,
                   use_disloc_old: bool,
                   use_pressure_solution: bool,
                   use_munson_dawson: bool,
-                  md_transient_on: bool):
+                  md_transient_on: bool,
+                  use_desai: bool = False):
     mat = sf.Material(mom_eq.n_elems)
     mat.set_density(parts["rho"])
     mat.add_to_elastic(parts["spring"])
@@ -276,6 +293,9 @@ def make_material(mom_eq, parts, *,
     else:
         if use_disloc_old:
             mat.add_to_non_elastic(parts["disloc_old"])
+
+    if use_desai:
+        mat.add_to_non_elastic(parts["desai"])
 
     return mat
 
@@ -344,7 +364,8 @@ def main():
         use_disloc_old=False,
         use_pressure_solution=False,
         use_munson_dawson=False,
-        md_transient_on=True
+        md_transient_on=True,
+        use_desai=False
     )
     mom_eq.expect_vp_state = False
 
@@ -431,13 +452,15 @@ def main():
     use_pressure_solution = False
     use_munson_dawson = False
     md_transient_on = True
+    use_desai = False
 
-    if RUN_FULL_MINUS_DESAI:
+    if RUN_FULL:
         use_kelvin = True
         use_disloc_old = True
         use_pressure_solution = True
         use_munson_dawson = False
         md_transient_on = True  # irrelevant
+        use_desai = True
 
     elif RUN_MD_ONLY:
         use_kelvin = False
@@ -445,6 +468,7 @@ def main():
         use_pressure_solution = False
         use_munson_dawson = True
         md_transient_on = True
+        use_desai = False
 
     elif RUN_MD_STEADY_ONLY:
         use_kelvin = False
@@ -452,6 +476,7 @@ def main():
         use_pressure_solution = False
         use_munson_dawson = True
         md_transient_on = False   # K0 -> 0
+        use_desai = False
 
     elif RUN_FULL_MD:
         use_kelvin = True
@@ -459,6 +484,7 @@ def main():
         use_pressure_solution = True
         use_munson_dawson = True
         md_transient_on = True
+        use_desai = False
 
     # Build operation material
     mat_op = make_material(
@@ -467,11 +493,17 @@ def main():
         use_disloc_old=use_disloc_old,
         use_pressure_solution=use_pressure_solution,
         use_munson_dawson=use_munson_dawson,
-        md_transient_on=md_transient_on
+        md_transient_on=md_transient_on,
+        use_desai=use_desai
     )
 
     mom_eq.set_material(mat_op)
-    mom_eq.expect_vp_state = False
+    mom_eq.expect_vp_state = use_desai
+
+    # Initialize Desai hardening from current stress state (after equilibrium)
+    if use_desai:
+        stress_to = ut.numpy2torch(mom_eq.sig.x.array.reshape((mom_eq.n_elems, 3, 3)))
+        parts["desai"].compute_initial_hardening(stress_to, Fvp_0=0.0)
 
     # Operation BCs
     bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_operation.t_final])
@@ -521,6 +553,7 @@ def main():
             "pressure_solution": bool(use_pressure_solution),
             "munson_dawson": bool(use_munson_dawson),
             "md_transient_on": bool(md_transient_on) if use_munson_dawson else None,
+            "desai": bool(use_desai),
         }
     }
     with open(os.path.join(output_folder, "pressure_schedule.json"), "w") as f:
@@ -544,6 +577,10 @@ def main():
     out_op.add_output_field("p_elems", "Mean stress (Pa)")
     out_op.add_output_field("q_elems", "Von Mises stress (Pa)")
     out_op.add_output_field("sig", "Stress (Pa)")
+    if use_desai:
+        out_op.add_output_field("eps_vp", "Viscoplastic strain (-)")
+        out_op.add_output_field("alpha", "Hardening parameter (-)")
+        out_op.add_output_field("Fvp", "Yield function (-)")
 
     sim_op = sf.Simulator_M(mom_eq, tc_operation, [out_op], False)
     sim_op.run()

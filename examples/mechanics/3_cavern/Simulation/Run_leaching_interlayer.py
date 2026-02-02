@@ -117,7 +117,7 @@ PRESSURE_SWING_MPA = 10
 SCHEDULE_MODE = "stretch"
 
 # OPERATION_DAYS: Total simulation duration in days (operation phase only)
-OPERATION_DAYS = 365 * 3
+OPERATION_DAYS = 365 
 
 # N_CYCLES: Number of pressure cycles (only used with "stretch" mode)
 N_CYCLES = 5
