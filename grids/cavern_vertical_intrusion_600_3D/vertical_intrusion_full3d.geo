@@ -37,11 +37,11 @@ y_center = Ly/2;
 // INTERLAYER Z-POSITIONS
 //////////////////////////////////////////////////////////////
 
-z_inter1_bot = 185.0;
-z_inter1_top = 190.0;
+z_inter1_bot = 187.0;
+z_inter1_top = 188.0;
 
-z_inter2_bot = 285.0;
-z_inter2_top = 290.0;
+z_inter2_bot = 287.0;
+z_inter2_top = 288.0;
 
 //////////////////////////////////////////////////////////////
 // CAVERN GEOMETRY

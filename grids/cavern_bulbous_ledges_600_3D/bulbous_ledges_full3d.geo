@@ -31,14 +31,14 @@ y_center = Ly/2;  // 225.0
 // INTERLAYER Z-POSITIONS (thin layers - 5m each)
 //////////////////////////////////////////////////////////////
 
-z_inter1_bot = 175.0;
-z_inter1_top = 180.0;   // 5m thick
+z_inter1_bot = 177.0;
+z_inter1_top = 178.0;   // 1m thick
 
-z_inter2_bot = 235.0;
-z_inter2_top = 240.0;   // 5m thick
+z_inter2_bot = 237.0;
+z_inter2_top = 238.0;   // 1m thick
 
-z_inter3_bot = 300.0;
-z_inter3_top = 305.0;   // 5m thick
+z_inter3_bot = 302.0;
+z_inter3_top = 303.0;   // 1m thick
 
 //////////////////////////////////////////////////////////////
 // CAVERN GEOMETRY - Irregular bulbous profile

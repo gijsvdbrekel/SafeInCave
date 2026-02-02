@@ -18,7 +18,7 @@ DAY  = 24.0 * HOUR
 # =============================================================================
 
 # --- Output folder containing simulation results ---
-ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/3_cavern/output"
+ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/simulation/output"
 
 # --- Case selection filters ---
 # Set any filter to None to include all values for that parameter

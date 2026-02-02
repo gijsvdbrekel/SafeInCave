@@ -10,10 +10,10 @@
 // HETEROGENEOUS: The interlayers extend horizontally through the
 // entire domain as real geological layers. Five separate volumes:
 // - Salt_bottom (z=0 to 185m)
-// - Interlayer_1 (z=185m to 200m)
-// - Salt_middle (z=200m to 290m)
-// - Interlayer_2 (z=290m to 305m)
-// - Salt_top (z=305m to 660m)
+// - Interlayer_1 (z=191.5m to 192.5m)
+// - Salt_middle (z=192.5m to 297m)
+// - Interlayer_2 (z=297m to 298m)
+// - Salt_top (z=298m to 660m)
 //////////////////////////////////////////////////////////////
 
 coarse_size = 65;
@@ -30,10 +30,10 @@ y_center = Ly/2;  // 225.0
 // INTERLAYER Z-POSITIONS
 //////////////////////////////////////////////////////////////
 
-z_inter1_bot = 185.0;   // Bottom of interlayer 1
-z_inter1_top = 200.0;   // Top of interlayer 1 (15m thick)
-z_inter2_bot = 290.0;   // Bottom of interlayer 2
-z_inter2_top = 305.0;   // Top of interlayer 2 (15m thick)
+z_inter1_bot = 191.5;   // Bottom of interlayer 1
+z_inter1_top = 192.5;   // Top of interlayer 1 (1m thick)
+z_inter2_bot = 297.0;   // Bottom of interlayer 2
+z_inter2_top = 298.0;   // Top of interlayer 2 (1m thick)
 
 //////////////////////////////////////////////////////////////
 // CAVERN GEOMETRY PARAMETERS (scaled by 0.9577 for 600k m³)

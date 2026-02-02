@@ -24,14 +24,14 @@ y_center = Ly/2;
 // INTERLAYER Z-POSITIONS (thin layers - 5m each)
 //////////////////////////////////////////////////////////////
 
-z_inter1_bot = 170.0;
-z_inter1_top = 175.0;
+z_inter1_bot = 172.0;
+z_inter1_top = 173.0;
 
-z_inter2_bot = 245.0;
-z_inter2_top = 250.0;
+z_inter2_bot = 247.0;
+z_inter2_top = 248.0;
 
-z_inter3_bot = 330.0;
-z_inter3_top = 335.0;
+z_inter3_bot = 332.0;
+z_inter3_top = 333.0;
 
 //////////////////////////////////////////////////////////////
 // CAVERN GEOMETRY - Scaled 1.26x for 1200k m³

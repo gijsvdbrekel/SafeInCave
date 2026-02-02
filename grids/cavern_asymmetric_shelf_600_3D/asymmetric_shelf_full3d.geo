@@ -32,11 +32,11 @@ y_center = Ly/2;
 // INTERLAYER Z-POSITIONS
 //////////////////////////////////////////////////////////////
 
-z_inter1_bot = 190.0;
-z_inter1_top = 195.0;
+z_inter1_bot = 192.0;
+z_inter1_top = 193.0;
 
-z_inter2_bot = 280.0;
-z_inter2_top = 285.0;
+z_inter2_bot = 282.0;
+z_inter2_top = 283.0;
 
 //////////////////////////////////////////////////////////////
 // CAVERN GEOMETRY - Asymmetric profile with offset centers

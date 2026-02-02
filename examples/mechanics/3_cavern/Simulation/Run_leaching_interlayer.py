@@ -45,8 +45,8 @@ CAVERN_TYPE = "interlayer"
 # ── INTERLAYER MATERIAL SELECTION ──────────────────────────────────────────────
 # Choose the material for each interlayer (used for all heterogeneous cavern types)
 # Available materials:
-#   "anhydrite" - E = 61.5 GPa, nu = 0.32  (stiffer, from Table 1)
-#   "mudstone"  - E = 19.33 GPa, nu = 0.223 (softer, from Table 1)
+#   "anhydrite" - E = 61.5 GPa, nu = 0.32  (stiffer, from Table 1 Herminio)
+#   "mudstone"  - E = 19.33 GPa, nu = 0.223 (softer, from Table 1 Herminio)
 #
 # All interlayers are PURELY ELASTIC (no creep behavior).
 # Note: INTERLAYER_3_MATERIAL is only used for "bulbous_ledges" caverns (3 interlayers)

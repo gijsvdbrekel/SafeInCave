@@ -20,11 +20,11 @@ y_center = Ly/2;
 // INTERLAYER Z-POSITIONS
 //////////////////////////////////////////////////////////////
 
-z_inter1_bot = 180.0;
-z_inter1_top = 185.0;
+z_inter1_bot = 182.0;
+z_inter1_top = 183.0;
 
-z_inter2_bot = 290.0;
-z_inter2_top = 295.0;
+z_inter2_bot = 292.0;
+z_inter2_top = 293.0;
 
 //////////////////////////////////////////////////////////////
 // CAVERN GEOMETRY - Scaled 1.26x for 1200k m³
