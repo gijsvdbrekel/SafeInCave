@@ -1,6 +1,7 @@
 import safeincave as sf
 import safeincave.Utils as ut
 import safeincave.MomentumBC as momBC
+import safeincave.HeatBC as heatBC
 from petsc4py import PETSc
 from mpi4py import MPI
 import dolfinx as do
@@ -106,6 +107,41 @@ RAMP_HOURS = 24.0
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
 # USE_DESAI: Enable Desai viscoplastic model during operation phase
 USE_DESAI = True
+
+# ── THERMAL MODEL ─────────────────────────────────────────────────────────────
+# USE_THERMAL: Enable thermo-mechanical coupling during operation phase
+#   When enabled, temperature changes cause thermal strain via thermal expansion.
+#   The heat equation is solved with convective BC at the cavern wall.
+USE_THERMAL = False
+
+# THERMAL_EXPANSION_COEFF: Thermal expansion coefficient for salt (1/K)
+#   Typical value for rock salt: 40-44e-6 1/K
+THERMAL_EXPANSION_COEFF = 40e-6
+
+# THERMAL_CONDUCTIVITY: Thermal conductivity for salt (W/(m·K))
+#   Typical value for rock salt: 5-7 W/(m·K)
+THERMAL_CONDUCTIVITY = 5.2
+
+# SPECIFIC_HEAT_CAPACITY: Specific heat capacity for salt (J/(kg·K))
+#   Typical value for rock salt: 850-920 J/(kg·K)
+SPECIFIC_HEAT_CAPACITY = 837.0
+
+# T_SURFACE_C: Surface temperature in Celsius
+T_SURFACE_C = 15.0
+
+# GEOTHERMAL_GRADIENT: Temperature increase with depth (K/km or °C/km)
+#   Typical value: 25-35 K/km
+GEOTHERMAL_GRADIENT = 30.0
+
+# H_CONVECTION: Convective heat transfer coefficient at cavern wall (W/(m²·K))
+#   Controls heat exchange between gas and cavern wall
+#   Typical range: 5-50 W/(m²·K)
+H_CONVECTION = 10.0
+
+# T_GAS_AMPLITUDE_C: Temperature swing amplitude of gas in cavern (°C)
+#   Gas temperature oscillates around the initial rock temperature at cavern depth
+#   Set to 0 for constant gas temperature (isothermal operation)
+T_GAS_AMPLITUDE_C = 20.0
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║                        END OF USER CONFIGURATION                              ║
@@ -840,6 +876,7 @@ def main():
         print(f"  Cycles:    {N_CYCLES}")
         print(f"  dt:        {dt_hours} hours")
         print(f"  Desai:     {'enabled' if USE_DESAI else 'disabled'}")
+        print(f"  Thermal:   {'enabled' if USE_THERMAL else 'disabled'}")
         print(f"  Grid:      {config['grid_folder']}")
         print("=" * 70)
 
@@ -910,6 +947,12 @@ def main():
     mat.add_to_non_elastic(creep_0)
     mat.add_to_non_elastic(creep_pressure)
 
+    # Thermoelastic element (only when USE_THERMAL is enabled)
+    if USE_THERMAL:
+        alpha_th = THERMAL_EXPANSION_COEFF * to.ones(mom_eq.n_elems, dtype=to.float64)
+        thermo = sf.Thermoelastic(alpha_th, "thermo")
+        mat.add_to_thermoelastic(thermo)
+
     mom_eq.set_material(mat)
 
     # Body forces
@@ -917,10 +960,25 @@ def main():
     g_vec = [0.0, 0.0, g]
     mom_eq.build_body_force(g_vec)
 
-    # Initial temperature
-    T0_field = 298 * to.ones(mom_eq.n_elems)
+    # Initial temperature field
+    # When thermal is enabled, use depth-dependent geothermal gradient
+    Z_SURFACE = 660.0  # m (top of domain)
+    T_surface_K = T_SURFACE_C + 273.15
+    dTdz = GEOTHERMAL_GRADIENT / 1000.0  # Convert from K/km to K/m
+
+    if USE_THERMAL:
+        # Compute temperature at element centroids based on depth
+        cell_centroids = grid.mesh.geometry.x[grid.mesh.topology.connectivity(3, 0).array].reshape(-1, 4, 3).mean(axis=1)
+        z_coords = cell_centroids[:, 2]
+        T0_field = to.tensor(T_surface_K + dTdz * (Z_SURFACE - z_coords), dtype=to.float64)
+    else:
+        T0_field = 298 * to.ones(mom_eq.n_elems)
+
     mom_eq.set_T0(T0_field)
     mom_eq.set_T(T0_field)
+
+    # Compute initial temperature at cavern depth (for gas temperature reference)
+    T_cavern_init_K = T_surface_K + dTdz * (Z_SURFACE - z_max)
 
     # ===== EQUILIBRIUM STAGE =====
     tc_equilibrium = sf.TimeController(dt=0.5, initial_time=0.0, final_time=10, time_unit="hour")
@@ -1166,8 +1224,97 @@ def main():
     output_mom_op.add_output_field("sig", "Stress (Pa)")
     outputs_op = [output_mom_op]
 
-    sim_op = sf.Simulator_M(mom_eq, tc_operation, outputs_op, False)
-    sim_op.run()
+    if USE_THERMAL:
+        # ===== HEAT EQUATION SETUP =====
+        heat_eq = sf.HeatDiffusion(grid)
+
+        # Define heat solver
+        heat_solver = PETSc.KSP().create(grid.mesh.comm)
+        heat_solver.setType("cg")
+        heat_solver.getPC().setType("asm")
+        heat_solver.setTolerances(rtol=1e-12, max_it=100)
+        heat_eq.set_solver(heat_solver)
+
+        # Set thermal material properties
+        cp = SPECIFIC_HEAT_CAPACITY * to.ones(heat_eq.n_elems, dtype=to.float64)
+        mat.set_specific_heat_capacity(cp)
+
+        k_th = THERMAL_CONDUCTIVITY * to.ones(heat_eq.n_elems, dtype=to.float64)
+        mat.set_thermal_conductivity(k_th)
+
+        heat_eq.set_material(mat)
+
+        # Set initial temperature field for heat equation (node-based)
+        # Create node temperature field using depth-dependent geothermal gradient
+        node_coords = grid.mesh.geometry.x
+        z_nodes = node_coords[:, 2]
+        T0_nodes = T_surface_K + dTdz * (Z_SURFACE - z_nodes)
+        T0_nodes_tensor = to.tensor(T0_nodes, dtype=to.float64)
+        heat_eq.set_initial_T(T0_nodes_tensor)
+
+        # Heat boundary conditions
+        heat_time_values = [tc_operation.t_initial, tc_operation.t_final]
+        nt_heat = len(heat_time_values)
+
+        heat_bc_handler = heatBC.BcHandler(heat_eq)
+
+        # Neumann BC (zero flux) on domain boundaries
+        bc_heat_west = heatBC.NeumannBC("West", nt_heat * [0.0], heat_time_values)
+        bc_heat_east = heatBC.NeumannBC("East", nt_heat * [0.0], heat_time_values)
+        bc_heat_south = heatBC.NeumannBC("South", nt_heat * [0.0], heat_time_values)
+        bc_heat_north = heatBC.NeumannBC("North", nt_heat * [0.0], heat_time_values)
+        bc_heat_top = heatBC.DirichletBC("Top", nt_heat * [T_surface_K], heat_time_values)
+        bc_heat_bottom = heatBC.NeumannBC("Bottom", nt_heat * [dTdz], heat_time_values)
+
+        heat_bc_handler.add_boundary_condition(bc_heat_west)
+        heat_bc_handler.add_boundary_condition(bc_heat_east)
+        heat_bc_handler.add_boundary_condition(bc_heat_south)
+        heat_bc_handler.add_boundary_condition(bc_heat_north)
+        heat_bc_handler.add_boundary_condition(bc_heat_top)
+        heat_bc_handler.add_boundary_condition(bc_heat_bottom)
+
+        # Cavern boundary: Robin BC with convective heat transfer
+        # Gas temperature oscillates with same period as pressure
+        # Build gas temperature schedule synchronized with pressure
+        n_t_steps = len(t_pressure)
+        T_gas_values = []
+        for i, t in enumerate(t_pressure):
+            # Oscillate gas temperature with same period as pressure
+            if PRESSURE_SCENARIO == "sinus":
+                # Sync with sinus pressure: max pressure = min temp, min pressure = max temp
+                period_s = tc_operation.t_final / N_CYCLES if SCHEDULE_MODE == "stretch" else 24.0 * ut.hour
+                phase = 2.0 * math.pi * t / period_s
+                T_gas = T_cavern_init_K - T_GAS_AMPLITUDE_C * math.sin(phase)
+            else:
+                # For other scenarios, use simple sinusoidal variation
+                period_s = tc_operation.t_final / N_CYCLES if SCHEDULE_MODE == "stretch" else 24.0 * ut.hour
+                phase = 2.0 * math.pi * t / period_s
+                T_gas = T_cavern_init_K + T_GAS_AMPLITUDE_C * math.sin(phase)
+            T_gas_values.append(T_gas)
+
+        bc_heat_cavern = heatBC.RobinBC("Cavern", T_gas_values, H_CONVECTION, t_pressure)
+        heat_bc_handler.add_boundary_condition(bc_heat_cavern)
+
+        heat_eq.set_boundary_conditions(heat_bc_handler)
+
+        # Add heat output
+        output_heat_op = SparseSaveFields(heat_eq, interval=15)
+        output_heat_op.set_output_folder(output_folder_operation)
+        output_heat_op.add_output_field("T", "Temperature (K)")
+        outputs_op.append(output_heat_op)
+
+        if MPI.COMM_WORLD.rank == 0:
+            print(f"[THERMAL] Enabled with alpha={THERMAL_EXPANSION_COEFF:.2e} 1/K")
+            print(f"[THERMAL] T_surface={T_SURFACE_C}°C, gradient={GEOTHERMAL_GRADIENT} K/km")
+            print(f"[THERMAL] T_gas_amplitude={T_GAS_AMPLITUDE_C}°C, h_conv={H_CONVECTION} W/(m²·K)")
+
+        # Run coupled thermo-mechanical simulation
+        sim_op = sf.Simulator_TM(mom_eq, heat_eq, tc_operation, outputs_op, False)
+        sim_op.run()
+    else:
+        # Run mechanical-only simulation
+        sim_op = sf.Simulator_M(mom_eq, tc_operation, outputs_op, False)
+        sim_op.run()
 
 
 if __name__ == '__main__':

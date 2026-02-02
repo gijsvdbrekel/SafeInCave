@@ -1,6 +1,7 @@
 import safeincave as sf
 import safeincave.Utils as ut
 import safeincave.MomentumBC as momBC
+import safeincave.HeatBC as heatBC
 from petsc4py import PETSc
 from mpi4py import MPI
 import dolfinx as do
@@ -27,7 +28,23 @@ import csv
 # ║  for each interlayer independently:                                           ║
 # ║  - Anhydrite: E = 61.5 GPa, nu = 0.32                                        ║
 # ║  - Mudstone:  E = 19.33 GPa, nu = 0.223                                      ║
+# ║                                                                               ║
+# ║  INITIALIZATION MODE:                                                         ║
+# ║  - USE_LEACHING = True:  Leaching phase (pressure ramp from lithostatic)      ║
+# ║  - USE_LEACHING = False: Equilibrium phase (constant pressure, like Run.py)   ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
+
+# ── INITIALIZATION MODE ───────────────────────────────────────────────────────
+# USE_LEACHING: Choose initialization strategy before operation phase:
+#   True  - Leaching phase: pressure decreases from lithostatic to operational
+#   False - Equilibrium phase: short phase at constant equilibrium pressure (like Run.py)
+USE_LEACHING = True
+
+# EQUILIBRIUM_HOURS: Duration of equilibrium phase (only used if USE_LEACHING = False)
+EQUILIBRIUM_HOURS = 10.0
+
+# EQUILIBRIUM_DT_HOURS: Time step during equilibrium (only used if USE_LEACHING = False)
+EQUILIBRIUM_DT_HOURS = 0.5
 
 # ── CAVERN SELECTION ───────────────────────────────────────────────────────────
 # CAVERN_TYPE: Choose one of:
@@ -72,10 +89,11 @@ LEACHING_DT_HOURS = 12
 #   Each step holds pressure constant for LEACHING_DAYS / STEPPED_N_STEPS days
 STEPPED_N_STEPS = 6
 
-# LEACHING_END_FRACTION: Fraction of lithostatic pressure at end of leaching
-#   The leaching phase ends when pressure reaches this fraction of the initial lithostatic pressure.
-#   All operational pressure schemes will start from this pressure (p_leach_end).
-#   Example: 0.30 means leaching ends at 30% of lithostatic pressure.
+# LEACHING_END_FRACTION: Fraction of lithostatic pressure for minimum operational pressure
+#   - When USE_LEACHING = True: Leaching ends at this fraction of lithostatic pressure
+#   - When USE_LEACHING = False: Equilibrium pressure is set to this fraction of lithostatic pressure
+#   All operational pressure schemes (including CSV) use this as the minimum pressure.
+#   Example: 0.40 means minimum operational pressure = 40% of lithostatic pressure.
 LEACHING_END_FRACTION = 0.40
 
 # ── PRESSURE SCENARIO ──────────────────────────────────────────────────────────
@@ -144,9 +162,46 @@ RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
 # USE_DESAI: Enable Desai viscoplastic model during operation phase
-#   Note: Desai is NEVER enabled during leaching phase
+#   Note: Desai is NEVER enabled during leaching/equilibrium phase
 #   Note: Desai is only applied to SALT regions, not to interlayers
 USE_DESAI = True
+
+# ── THERMAL MODEL ─────────────────────────────────────────────────────────────
+# USE_THERMAL: Enable thermo-mechanical coupling during operation phase
+#   When enabled, temperature changes cause thermal strain via thermal expansion.
+#   The heat equation is solved with convective BC at the cavern wall.
+#   Note: Thermal is only enabled during operation phase, not leaching/equilibrium.
+#   Note: Thermal expansion only applied to SALT regions, not interlayers.
+USE_THERMAL = False
+
+# THERMAL_EXPANSION_COEFF: Thermal expansion coefficient for salt (1/K)
+#   Typical value for rock salt: 40-44e-6 1/K
+THERMAL_EXPANSION_COEFF = 40e-6
+
+# THERMAL_CONDUCTIVITY: Thermal conductivity for salt (W/(m·K))
+#   Typical value for rock salt: 5-7 W/(m·K)
+THERMAL_CONDUCTIVITY = 5.2
+
+# SPECIFIC_HEAT_CAPACITY: Specific heat capacity for salt (J/(kg·K))
+#   Typical value for rock salt: 850-920 J/(kg·K)
+SPECIFIC_HEAT_CAPACITY = 837.0
+
+# T_SURFACE_C: Surface temperature in Celsius
+T_SURFACE_C = 15.0
+
+# GEOTHERMAL_GRADIENT: Temperature increase with depth (K/km or °C/km)
+#   Typical value: 25-35 K/km
+GEOTHERMAL_GRADIENT = 30.0
+
+# H_CONVECTION: Convective heat transfer coefficient at cavern wall (W/(m²·K))
+#   Controls heat exchange between gas and cavern wall
+#   Typical range: 5-50 W/(m²·K)
+H_CONVECTION = 10.0
+
+# T_GAS_AMPLITUDE_C: Temperature swing amplitude of gas in cavern (°C)
+#   Gas temperature oscillates around the initial rock temperature at cavern depth
+#   Set to 0 for constant gas temperature (isothermal operation)
+T_GAS_AMPLITUDE_C = 20.0
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║                        END OF USER CONFIGURATION                              ║
@@ -248,18 +303,29 @@ def validate_configuration():
 
     if OPERATION_DAYS <= 0:
         errors.append(f"OPERATION_DAYS must be positive, got {OPERATION_DAYS}")
-    if LEACHING_DAYS <= 0:
-        errors.append(f"LEACHING_DAYS must be positive, got {LEACHING_DAYS}")
     if N_CYCLES <= 0:
         errors.append(f"N_CYCLES must be positive, got {N_CYCLES}")
     if dt_hours <= 0:
         errors.append(f"dt_hours must be positive, got {dt_hours}")
-    if LEACHING_DT_HOURS <= 0:
-        errors.append(f"LEACHING_DT_HOURS must be positive, got {LEACHING_DT_HOURS}")
-    if STEPPED_N_STEPS < 2:
-        errors.append(f"STEPPED_N_STEPS must be at least 2, got {STEPPED_N_STEPS}")
+
+    # LEACHING_END_FRACTION is used for both modes (leaching end pressure or equilibrium pressure)
     if LEACHING_END_FRACTION <= 0.0 or LEACHING_END_FRACTION >= 1.0:
         errors.append(f"LEACHING_END_FRACTION must be between 0 and 1 (exclusive), got {LEACHING_END_FRACTION}")
+
+    # Leaching-specific validation (only when USE_LEACHING = True)
+    if USE_LEACHING:
+        if LEACHING_DAYS <= 0:
+            errors.append(f"LEACHING_DAYS must be positive, got {LEACHING_DAYS}")
+        if LEACHING_DT_HOURS <= 0:
+            errors.append(f"LEACHING_DT_HOURS must be positive, got {LEACHING_DT_HOURS}")
+        if STEPPED_N_STEPS < 2:
+            errors.append(f"STEPPED_N_STEPS must be at least 2, got {STEPPED_N_STEPS}")
+    else:
+        # Equilibrium-specific validation
+        if EQUILIBRIUM_HOURS <= 0:
+            errors.append(f"EQUILIBRIUM_HOURS must be positive, got {EQUILIBRIUM_HOURS}")
+        if EQUILIBRIUM_DT_HOURS <= 0:
+            errors.append(f"EQUILIBRIUM_DT_HOURS must be positive, got {EQUILIBRIUM_DT_HOURS}")
 
     if PRESSURE_SCENARIO == "sinus":
         if P_AMPLITUDE_MPA <= 0:
@@ -1144,7 +1210,8 @@ def main():
     )
     p_lithostatic_mpa = p_lithostatic / ut.MPa
 
-    # Compute leaching end pressure
+    # Compute minimum operational pressure (used for both leaching end and equilibrium)
+    # Always computed as a fraction of lithostatic pressure using LEACHING_END_FRACTION
     p_leach_end_mpa = LEACHING_END_FRACTION * p_lithostatic_mpa
     p_leach_end = p_leach_end_mpa * ut.MPa
 
@@ -1169,16 +1236,22 @@ def main():
         print(f"  Cavern z_max:     {config['z_max']:.2f} m")
         print(f"  Cavern z_center:  {config['z_center']:.2f} m")
         print("-" * 70)
-        print("  LEACHING PHASE:")
-        print(f"    Mode:           {LEACHING_MODE}")
-        print(f"    Duration:       {LEACHING_DAYS} days")
-        print(f"    P_start:        {p_lithostatic_mpa:.2f} MPa (lithostatic)")
-        print(f"    P_end:          {p_leach_end_mpa:.2f} MPa ({LEACHING_END_FRACTION*100:.0f}%)")
+        if USE_LEACHING:
+            print("  INITIALIZATION: LEACHING PHASE")
+            print(f"    Mode:           {LEACHING_MODE}")
+            print(f"    Duration:       {LEACHING_DAYS} days")
+            print(f"    P_start:        {p_lithostatic_mpa:.2f} MPa (lithostatic)")
+            print(f"    P_end:          {p_leach_end_mpa:.2f} MPa ({LEACHING_END_FRACTION*100:.0f}%)")
+        else:
+            print("  INITIALIZATION: EQUILIBRIUM PHASE")
+            print(f"    Duration:       {EQUILIBRIUM_HOURS} hours")
+            print(f"    P_equilibrium:  {p_leach_end_mpa:.2f} MPa ({LEACHING_END_FRACTION*100:.0f}% of lithostatic)")
         print("-" * 70)
         print("  OPERATION PHASE:")
         print(f"    Scenario:       {PRESSURE_SCENARIO}")
         print(f"    Days:           {OPERATION_DAYS}")
         print(f"    Desai:          {'enabled' if USE_DESAI else 'disabled'}")
+        print(f"    Thermal:        {'enabled' if USE_THERMAL else 'disabled'}")
         if config["n_interlayers"] > 0:
             print("-" * 70)
             print("  MATERIAL HETEROGENEITY:")
@@ -1235,101 +1308,200 @@ def main():
             mat, mom_eq.n_elems, grid, config
         )
 
+    # Thermoelastic element (only when USE_THERMAL is enabled)
+    # Only salt has thermal expansion; interlayers have alpha=0
+    if USE_THERMAL:
+        alpha_th = to.zeros(mom_eq.n_elems, dtype=to.float64)
+        alpha_th[salt_cells] = THERMAL_EXPANSION_COEFF
+        thermo = sf.Thermoelastic(alpha_th, "thermo")
+        mat.add_to_thermoelastic(thermo)
+
     mom_eq.set_material(mat)
 
     # Body forces
     g_vec = [0.0, 0.0, g]
     mom_eq.build_body_force(g_vec)
 
-    # Initial temperature
-    T0_field = 298 * to.ones(mom_eq.n_elems)
+    # Initial temperature field
+    # When thermal is enabled, use depth-dependent geothermal gradient
+    T_surface_K = T_SURFACE_C + 273.15
+    dTdz = GEOTHERMAL_GRADIENT / 1000.0  # Convert from K/km to K/m
+
+    if USE_THERMAL:
+        # Compute temperature at element centroids based on depth
+        cell_centroids = grid.mesh.geometry.x[grid.mesh.topology.connectivity(3, 0).array].reshape(-1, 4, 3).mean(axis=1)
+        z_coords = cell_centroids[:, 2]
+        T0_field = to.tensor(T_surface_K + dTdz * (Z_SURFACE - z_coords), dtype=to.float64)
+    else:
+        T0_field = 298 * to.ones(mom_eq.n_elems)
+
     mom_eq.set_T0(T0_field)
     mom_eq.set_T(T0_field)
 
-    # ===== LEACHING PHASE =====
-    tc_leaching = sf.TimeController(
-        dt=LEACHING_DT_HOURS,
-        initial_time=0.0,
-        final_time=LEACHING_DAYS * 24.0,
-        time_unit="hour"
-    )
-
-    t_leaching, p_leaching = build_leaching_pressure_schedule(
-        tc_leaching,
-        p_start_pa=p_lithostatic,
-        p_end_pa=p_leach_end,
-        mode=LEACHING_MODE,
-        n_steps=STEPPED_N_STEPS
-    )
+    # Compute initial temperature at cavern depth (for gas temperature reference)
+    T_cavern_init_K = T_surface_K + dTdz * (Z_SURFACE - z_max)
 
     gas_density = 0.089  # Hydrogen
 
-    # Leaching BCs
-    bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_leaching.t_final])
-    bc_bottom = momBC.DirichletBC("Bottom", 2, [0.0, 0.0], [0.0, tc_leaching.t_final])
-    bc_south = momBC.DirichletBC("South", 1, [0.0, 0.0], [0.0, tc_leaching.t_final])
-
-    bc_east = momBC.NeumannBC("East", 2, salt_density, 660.0,
-                              [side_burden, side_burden],
-                              [0.0, tc_leaching.t_final],
-                              g=g_vec[2])
-    bc_north = momBC.NeumannBC("North", 2, salt_density, 660.0,
-                               [side_burden, side_burden],
-                               [0.0, tc_leaching.t_final],
-                               g=g_vec[2])
-    bc_top = momBC.NeumannBC("Top", 2, 0.0, 0.0,
-                             [over_burden, over_burden],
-                             [0.0, tc_leaching.t_final],
-                             g=g_vec[2])
-
-    bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, z_max,
-                                p_leaching,
-                                t_leaching,
-                                g=g_vec[2])
-
-    bc_leaching = momBC.BcHandler(mom_eq)
-    for bc in [bc_west, bc_bottom, bc_south, bc_east, bc_north, bc_top, bc_cavern]:
-        bc_leaching.add_boundary_condition(bc)
-
-    mom_eq.set_boundary_conditions(bc_leaching)
-
-    output_folder_leaching = os.path.join(output_folder, "leaching")
-    if MPI.COMM_WORLD.rank == 0:
-        print(f"\n[LEACHING] Output: {output_folder_leaching}")
-
-    leaching_save_interval = max(1, int(72 / LEACHING_DT_HOURS))
-    output_mom_leaching = SparseSaveFields(mom_eq, interval=leaching_save_interval)
-    output_mom_leaching.set_output_folder(output_folder_leaching)
-    output_mom_leaching.add_output_field("u", "Displacement (m)")
-    output_mom_leaching.add_output_field("eps_tot", "Total strain (-)")
-    output_mom_leaching.add_output_field("sig", "Stress (Pa)")
-    output_mom_leaching.add_output_field("p_elems", "Mean stress (Pa)")
-    output_mom_leaching.add_output_field("q_elems", "Von Mises stress (Pa)")
-    outputs_leaching = [output_mom_leaching]
-
-    # Save leaching schedule
+    # ===== INITIALIZATION PHASE (LEACHING or EQUILIBRIUM) =====
     os.makedirs(output_folder, exist_ok=True)
-    leaching_data = {
-        "phase": "leaching",
-        "cavern_type": config["cavern_type"],
-        "leaching_mode": LEACHING_MODE,
-        "leaching_days": LEACHING_DAYS,
-        "p_lithostatic_mpa": p_lithostatic_mpa,
-        "p_leach_end_mpa": p_leach_end_mpa,
-        "t_hours": [float(t / ut.hour) for t in t_leaching],
-        "p_MPa": [float(p / ut.MPa) for p in p_leaching],
-    }
-    with open(os.path.join(output_folder, "leaching_schedule.json"), 'w') as f:
-        json.dump(leaching_data, f, indent=2)
 
-    if MPI.COMM_WORLD.rank == 0:
-        print(f"[LEACHING] Running for {LEACHING_DAYS} days...")
+    if USE_LEACHING:
+        # ===== LEACHING PHASE =====
+        tc_init = sf.TimeController(
+            dt=LEACHING_DT_HOURS,
+            initial_time=0.0,
+            final_time=LEACHING_DAYS * 24.0,
+            time_unit="hour"
+        )
 
-    sim_leaching = sf.Simulator_M(mom_eq, tc_leaching, outputs_leaching, True)
-    sim_leaching.run()
+        t_init, p_init = build_leaching_pressure_schedule(
+            tc_init,
+            p_start_pa=p_lithostatic,
+            p_end_pa=p_leach_end,
+            mode=LEACHING_MODE,
+            n_steps=STEPPED_N_STEPS
+        )
 
-    if MPI.COMM_WORLD.rank == 0:
-        print("[LEACHING] Complete.")
+        # Leaching BCs
+        bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_init.t_final])
+        bc_bottom = momBC.DirichletBC("Bottom", 2, [0.0, 0.0], [0.0, tc_init.t_final])
+        bc_south = momBC.DirichletBC("South", 1, [0.0, 0.0], [0.0, tc_init.t_final])
+
+        bc_east = momBC.NeumannBC("East", 2, salt_density, 660.0,
+                                  [side_burden, side_burden],
+                                  [0.0, tc_init.t_final],
+                                  g=g_vec[2])
+        bc_north = momBC.NeumannBC("North", 2, salt_density, 660.0,
+                                   [side_burden, side_burden],
+                                   [0.0, tc_init.t_final],
+                                   g=g_vec[2])
+        bc_top = momBC.NeumannBC("Top", 2, 0.0, 0.0,
+                                 [over_burden, over_burden],
+                                 [0.0, tc_init.t_final],
+                                 g=g_vec[2])
+
+        bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, z_max,
+                                    p_init,
+                                    t_init,
+                                    g=g_vec[2])
+
+        bc_init = momBC.BcHandler(mom_eq)
+        for bc in [bc_west, bc_bottom, bc_south, bc_east, bc_north, bc_top, bc_cavern]:
+            bc_init.add_boundary_condition(bc)
+
+        mom_eq.set_boundary_conditions(bc_init)
+
+        output_folder_init = os.path.join(output_folder, "leaching")
+        if MPI.COMM_WORLD.rank == 0:
+            print(f"\n[LEACHING] Output: {output_folder_init}")
+
+        init_save_interval = max(1, int(72 / LEACHING_DT_HOURS))
+        output_mom_init = SparseSaveFields(mom_eq, interval=init_save_interval)
+        output_mom_init.set_output_folder(output_folder_init)
+        output_mom_init.add_output_field("u", "Displacement (m)")
+        output_mom_init.add_output_field("eps_tot", "Total strain (-)")
+        output_mom_init.add_output_field("sig", "Stress (Pa)")
+        output_mom_init.add_output_field("p_elems", "Mean stress (Pa)")
+        output_mom_init.add_output_field("q_elems", "Von Mises stress (Pa)")
+        outputs_init = [output_mom_init]
+
+        # Save leaching schedule
+        init_data = {
+            "phase": "leaching",
+            "cavern_type": config["cavern_type"],
+            "leaching_mode": LEACHING_MODE,
+            "leaching_days": LEACHING_DAYS,
+            "p_lithostatic_mpa": p_lithostatic_mpa,
+            "p_leach_end_mpa": p_leach_end_mpa,
+            "t_hours": [float(t / ut.hour) for t in t_init],
+            "p_MPa": [float(p / ut.MPa) for p in p_init],
+        }
+        with open(os.path.join(output_folder, "leaching_schedule.json"), 'w') as f:
+            json.dump(init_data, f, indent=2)
+
+        if MPI.COMM_WORLD.rank == 0:
+            print(f"[LEACHING] Running for {LEACHING_DAYS} days...")
+
+        sim_init = sf.Simulator_M(mom_eq, tc_init, outputs_init, True)
+        sim_init.run()
+
+        if MPI.COMM_WORLD.rank == 0:
+            print("[LEACHING] Complete.")
+
+    else:
+        # ===== EQUILIBRIUM PHASE (like Run.py) =====
+        tc_init = sf.TimeController(
+            dt=EQUILIBRIUM_DT_HOURS,
+            initial_time=0.0,
+            final_time=EQUILIBRIUM_HOURS,
+            time_unit="hour"
+        )
+
+        # Constant pressure at equilibrium value
+        p_eq = p_leach_end  # Use the computed equilibrium pressure
+
+        # Equilibrium BCs
+        bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_init.t_final])
+        bc_bottom = momBC.DirichletBC("Bottom", 2, [0.0, 0.0], [0.0, tc_init.t_final])
+        bc_south = momBC.DirichletBC("South", 1, [0.0, 0.0], [0.0, tc_init.t_final])
+
+        bc_east = momBC.NeumannBC("East", 2, salt_density, 660.0,
+                                  [side_burden, side_burden],
+                                  [0.0, tc_init.t_final],
+                                  g=g_vec[2])
+        bc_north = momBC.NeumannBC("North", 2, salt_density, 660.0,
+                                   [side_burden, side_burden],
+                                   [0.0, tc_init.t_final],
+                                   g=g_vec[2])
+        bc_top = momBC.NeumannBC("Top", 2, 0.0, 0.0,
+                                 [over_burden, over_burden],
+                                 [0.0, tc_init.t_final],
+                                 g=g_vec[2])
+
+        # Constant cavern pressure
+        bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, z_max,
+                                    [p_eq, p_eq],
+                                    [0.0, tc_init.t_final],
+                                    g=g_vec[2])
+
+        bc_init = momBC.BcHandler(mom_eq)
+        for bc in [bc_west, bc_bottom, bc_south, bc_east, bc_north, bc_top, bc_cavern]:
+            bc_init.add_boundary_condition(bc)
+
+        mom_eq.set_boundary_conditions(bc_init)
+
+        output_folder_init = os.path.join(output_folder, "equilibrium")
+        if MPI.COMM_WORLD.rank == 0:
+            print(f"\n[EQUILIBRIUM] Output: {output_folder_init}")
+
+        output_mom_init = sf.SaveFields(mom_eq)
+        output_mom_init.set_output_folder(output_folder_init)
+        output_mom_init.add_output_field("u", "Displacement (m)")
+        output_mom_init.add_output_field("eps_tot", "Total strain (-)")
+        output_mom_init.add_output_field("sig", "Stress (Pa)")
+        output_mom_init.add_output_field("p_elems", "Mean stress (Pa)")
+        output_mom_init.add_output_field("q_elems", "Von Mises stress (Pa)")
+        outputs_init = [output_mom_init]
+
+        # Save equilibrium info
+        init_data = {
+            "phase": "equilibrium",
+            "cavern_type": config["cavern_type"],
+            "equilibrium_hours": EQUILIBRIUM_HOURS,
+            "p_equilibrium_mpa": p_leach_end_mpa,
+        }
+        with open(os.path.join(output_folder, "equilibrium_schedule.json"), 'w') as f:
+            json.dump(init_data, f, indent=2)
+
+        if MPI.COMM_WORLD.rank == 0:
+            print(f"[EQUILIBRIUM] Running for {EQUILIBRIUM_HOURS} hours...")
+
+        sim_init = sf.Simulator_M(mom_eq, tc_init, outputs_init, True)
+        sim_init.run()
+
+        if MPI.COMM_WORLD.rank == 0:
+            print("[EQUILIBRIUM] Complete.")
 
     # ===== OPERATION PHASE =====
     if USE_DESAI:
@@ -1508,8 +1680,96 @@ def main():
     if MPI.COMM_WORLD.rank == 0:
         print(f"[OPERATION] Running for {OPERATION_DAYS} days...")
 
-    sim_op = sf.Simulator_M(mom_eq, tc_operation, outputs_op, False)
-    sim_op.run()
+    if USE_THERMAL:
+        # ===== HEAT EQUATION SETUP =====
+        heat_eq = sf.HeatDiffusion(grid)
+
+        # Define heat solver
+        heat_solver = PETSc.KSP().create(grid.mesh.comm)
+        heat_solver.setType("cg")
+        heat_solver.getPC().setType("asm")
+        heat_solver.setTolerances(rtol=1e-12, max_it=100)
+        heat_eq.set_solver(heat_solver)
+
+        # Set thermal material properties
+        cp = SPECIFIC_HEAT_CAPACITY * to.ones(heat_eq.n_elems, dtype=to.float64)
+        mat.set_specific_heat_capacity(cp)
+
+        k_th = THERMAL_CONDUCTIVITY * to.ones(heat_eq.n_elems, dtype=to.float64)
+        mat.set_thermal_conductivity(k_th)
+
+        heat_eq.set_material(mat)
+
+        # Set initial temperature field for heat equation (node-based)
+        # Create node temperature field using depth-dependent geothermal gradient
+        node_coords = grid.mesh.geometry.x
+        z_nodes = node_coords[:, 2]
+        T0_nodes = T_surface_K + dTdz * (Z_SURFACE - z_nodes)
+        T0_nodes_tensor = to.tensor(T0_nodes, dtype=to.float64)
+        heat_eq.set_initial_T(T0_nodes_tensor)
+
+        # Heat boundary conditions
+        heat_time_values = [tc_operation.t_initial, tc_operation.t_final]
+        nt_heat = len(heat_time_values)
+
+        heat_bc_handler = heatBC.BcHandler(heat_eq)
+
+        # Neumann BC (zero flux) on domain boundaries
+        bc_heat_west = heatBC.NeumannBC("West", nt_heat * [0.0], heat_time_values)
+        bc_heat_east = heatBC.NeumannBC("East", nt_heat * [0.0], heat_time_values)
+        bc_heat_south = heatBC.NeumannBC("South", nt_heat * [0.0], heat_time_values)
+        bc_heat_north = heatBC.NeumannBC("North", nt_heat * [0.0], heat_time_values)
+        bc_heat_top = heatBC.DirichletBC("Top", nt_heat * [T_surface_K], heat_time_values)
+        bc_heat_bottom = heatBC.NeumannBC("Bottom", nt_heat * [dTdz], heat_time_values)
+
+        heat_bc_handler.add_boundary_condition(bc_heat_west)
+        heat_bc_handler.add_boundary_condition(bc_heat_east)
+        heat_bc_handler.add_boundary_condition(bc_heat_south)
+        heat_bc_handler.add_boundary_condition(bc_heat_north)
+        heat_bc_handler.add_boundary_condition(bc_heat_top)
+        heat_bc_handler.add_boundary_condition(bc_heat_bottom)
+
+        # Cavern boundary: Robin BC with convective heat transfer
+        # Gas temperature oscillates with same period as pressure
+        # Build gas temperature schedule synchronized with pressure
+        T_gas_values = []
+        for i, t in enumerate(t_pressure):
+            # Oscillate gas temperature with same period as pressure
+            if PRESSURE_SCENARIO == "sinus":
+                # Sync with sinus pressure: max pressure = min temp, min pressure = max temp
+                period_s = tc_operation.t_final / N_CYCLES if SCHEDULE_MODE == "stretch" else 24.0 * ut.hour
+                phase = 2.0 * math.pi * t / period_s
+                T_gas = T_cavern_init_K - T_GAS_AMPLITUDE_C * math.sin(phase)
+            else:
+                # For other scenarios, use simple sinusoidal variation
+                period_s = tc_operation.t_final / N_CYCLES if SCHEDULE_MODE == "stretch" else 24.0 * ut.hour
+                phase = 2.0 * math.pi * t / period_s
+                T_gas = T_cavern_init_K + T_GAS_AMPLITUDE_C * math.sin(phase)
+            T_gas_values.append(T_gas)
+
+        bc_heat_cavern = heatBC.RobinBC("Cavern", T_gas_values, H_CONVECTION, t_pressure)
+        heat_bc_handler.add_boundary_condition(bc_heat_cavern)
+
+        heat_eq.set_boundary_conditions(heat_bc_handler)
+
+        # Add heat output
+        output_heat_op = SparseSaveFields(heat_eq, interval=15)
+        output_heat_op.set_output_folder(output_folder_operation)
+        output_heat_op.add_output_field("T", "Temperature (K)")
+        outputs_op.append(output_heat_op)
+
+        if MPI.COMM_WORLD.rank == 0:
+            print(f"[THERMAL] Enabled with alpha={THERMAL_EXPANSION_COEFF:.2e} 1/K (salt only)")
+            print(f"[THERMAL] T_surface={T_SURFACE_C}°C, gradient={GEOTHERMAL_GRADIENT} K/km")
+            print(f"[THERMAL] T_gas_amplitude={T_GAS_AMPLITUDE_C}°C, h_conv={H_CONVECTION} W/(m²·K)")
+
+        # Run coupled thermo-mechanical simulation
+        sim_op = sf.Simulator_TM(mom_eq, heat_eq, tc_operation, outputs_op, False)
+        sim_op.run()
+    else:
+        # Run mechanical-only simulation
+        sim_op = sf.Simulator_M(mom_eq, tc_operation, outputs_op, False)
+        sim_op.run()
 
     if MPI.COMM_WORLD.rank == 0:
         print("[OPERATION] Complete.")

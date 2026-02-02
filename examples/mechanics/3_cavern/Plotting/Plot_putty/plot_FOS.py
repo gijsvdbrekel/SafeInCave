@@ -52,6 +52,13 @@ SCENARIO_LINESTYLES = {
     "desai_only":       "-.",
     "full_minus_desai": ":",
     "full":             (0, (3, 1, 1, 1)),  # dash-dot-dot
+    # Munson-Dawson scenarios
+    "md_only":          "-",
+    "md_steady_only":   "--",
+    "full_md":          "-.",
+    # Interlayer scenarios
+    "interlayer":       "-",
+    "nointerlayer":     "--",
     None:               "-",
 }
 
@@ -62,12 +69,20 @@ SCENARIO_COLORS = {
     "desai_only":       "#2ca02c",   # green
     "full_minus_desai": "#d62728",   # red
     "full":             "#9467bd",   # purple
+    # Munson-Dawson scenarios
+    "md_only":          "#17becf",   # cyan
+    "md_steady_only":   "#bcbd22",   # olive
+    "full_md":          "#e377c2",   # pink
+    # Interlayer scenarios
+    "interlayer":       "#7f7f7f",   # gray
+    "nointerlayer":     "#8c564b",   # brown
     None:               "#333333",   # dark gray
 }
 
 # --- Ordering for legend ---
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
-SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full", None]
+SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full",
+                  "md_only", "md_steady_only", "full_md", "interlayer", "nointerlayer", None]
 
 # --- Other settings ---
 CAVERN_PHYS_TAG = 29          # Physical tag for cavern boundary in mesh
