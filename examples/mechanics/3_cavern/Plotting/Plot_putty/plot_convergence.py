@@ -53,6 +53,16 @@ SCENARIO_LINESTYLES = {
     None:               "-",
 }
 
+# --- Color coding by scenario ---
+SCENARIO_COLORS = {
+    "disloc_old_only":  "#1f77b4",   # blue
+    "disloc_new_only":  "#ff7f0e",   # orange
+    "desai_only":       "#2ca02c",   # green
+    "full_minus_desai": "#d62728",   # red
+    "full":             "#9467bd",   # purple
+    None:               "#333333",   # dark gray
+}
+
 # --- Ordering for legend ---
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
 SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full", None]
@@ -71,6 +81,11 @@ DPI = 180
 def get_cavern_color(cavern_label):
     """Get color for a cavern label, with fallback."""
     return CAVERN_COLORS.get(cavern_label, "#333333")
+
+
+def get_scenario_color(scenario):
+    """Get color for a scenario, with fallback."""
+    return SCENARIO_COLORS.get(scenario, "#333333")
 
 
 def get_scenario_linestyle(scenario):
@@ -210,7 +225,7 @@ def plot_combined(cases):
     for c in cases:
         cav = c.get("cavern_label")
         sc = c.get("scenario_preset")
-        col = get_cavern_color(cav)
+        col = get_scenario_color(sc)
         ls = get_scenario_linestyle(sc)
         label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
         try:
@@ -257,7 +272,7 @@ def plot_separate(cases):
     for c in cases:
         cav = c.get("cavern_label")
         sc = c.get("scenario_preset")
-        col = get_cavern_color(cav)
+        col = get_scenario_color(sc)
         label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
 
         try:

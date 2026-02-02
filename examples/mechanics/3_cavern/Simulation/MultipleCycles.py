@@ -412,7 +412,7 @@ def main():
     N_CYCLES = 1
     dt_hours = 2
 
-    PRESSURE_SCENARIO = "sinus"
+    PRESSURE_SCENARIO = "linear"
 
     
     output_folder = os.path.join(

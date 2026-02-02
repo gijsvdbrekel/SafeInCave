@@ -15,11 +15,11 @@ ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
 SELECT = {
     # Cavern groups are folder names inside OutputNobian (Regular, Irregular, Tilt, ...)
     # None = all
-    "caverns": None,      # e.g. ["Regular"] or ["Irregular"] or None = all
+    "caverns": ["Regular"],      # e.g. ["Regular"] or ["Irregular"] or None = all
 
     # Pressure scheme from pressure_schedule.json: "sinus", "irregular", "csv_profile", "linear", ...
     # None = all
-    "pressure": "sinus",
+    "pressure": None,
 
     # Scenario preset (ScenarioTest): "desai_only", "full", "full_minus_desai", "disloc_old_only", ...
     # None = all
@@ -33,7 +33,7 @@ SELECT = {
     "case_name_contains": None,
 
     # If True -> make one figure per cavern group
-    "separate_per_cavern": False,
+    "separate_per_cavern": True,
 }
 
 

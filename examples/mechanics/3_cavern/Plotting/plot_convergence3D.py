@@ -31,11 +31,11 @@ ROOT = r"/home/gvandenbrekel/SafeInCave/OutputNobian"
 SELECT = {
     # Cavern folders inside OutputNobian: "Regular", "Irregular", "Tilt", ...
     # None = all caverns
-    "caverns": None,                 # e.g. ["Regular"] or ["Regular","Irregular"] or None = all
+    "caverns": ["Regular"],                 # e.g. ["Regular"] or ["Regular","Irregular"] or None = all
 
     # Pressure scheme from pressure_schedule.json: "sinus", "irregular", "csv_profile", "linear", ...
     # None = all pressure schemes
-    "pressure": "sinus",                # e.g. "sinus"
+    "pressure": None,                # e.g. "sinus"
 
     # Optional: only keep case folders containing substring
     "case_contains": None,           # e.g. "365days" or "desai_only" or None

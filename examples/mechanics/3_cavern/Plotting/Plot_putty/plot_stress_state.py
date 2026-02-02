@@ -97,6 +97,15 @@ SCENARIO_LINESTYLES = {
     None: "-",
 }
 
+SCENARIO_COLORS = {
+    "disloc_old_only":  "#1f77b4",   # blue
+    "disloc_new_only":  "#ff7f0e",   # orange
+    "desai_only":       "#2ca02c",   # green
+    "full_minus_desai": "#d62728",   # red
+    "full":             "#9467bd",   # purple
+    None:               "#333333",   # dark gray
+}
+
 # ------------------------
 # Plot helpers
 # ------------------------
@@ -355,8 +364,8 @@ def pick_one_case_per_series(cases_meta):
 # MAIN
 # =============================================================================
 def get_case_color_and_style(cavern_label, scenario_preset):
-    """Get color (by cavern) and linestyle (by scenario) for a case."""
-    color = CAVERN_COLORS.get(cavern_label, "#333333")
+    """Get color (by scenario) and linestyle (by scenario) for a case."""
+    color = SCENARIO_COLORS.get(scenario_preset, CAVERN_COLORS.get(cavern_label, "#333333"))
     linestyle = SCENARIO_LINESTYLES.get(scenario_preset, "-")
     return color, linestyle
 
