@@ -74,6 +74,7 @@ SCENARIO_COLORS = {
     "nointerlayer":     "#8c564b",   # brown
     None:               "#333333",   # dark gray
 }
+##
 
 # --- Ordering for legend ---
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
