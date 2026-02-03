@@ -16,131 +16,125 @@ import csv
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║                           USER CONFIGURATION                                  ║
 # ╠══════════════════════════════════════════════════════════════════════════════╣
-# ║  Modify the settings below to configure your simulation.                      ║
+# ║  This script supports homogeneous salt caverns with optional leaching phase.  ║
+# ║  Combines functionality of Run.py and Run_leaching.py.                        ║
+# ║                                                                               ║
+# ║  INITIALIZATION MODE:                                                         ║
+# ║  - USE_LEACHING = True:  Leaching phase (pressure ramp from lithostatic)      ║
+# ║  - USE_LEACHING = False: Equilibrium phase (short constant pressure phase)    ║
+# ║                                                                               ║
+# ║  CAVERN SELECTION:                                                            ║
+# ║  - Standard shapes: regular, tilted, teardrop, asymmetric, irregular,         ║
+# ║                     multichamber (sizes: 600k or 1200k m³)                    ║
+# ║  - Zuidwending A5: ~1.000.000k m³, real depth 1140-1510m                            ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
+# ── INITIALIZATION MODE ───────────────────────────────────────────────────────
+# USE_LEACHING: Choose initialization strategy before operation phase:
+#   True  - Leaching phase: pressure decreases from lithostatic to operational
+#   False - Equilibrium phase: short phase at constant equilibrium pressure
+USE_LEACHING = True
+
+# EQUILIBRIUM_HOURS: Duration of equilibrium phase (only used if USE_LEACHING = False)
+EQUILIBRIUM_HOURS = 10.0
+
+# EQUILIBRIUM_DT_HOURS: Time step during equilibrium (only used if USE_LEACHING = False)
+EQUILIBRIUM_DT_HOURS = 0.5
+
 # ── CAVERN SELECTION ───────────────────────────────────────────────────────────
-# CAVERN_SHAPE: Choose one of:
-#   "regular"      - Standard cylindrical cavern
-#   "tilted"       - Tilted/inclined cavern
-#   "teardrop"     - Teardrop-shaped cavern
-#   "asymmetric"   - Asymmetric cavern geometry
-#   "irregular"    - Irregular/complex shape
-#   "multichamber" - Multi-chamber cavern
+# CAVERN_TYPE: Choose one of:
+#   Standard shapes (with CAVERN_SIZE 600 or 1200):
+#     "regular"      - Standard cylindrical cavern
+#     "tilted"       - Tilted/inclined cavern
+#     "teardrop"     - Teardrop-shaped cavern
+#     "asymmetric"   - Asymmetric cavern geometry
+#     "irregular"    - Irregular/complex shape
+#     "multichamber" - Multi-chamber cavern
+#   Special caverns (CAVERN_SIZE is ignored):
+#     "A5"           - Zuidwending cavern A5 (~1.000.000k m³, depth 1140-1510m)
 
-CAVERN_SHAPE = "regular"
+CAVERN_TYPE = "regular"
 
-# CAVERN_SIZE: Choose one of:
+# CAVERN_SIZE: Volume in thousands of m³ (ignored for A5)
 #   600  - 600,000 m³ volume
 #   1200 - 1,200,000 m³ volume
-
 CAVERN_SIZE = 600
+
+# ── LEACHING PHASE SETTINGS ──────────────────────────────────────────────────────
+# LEACHING_MODE: How pressure decreases during leaching:
+#   "linear"  - Linear decrease from lithostatic to operational pressure
+#   "stepped" - Stepped decrease with plateaus (more realistic)
+LEACHING_MODE = "stepped"
+
+# LEACHING_DAYS: Duration of leaching phase in days
+LEACHING_DAYS = 91
+
+# LEACHING_DT_HOURS: Time step during leaching
+LEACHING_DT_HOURS = 12
+
+# STEPPED_N_STEPS: Number of pressure steps for "stepped" mode
+STEPPED_N_STEPS = 6
+
+# LEACHING_END_FRACTION: Fraction of lithostatic pressure for operational minimum
+#   When USE_LEACHING = True: Leaching ends at this fraction
+#   When USE_LEACHING = False: Equilibrium pressure for sinus/linear derived from this
+LEACHING_END_FRACTION = 0.40
 
 # ── PRESSURE SCENARIO ──────────────────────────────────────────────────────────
 # PRESSURE_SCENARIO: Choose one of:
 #   "sinus"     - Sinusoidal pressure variation
 #   "linear"    - Piecewise linear pressure profile
 #   "irregular" - Irregular/spline-smoothed pressure profile
-#   "csv"       - Load pressure profile from CSV file (e.g., real operational data)
-
+#   "csv"       - Load pressure profile from CSV file
 PRESSURE_SCENARIO = "sinus"
 
 # ── SINUS SETTINGS (only used when PRESSURE_SCENARIO = "sinus") ────────────────
-# Note: Equilibrium pressure is automatically set to P_MEAN_MPA (since sin(0) = 0)
-# P_MEAN_MPA: Mean pressure (MPa) - center of oscillation
-# P_AMPLITUDE_MPA: Amplitude (MPa) - half the peak-to-peak range
-#   Example: mean=15, amplitude=6.5 gives range [8.5, 21.5] MPa
-
-P_MEAN_MPA = 15.0
-P_AMPLITUDE_MPA = 6.5
+# When USE_LEACHING = True: Operational pressure oscillates around p_leach_end + P_AMPLITUDE_MPA
+# When USE_LEACHING = False: Uses P_MEAN_MPA directly as center of oscillation
+P_MEAN_MPA = 15.0          # Mean pressure (only used if USE_LEACHING = False)
+P_AMPLITUDE_MPA = 6.5      # Amplitude (half peak-to-peak range)
 
 # ── LINEAR SETTINGS (only used when PRESSURE_SCENARIO = "linear") ──────────────
-# P_MIN_MPA: Minimum pressure (MPa)
-# P_MAX_MPA: Maximum pressure (MPa)
-# Note: Equilibrium pressure is automatically set to P_MIN_MPA (cycle starts at min)
-
-P_MIN_MPA = 15.0
-P_MAX_MPA = 21.4
+P_MIN_MPA = 15.0           # Minimum pressure (only used if USE_LEACHING = False)
+P_MAX_MPA = 21.4           # Maximum pressure (only used if USE_LEACHING = False)
+PRESSURE_SWING_MPA = 10    # Swing from p_leach_end (only used if USE_LEACHING = True)
 
 # ── SCHEDULE SETTINGS ──────────────────────────────────────────────────────────
-# SCHEDULE_MODE: How to distribute cycles over the simulation period:
+# SCHEDULE_MODE: How to distribute cycles:
 #   "stretch" - N_CYCLES spread evenly over OPERATION_DAYS
-#   "repeat"  - Daily pattern repeated each day (N_CYCLES ignored)
-#   "direct"  - (CSV only) Use hourly CSV values directly, periodic over CSV length
-
+#   "repeat"  - Daily pattern repeated each day
+#   "direct"  - (CSV only) Use hourly CSV values directly
 SCHEDULE_MODE = "stretch"
 
-# OPERATION_DAYS: Total simulation duration in days
+# OPERATION_DAYS: Total simulation duration in days (operation phase only)
 OPERATION_DAYS = 365
 
 # N_CYCLES: Number of pressure cycles (only used with "stretch" mode)
 N_CYCLES = 10
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
-# dt_hours: Time step size in hours
 dt_hours = 2
 
 # ── CSV SETTINGS (only used when PRESSURE_SCENARIO = "csv") ────────────────────
-# CSV_FILE_PATH: Path to the pressure profile CSV file
-# Expected columns: Druk_MPa or Druk_bar (hourly values)
 CSV_FILE_PATH = "drukprofiel_zoutcaverne_2035_8760u.csv"
-
-# P_EQUILIBRIUM_MPA: Equilibrium pressure (MPa) for CSV scenario
-#   The simulation ramps from this pressure to the CSV values over RAMP_HOURS
-P_EQUILIBRIUM_MPA = 15.0
-
-# RESCALE_PRESSURE: Whether to rescale CSV pressures to a new range
-#   - Preserves relative volume (fraction of capacity) at each time step
-#   - Set to False to use original CSV values as-is
+CSV_SHIFT_TO_LEACH_END = True  # Shift CSV so minimum = p_leach_end
+P_EQUILIBRIUM_MPA = 15.0       # Equilibrium pressure (only used if USE_LEACHING = False)
 RESCALE_PRESSURE = False
-
-# RESCALE_MIN_MPA / RESCALE_MAX_MPA: New pressure range (only used if RESCALE_PRESSURE = True)
-#   Original CSV uses [6, 20] MPa. Example: rescale to [7, 18] MPa for tighter operating range
 RESCALE_MIN_MPA = 6.0
 RESCALE_MAX_MPA = 20.0
-
-# RAMP_HOURS: Startup ramp duration (hours) to smoothly transition from equilibrium
-#   pressure to CSV pressure. Helps avoid numerical instabilities (NaNs).
-#   Set to 0 to disable ramping.
 RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
-# USE_DESAI: Enable Desai viscoplastic model during operation phase
 USE_DESAI = True
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
-# USE_THERMAL: Enable thermo-mechanical coupling during operation phase
-#   When enabled, temperature changes cause thermal strain via thermal expansion.
-#   The heat equation is solved with convective BC at the cavern wall.
 USE_THERMAL = False
-
-# THERMAL_EXPANSION_COEFF: Thermal expansion coefficient for salt (1/K)
-#   Typical value for rock salt: 40-44e-6 1/K
 THERMAL_EXPANSION_COEFF = 40e-6
-
-# THERMAL_CONDUCTIVITY: Thermal conductivity for salt (W/(m·K))
-#   Typical value for rock salt: 5-7 W/(m·K)
 THERMAL_CONDUCTIVITY = 5.2
-
-# SPECIFIC_HEAT_CAPACITY: Specific heat capacity for salt (J/(kg·K))
-#   Typical value for rock salt: 850-920 J/(kg·K)
 SPECIFIC_HEAT_CAPACITY = 837.0
-
-# T_SURFACE_C: Surface temperature in Celsius
 T_SURFACE_C = 15.0
-
-# GEOTHERMAL_GRADIENT: Temperature increase with depth (K/km or °C/km)
-#   Typical value: 25-35 K/km
 GEOTHERMAL_GRADIENT = 30.0
-
-# H_CONVECTION: Convective heat transfer coefficient at cavern wall (W/(m²·K))
-#   Controls heat exchange between gas and cavern wall
-#   Typical range: 5-50 W/(m²·K)
 H_CONVECTION = 10.0
-
-# T_GAS_AMPLITUDE_C: Temperature swing amplitude of gas in cavern (°C)
-#   Gas temperature oscillates around the initial rock temperature at cavern depth
-#   Set to 0 for constant gas temperature (isothermal operation)
 T_GAS_AMPLITUDE_C = 20.0
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -149,15 +143,16 @@ T_GAS_AMPLITUDE_C = 20.0
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AUTOMATIC CONFIGURATION (do not modify below unless you know what you're doing)
+# AUTOMATIC CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Valid options for validation
 VALID_SHAPES = ["regular", "tilted", "teardrop", "asymmetric", "irregular", "multichamber"]
+VALID_SPECIAL_CAVERNS = ["A5"]
 VALID_SIZES = [600, 1200]
 VALID_SCENARIOS = ["sinus", "linear", "irregular", "csv"]
 VALID_MODES_STANDARD = ["stretch", "repeat"]
 VALID_MODES_CSV = ["stretch", "repeat", "direct"]
+VALID_LEACHING_MODES = ["linear", "stepped"]
 
 # Cavern z_max values (top of cavern elevation in meters)
 Z_MAX_BY_CAVERN = {
@@ -173,27 +168,73 @@ Z_MAX_BY_CAVERN = {
     "asymmetric1200": 422.76,
     "irregular1200": 402.21,
     "multichamber1200": 420.82,
+    # Zuidwending A5
+    "A5": 515.0,
 }
 
-# Reference pressure by cavern size (for overburden/sideburden)
+# Cavern heights (estimated)
+CAVERN_HEIGHT_BY_TYPE = {
+    "regular600": 150.0,
+    "tilted600": 160.0,
+    "teardrop600": 180.0,
+    "asymmetric600": 155.0,
+    "irregular600": 145.0,
+    "multichamber600": 140.0,
+    "regular1200": 200.0,
+    "tilted1200": 215.0,
+    "teardrop1200": 240.0,
+    "asymmetric1200": 210.0,
+    "irregular1200": 195.0,
+    "multichamber1200": 190.0,
+    "A5": 370.0,
+}
+
+# Reference pressure at model top (z=660m) by cavern
+# Standard caverns use size-based reference, A5 has its own
 P_REF_BY_SIZE = {
     600: 17.5,   # MPa
     1200: 19.3,  # MPa
 }
+P_REF_BY_CAVERN = {
+    "A5": 21.18,  # MPa (200m sand + 795m salt overburden)
+}
+
+# Grid folder mapping
+GRID_FOLDERS = {
+    "regular600": "cavern_regular_600_3D",
+    "tilted600": "cavern_tilted_600_3D",
+    "teardrop600": "cavern_teardrop_600_3D",
+    "asymmetric600": "cavern_asymmetric_600_3D",
+    "irregular600": "cavern_irregular_600_3D",
+    "multichamber600": "cavern_multichamber_600_3D",
+    "regular1200": "cavern_regular_1200_3D",
+    "tilted1200": "cavern_tilted_1200_3D",
+    "teardrop1200": "cavern_teardrop_1200_3D",
+    "asymmetric1200": "cavern_asymmetric_1200_3D",
+    "irregular1200": "cavern_irregular_1200_3D",
+    "multichamber1200": "cavern_multichamber_1200_3D",
+    "A5": "cavern_A5_3D",
+}
+
+Z_SURFACE = 660.0  # meters (top of domain)
 
 
 def validate_configuration():
     """Validate user configuration and return derived values."""
     errors = []
 
-    if CAVERN_SHAPE not in VALID_SHAPES:
-        errors.append(f"CAVERN_SHAPE '{CAVERN_SHAPE}' invalid. Choose from: {VALID_SHAPES}")
-    if CAVERN_SIZE not in VALID_SIZES:
-        errors.append(f"CAVERN_SIZE '{CAVERN_SIZE}' invalid. Choose from: {VALID_SIZES}")
+    # Determine if this is a special cavern or standard shape+size
+    is_special = CAVERN_TYPE in VALID_SPECIAL_CAVERNS
+
+    if not is_special:
+        if CAVERN_TYPE not in VALID_SHAPES:
+            errors.append(f"CAVERN_TYPE '{CAVERN_TYPE}' invalid. Choose from: {VALID_SHAPES + VALID_SPECIAL_CAVERNS}")
+        if CAVERN_SIZE not in VALID_SIZES:
+            errors.append(f"CAVERN_SIZE '{CAVERN_SIZE}' invalid. Choose from: {VALID_SIZES}")
+
     if PRESSURE_SCENARIO not in VALID_SCENARIOS:
         errors.append(f"PRESSURE_SCENARIO '{PRESSURE_SCENARIO}' invalid. Choose from: {VALID_SCENARIOS}")
 
-    # Validate SCHEDULE_MODE based on scenario
     if PRESSURE_SCENARIO == "csv":
         if SCHEDULE_MODE not in VALID_MODES_CSV:
             errors.append(f"SCHEDULE_MODE '{SCHEDULE_MODE}' invalid for CSV. Choose from: {VALID_MODES_CSV}")
@@ -208,28 +249,110 @@ def validate_configuration():
     if dt_hours <= 0:
         errors.append(f"dt_hours must be positive, got {dt_hours}")
 
-    # CSV-specific validation
-    if PRESSURE_SCENARIO == "csv":
+    if USE_LEACHING:
+        if LEACHING_MODE not in VALID_LEACHING_MODES:
+            errors.append(f"LEACHING_MODE '{LEACHING_MODE}' invalid. Choose from: {VALID_LEACHING_MODES}")
+        if LEACHING_DAYS <= 0:
+            errors.append(f"LEACHING_DAYS must be positive, got {LEACHING_DAYS}")
+        if LEACHING_DT_HOURS <= 0:
+            errors.append(f"LEACHING_DT_HOURS must be positive, got {LEACHING_DT_HOURS}")
+        if STEPPED_N_STEPS < 2:
+            errors.append(f"STEPPED_N_STEPS must be at least 2, got {STEPPED_N_STEPS}")
+        if LEACHING_END_FRACTION <= 0.0 or LEACHING_END_FRACTION >= 1.0:
+            errors.append(f"LEACHING_END_FRACTION must be between 0 and 1 (exclusive), got {LEACHING_END_FRACTION}")
+    else:
+        if EQUILIBRIUM_HOURS <= 0:
+            errors.append(f"EQUILIBRIUM_HOURS must be positive, got {EQUILIBRIUM_HOURS}")
+        if EQUILIBRIUM_DT_HOURS <= 0:
+            errors.append(f"EQUILIBRIUM_DT_HOURS must be positive, got {EQUILIBRIUM_DT_HOURS}")
+
+    if PRESSURE_SCENARIO == "sinus":
+        if P_AMPLITUDE_MPA <= 0:
+            errors.append(f"P_AMPLITUDE_MPA must be positive, got {P_AMPLITUDE_MPA}")
+    elif PRESSURE_SCENARIO == "linear":
+        if USE_LEACHING:
+            if PRESSURE_SWING_MPA <= 0:
+                errors.append(f"PRESSURE_SWING_MPA must be positive, got {PRESSURE_SWING_MPA}")
+        else:
+            if P_MIN_MPA >= P_MAX_MPA:
+                errors.append(f"P_MIN_MPA ({P_MIN_MPA}) must be < P_MAX_MPA ({P_MAX_MPA})")
+    elif PRESSURE_SCENARIO == "csv":
         if not os.path.isfile(CSV_FILE_PATH):
             errors.append(f"CSV_FILE_PATH not found: {CSV_FILE_PATH}")
-        if RESCALE_PRESSURE and RESCALE_MIN_MPA >= RESCALE_MAX_MPA:
+        if not USE_LEACHING and RESCALE_PRESSURE and RESCALE_MIN_MPA >= RESCALE_MAX_MPA:
             errors.append(f"RESCALE_MIN_MPA ({RESCALE_MIN_MPA}) must be < RESCALE_MAX_MPA ({RESCALE_MAX_MPA})")
 
     if errors:
         raise ValueError("Configuration errors:\n  - " + "\n  - ".join(errors))
 
     # Derived values
-    cavern_type = f"{CAVERN_SHAPE}{CAVERN_SIZE}"
-    grid_folder = f"cavern_{CAVERN_SHAPE}_{CAVERN_SIZE}_3D"
-    z_max = Z_MAX_BY_CAVERN[cavern_type]
-    p_ref_mpa = P_REF_BY_SIZE[CAVERN_SIZE]
+    if is_special:
+        cavern_key = CAVERN_TYPE
+        grid_folder = GRID_FOLDERS[cavern_key]
+        z_max = Z_MAX_BY_CAVERN[cavern_key]
+        cavern_height = CAVERN_HEIGHT_BY_TYPE[cavern_key]
+        p_ref_mpa = P_REF_BY_CAVERN.get(cavern_key, 17.5)
+        cavern_label = f"{CAVERN_TYPE} (~965k m³)"
+    else:
+        cavern_key = f"{CAVERN_TYPE}{CAVERN_SIZE}"
+        grid_folder = GRID_FOLDERS[cavern_key]
+        z_max = Z_MAX_BY_CAVERN[cavern_key]
+        cavern_height = CAVERN_HEIGHT_BY_TYPE[cavern_key]
+        p_ref_mpa = P_REF_BY_SIZE[CAVERN_SIZE]
+        cavern_label = f"{CAVERN_TYPE} ({CAVERN_SIZE}k m³)"
+
+    z_center = z_max - cavern_height / 2.0
 
     return {
-        "cavern_type": cavern_type,
+        "cavern_key": cavern_key,
+        "cavern_label": cavern_label,
         "grid_folder": grid_folder,
         "z_max": z_max,
+        "z_center": z_center,
+        "cavern_height": cavern_height,
         "p_ref_mpa": p_ref_mpa,
+        "is_special": is_special,
     }
+
+
+def compute_lithostatic_pressure(z_center, p_ref_mpa, rho_salt, g):
+    """Compute lithostatic pressure at cavern center."""
+    depth = Z_SURFACE - z_center
+    p_lithostatic = p_ref_mpa * ut.MPa + rho_salt * abs(g) * depth
+    return p_lithostatic
+
+
+def build_leaching_pressure_schedule(tc, *, p_start_pa, p_end_pa, mode, n_steps=6):
+    """Build pressure schedule for leaching phase."""
+    n_time_steps = int(math.floor(tc.t_final / tc.dt))
+    t_vals = [k * tc.dt for k in range(n_time_steps + 1)]
+    if abs(t_vals[-1] - tc.t_final) > 1e-12:
+        t_vals.append(tc.t_final)
+
+    if mode == "linear":
+        p_vals = []
+        for t in t_vals:
+            frac = t / tc.t_final if tc.t_final > 0 else 1.0
+            p = p_start_pa + frac * (p_end_pa - p_start_pa)
+            p_vals.append(p)
+
+    elif mode == "stepped":
+        step_duration = tc.t_final / n_steps
+        p_step_values = np.linspace(p_start_pa, p_end_pa, n_steps + 1)
+
+        p_vals = []
+        for t in t_vals:
+            step_idx = min(int(t / step_duration), n_steps - 1)
+            if t < tc.t_final:
+                p = p_step_values[step_idx]
+            else:
+                p = p_end_pa
+            p_vals.append(p)
+
+    else:
+        raise ValueError(f"Unknown leaching mode: {mode}")
+
+    return t_vals, p_vals
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -237,7 +360,6 @@ def validate_configuration():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _parse_float_auto(s: str) -> float:
-    """Parse floats with either '.' or ',' as decimal separator."""
     s = s.strip()
     if not s:
         return np.nan
@@ -252,10 +374,6 @@ def _parse_float_auto(s: str) -> float:
 
 
 def read_pressure_csv(csv_file: str):
-    """
-    Read CSV and return pressure array in MPa.
-    Supported columns (case-insensitive): Druk_MPa, Druk_bar (converted via /10).
-    """
     if not os.path.isfile(csv_file):
         raise FileNotFoundError(f"CSV not found: {csv_file}")
 
@@ -299,7 +417,6 @@ def read_pressure_csv(csv_file: str):
             if idx_bar < len(r):
                 pressures_mpa.append(_parse_float_auto(r[idx_bar]) / 10.0)
     else:
-        # Fallback: find first numeric column
         ncols = len(header)
         best_i, best_count = None, -1
         for i in range(ncols):
@@ -322,17 +439,10 @@ def read_pressure_csv(csv_file: str):
 
 
 def rescale_pressure_profile(pressures_mpa, new_min, new_max):
-    """
-    Rescale pressure profile from its original range to [new_min, new_max].
-    Preserves relative volume (fraction of capacity) at each time step.
-
-    Formula: p_new = new_min + (p_old - old_min) / (old_max - old_min) * (new_max - new_min)
-    """
     old_min = pressures_mpa.min()
     old_max = pressures_mpa.max()
 
     if old_max - old_min < 1e-9:
-        # Constant pressure, just return scaled to mean of new range
         return np.full_like(pressures_mpa, (new_min + new_max) / 2.0)
 
     fraction = (pressures_mpa - old_min) / (old_max - old_min)
@@ -342,13 +452,6 @@ def rescale_pressure_profile(pressures_mpa, new_min, new_max):
 def build_csv_pressure_schedule(tc, csv_file, *, days, mode, total_cycles=1,
                                 rescale=False, rescale_min=None, rescale_max=None,
                                 resample_at_dt=True):
-    """
-    Build pressure schedule from CSV file.
-
-    Returns:
-        t_vals: list of time values in seconds
-        p_vals: list of pressure values in Pa
-    """
     pressures_mpa = read_pressure_csv(csv_file)
     csv_hours = int(pressures_mpa.size)
 
@@ -356,7 +459,6 @@ def build_csv_pressure_schedule(tc, csv_file, *, days, mode, total_cycles=1,
         print(f"[CSV] Loaded '{os.path.basename(csv_file)}' with {csv_hours} hourly values")
         print(f"[CSV] Original range: [{pressures_mpa.min():.2f}, {pressures_mpa.max():.2f}] MPa")
 
-    # Apply rescaling if requested (preserves relative volume)
     if rescale and rescale_min is not None and rescale_max is not None:
         pressures_mpa = rescale_pressure_profile(pressures_mpa, rescale_min, rescale_max)
         if MPI.COMM_WORLD.rank == 0:
@@ -433,10 +535,6 @@ def build_csv_pressure_schedule(tc, csv_file, *, days, mode, total_cycles=1,
 
 
 def apply_startup_ramp(t_pressure, p_pressure, *, p_start_pa, ramp_hours, dt_hours):
-    """
-    Replace first part of schedule with a linear ramp from p_start_pa to the existing schedule.
-    Operates in-place on p_pressure list.
-    """
     if ramp_hours is None or ramp_hours <= 0.0:
         p_pressure[0] = p_start_pa
         return
@@ -451,74 +549,24 @@ def apply_startup_ramp(t_pressure, p_pressure, *, p_start_pa, ramp_hours, dt_hou
         p_pressure[k] = (1.0 - a) * p_start_pa + a * p_target
 
 
-class LinearMomentumMod(sf.LinearMomentum):
-    def __init__(self, grid, theta):
-        super().__init__(grid, theta)
-        self.expect_vp_state = False  # set True after you add Desai
+# ══════════════════════════════════════════════════════════════════════════════
+# PRESSURE SCHEDULE BUILDERS
+# ══════════════════════════════════════════════════════════════════════════════
 
-    def initialize(self) -> None:
-        # Keep what you had: push elastic stiffness + allocate output fields
-        self.C.x.array[:] = to.flatten(self.mat.C)
-        self.Fvp = do.fem.Function(self.DG0_1)
-        self.alpha = do.fem.Function(self.DG0_1)
-        self.eps_vp = do.fem.Function(self.DG0_3x3)
-
-    def run_after_solve(self):
-        if not hasattr(self, "eps_vp"):
-            return
-
-        elems = getattr(self.mat, "elems_ne", None)
-        if not elems:
-            return
-        st = elems[-1]
-
-        # eps_vp: write if available (works after any inelastic update that stores eps_ne_k)
-        if hasattr(st, "eps_ne_k"):
-            self.eps_vp.x.array[:] = to.flatten(st.eps_ne_k)
-
-        # Fvp/alpha: only expected after Desai is added
-        if self.expect_vp_state:
-            if not (hasattr(st, "Fvp") and hasattr(st, "alpha")):
-                if MPI.COMM_WORLD.rank == 0:
-                    print("[WARN] Expected Fvp/alpha but missing.")
-                return
-            self.Fvp.x.array[:] = st.Fvp
-            self.alpha.x.array[:] = st.alpha
-        else:
-            # During equilibrium: skip silently (or write if they happen to exist)
-            if hasattr(st, "Fvp") and hasattr(st, "alpha"):
-                self.Fvp.x.array[:] = st.Fvp
-                self.alpha.x.array[:] = st.alpha
+DAY_H = 24.0
 
 
-
-
-
-class SparseSaveFields(sf.SaveFields):
-    """
-    SaveFields that only writes every `interval`-th call after t=0.
-    t = 0 is always saved.
-    """
-    def __init__(self, mom_eq, interval: int):
-        super().__init__(mom_eq)
-        self.interval = max(1, int(interval))
-        self._counter = 0
-
-    def save_fields(self, t):
-        # Always save the initial state at t=0
-        if t == 0:
-            return super().save_fields(t)
-
-        # Count calls and only forward every `interval`-th one
-        self._counter += 1
-        if self._counter % self.interval == 0:
-            return super().save_fields(t)
-        # otherwise: skip this step (no write)
+def _sample_at_dt(tc, t_end=None):
+    t_end = tc.t_final if t_end is None else t_end
+    n_steps = int(math.floor(t_end / tc.dt))
+    t_vals = [k * tc.dt for k in range(n_steps + 1)]
+    if abs(t_vals[-1] - t_end) > 1e-12:
+        t_vals.append(t_end)
+    return t_vals
 
 
 def build_sinus_pressure_schedule(tc, *, p_mean, p_ampl, period_hours, phase_hours=0.0,
                                   clamp_min=None, clamp_max=None):
-    """Sinus schedule sampled at simulation time steps."""
     period = period_hours * ut.hour
     phase = phase_hours * ut.hour
 
@@ -542,7 +590,6 @@ def build_sinus_pressure_schedule(tc, *, p_mean, p_ampl, period_hours, phase_hou
 
 
 def _cardinal_segment(p0, p1, p2, p3, u, tension):
-    """Cardinal (Catmull–Rom with tension) for scalar values, u in [0,1]."""
     m1 = (1 - tension) * 0.5 * (p2 - p0)
     m2 = (1 - tension) * 0.5 * (p3 - p1)
     u2 = u * u
@@ -555,7 +602,6 @@ def _cardinal_segment(p0, p1, p2, p3, u, tension):
 
 
 def _cardinal_interp(ts, ps, t, tension):
-    """Evaluate cardinal spline at time t (scalar)."""
     if t <= ts[0]:
         return ps[0]
     if t >= ts[-1]:
@@ -571,11 +617,8 @@ def _cardinal_interp(ts, ps, t, tension):
     return _cardinal_segment(ps[i_m1], ps[i], ps[i+1], ps[i_p2], u, tension)
 
 
-def build_irregular_pressure_schedule(tc,
-                                      times_hours, pressures_MPa,
-                                      *, smooth=0.3,
-                                      clamp_min=None, clamp_max=None,
-                                      resample_at_dt=True):
+def build_irregular_pressure_schedule(tc, times_hours, pressures_MPa, *, smooth=0.3,
+                                      clamp_min=None, clamp_max=None, resample_at_dt=True):
     if len(times_hours) != len(pressures_MPa) or len(times_hours) < 2:
         raise ValueError("Provide at least two waypoints with matching lengths.")
 
@@ -619,22 +662,6 @@ def build_irregular_pressure_schedule(tc,
     return t_vals, p_vals
 
 
-DAY_H = 24.0  # hours per day
-
-
-def _sample_at_dt(tc, t_end=None):
-    t_end = tc.t_final if t_end is None else t_end
-    n_steps = int(math.floor(t_end / tc.dt))
-    t_vals = [k * tc.dt for k in range(n_steps + 1)]
-    if abs(t_vals[-1] - t_end) > 1e-12:
-        t_vals.append(t_end)
-    return t_vals
-
-
-def _stretch_hours(times_h, factor_days):
-    return [t * float(factor_days) for t in times_h]
-
-
 def _repeat_hours(times_h, days):
     times_h = list(map(float, times_h))
     out = []
@@ -642,22 +669,13 @@ def _repeat_hours(times_h, days):
         off = d * DAY_H
         for i, t in enumerate(times_h):
             if d > 0 and i == 0 and abs(t - 0.0) < 1e-12 and abs(times_h[-1] - DAY_H) < 1e-12:
-                # skip the 0h knot because previous day already had 24h knot
                 continue
             out.append(off + t)
     return out
 
 
-
 def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode,
                                 resample_at_dt=True, total_cycles=None):
-    """
-    Extend your existing linear multi-day schedule builder.
-    - mode="repeat": repeat daily pattern each day (total_cycles ignored)
-    - mode="stretch":
-        * if total_cycles is None -> 1 cycle over total duration (old behavior)
-        * if total_cycles >= 1 -> repeat the base cycle total_cycles times over total duration
-    """
     if mode not in ("repeat", "stretch"):
         raise ValueError("mode must be 'repeat' or 'stretch'")
 
@@ -695,12 +713,11 @@ def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode,
             offset = k * cycle_duration
             for i, t in enumerate(times_h):
                 if k > 0 and i == 0:
-                    continue  # avoid duplicate knot at cycle boundaries
+                    continue
                 t_scaled = offset + (t - base_start) * scale
                 t_h.append(t_scaled)
                 p_h.append(pressures_MPa[i])
 
-    # Ensure coverage [0, total_h]
     if t_h[0] > 0.0:
         t_h.insert(0, 0.0)
         p_h.insert(0, p_h[0])
@@ -724,25 +741,7 @@ def build_linear_schedule_multi(tc, times_h, pressures_MPa, *, days, mode,
 def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
                                    days, mode, smooth=0.25,
                                    clamp_min=0.0, clamp_max=None,
-                                   resample_at_dt=True,
-                                   total_cycles=None):
-    """
-    Irregular pressure schedule over meerdere dagen.
-
-    - mode="repeat":
-        herhaalt het 0–24h patroon elke dag (zoals nu al).
-        'total_cycles' wordt genegeerd.
-
-    - mode="stretch" & total_cycles is None:
-        base_waypoints_h wordt opgeschaald zodat je
-        precies 1 cycle over de totale simulatie (days * 24h) krijgt
-        (huidige gedrag).
-
-    - mode="stretch" & total_cycles >= 1:
-        je krijgt 'total_cycles' cycles over de totale simulatie
-        (days * 24h). De basisvorm blijft hetzelfde, maar wordt in
-        de tijd geschaald en achter elkaar geplakt.
-    """
+                                   resample_at_dt=True, total_cycles=None):
     times_h = np.asarray(base_waypoints_h, dtype=float)
     pressures = np.asarray(base_pressures_MPa, dtype=float)
 
@@ -752,7 +751,6 @@ def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
     total_hours = days * DAY_H
 
     if mode == "repeat":
-        # Huidig gedrag: gewoon per dag herhalen
         times_h_multi = _repeat_hours(times_h, days)
         pressures_multi = []
         for d in range(int(days)):
@@ -760,7 +758,6 @@ def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
             pressures_multi.extend(pressures[start:])
 
     elif mode == "stretch":
-        # total_cycles: hoe vaak de basis-cyclus over de hele simulatie herhaald wordt
         if total_cycles is None:
             total_cycles = 1
         total_cycles = max(1, int(total_cycles))
@@ -771,7 +768,6 @@ def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
         if base_duration <= 0.0:
             raise ValueError("base_waypoints_h must span a positive duration.")
 
-        # duur van één cycle zodat total_cycles * cycle_duration = total_hours
         cycle_duration = total_hours / float(total_cycles)
         scale = cycle_duration / base_duration
 
@@ -781,7 +777,6 @@ def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
         for k in range(total_cycles):
             offset = k * cycle_duration
             for i, t in enumerate(times_h):
-                # voorkom dubbele tijdstap aan de grenzen
                 if k > 0 and i == 0:
                     continue
                 t_scaled = offset + (t - base_start) * scale
@@ -791,12 +786,9 @@ def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
     else:
         raise ValueError("mode must be 'repeat' or 'stretch'")
 
-    # Zorg dat we precies de totale simulatie afdekken
-    # (clip/extend eventueel een klein beetje)
     times_h_multi = np.asarray(times_h_multi, dtype=float)
     pressures_multi = np.asarray(pressures_multi, dtype=float)
 
-    # Bouw uiteindelijk de schedule met jouw bestaande helper
     return build_irregular_pressure_schedule(
         tc,
         times_hours=times_h_multi.tolist(),
@@ -807,34 +799,16 @@ def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
     )
 
 
-
 def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
-                               daily_period_hours=24.0,
-                               total_cycles=1,
+                               daily_period_hours=24.0, total_cycles=1,
                                clamp_min=0.0, clamp_max=None):
-    """
-    Sinusdrukschema over meerdere dagen.
-
-    mode = "repeat":
-        - Zelfde betekenis als nu: periode = daily_period_hours
-        - total_cycles wordt genegeerd (backwards compatible)
-
-    mode = "stretch":
-        - Er komen `total_cycles` volledige sinussen over de totale periode
-          van `days * 24` uur.
-        - Voor total_cycles=1 krijg je exact je oude gedrag.
-    """
     total_hours = days * DAY_H
 
     if mode == "repeat":
-        # Zelfde als voorheen, je bepaalt zelf de periode per cycle
         T_hours = daily_period_hours
-
     elif mode == "stretch":
-        # Verdeel de totaalduur over een gegeven aantal cycli
         total_cycles = max(1, int(total_cycles))
         T_hours = total_hours / float(total_cycles)
-
     else:
         raise ValueError("mode must be 'repeat' or 'stretch'")
 
@@ -845,54 +819,160 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
     )
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# MOMENTUM EQUATION CLASSES
+# ══════════════════════════════════════════════════════════════════════════════
 
+class LinearMomentumMod(sf.LinearMomentum):
+    def __init__(self, grid, theta):
+        super().__init__(grid, theta)
+        self.expect_vp_state = False
+
+    def initialize(self) -> None:
+        self.C.x.array[:] = to.flatten(self.mat.C)
+        self.Fvp = do.fem.Function(self.DG0_1)
+        self.alpha = do.fem.Function(self.DG0_1)
+        self.eps_vp = do.fem.Function(self.DG0_3x3)
+
+    def run_after_solve(self):
+        if not hasattr(self, "eps_vp"):
+            return
+
+        elems = getattr(self.mat, "elems_ne", None)
+        if not elems:
+            return
+        st = elems[-1]
+
+        if hasattr(st, "eps_ne_k"):
+            self.eps_vp.x.array[:] = to.flatten(st.eps_ne_k)
+
+        if self.expect_vp_state:
+            if not (hasattr(st, "Fvp") and hasattr(st, "alpha")):
+                if MPI.COMM_WORLD.rank == 0:
+                    print("[WARN] Expected Fvp/alpha but missing.")
+                return
+            self.Fvp.x.array[:] = st.Fvp
+            self.alpha.x.array[:] = st.alpha
+        else:
+            if hasattr(st, "Fvp") and hasattr(st, "alpha"):
+                self.Fvp.x.array[:] = st.Fvp
+                self.alpha.x.array[:] = st.alpha
+
+
+class SparseSaveFields(sf.SaveFields):
+    def __init__(self, mom_eq, interval: int):
+        super().__init__(mom_eq)
+        self.interval = max(1, int(interval))
+        self._counter = 0
+
+    def save_fields(self, t):
+        if t == 0:
+            return super().save_fields(t)
+
+        self._counter += 1
+        if self._counter % self.interval == 0:
+            return super().save_fields(t)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    # Validate configuration and get derived values
     config = validate_configuration()
 
-    # Print configuration summary
+    salt_density = 2200
+    g = -9.81
+
+    # Compute lithostatic pressure at cavern center
+    p_lithostatic = compute_lithostatic_pressure(
+        config["z_center"],
+        config["p_ref_mpa"],
+        salt_density,
+        g
+    )
+    p_lithostatic_mpa = p_lithostatic / ut.MPa
+
+    # Determine pressures based on initialization mode
+    if USE_LEACHING:
+        p_leach_end_mpa = LEACHING_END_FRACTION * p_lithostatic_mpa
+        p_leach_end = p_leach_end_mpa * ut.MPa
+
+        if PRESSURE_SCENARIO == "sinus":
+            p_op_min_mpa = p_leach_end_mpa
+            p_op_mean_mpa = p_leach_end_mpa + P_AMPLITUDE_MPA
+            p_op_max_mpa = p_leach_end_mpa + 2 * P_AMPLITUDE_MPA
+        elif PRESSURE_SCENARIO == "linear":
+            p_op_min_mpa = p_leach_end_mpa
+            p_op_max_mpa = p_leach_end_mpa + PRESSURE_SWING_MPA
+        else:
+            p_op_min_mpa = p_leach_end_mpa
+    else:
+        # Equilibrium mode: use direct pressure settings
+        if PRESSURE_SCENARIO == "sinus":
+            p_gas_mpa = P_MEAN_MPA
+        elif PRESSURE_SCENARIO == "linear":
+            p_gas_mpa = P_MIN_MPA
+        elif PRESSURE_SCENARIO == "csv":
+            p_gas_mpa = P_EQUILIBRIUM_MPA
+        else:
+            p_gas_mpa = 15.0
+        p_gas = p_gas_mpa * ut.MPa
+
+    # Print configuration
     if MPI.COMM_WORLD.rank == 0:
         print("=" * 70)
-        print("SIMULATION CONFIGURATION")
+        print(f"SIMULATION CONFIGURATION ({'LEACHING' if USE_LEACHING else 'EQUILIBRIUM'} MODE)")
         print("=" * 70)
-        print(f"  Cavern:    {config['cavern_type']} ({CAVERN_SHAPE}, {CAVERN_SIZE},000 m³)")
-        print(f"  Scenario:  {PRESSURE_SCENARIO}")
-        if PRESSURE_SCENARIO == "sinus":
-            print(f"  P_mean:    {P_MEAN_MPA} MPa  (= equilibrium pressure)")
-            print(f"  P_ampl:    {P_AMPLITUDE_MPA} MPa  (range: [{P_MEAN_MPA - P_AMPLITUDE_MPA}, {P_MEAN_MPA + P_AMPLITUDE_MPA}] MPa)")
-        elif PRESSURE_SCENARIO == "linear":
-            print(f"  P_min:     {P_MIN_MPA} MPa  (= equilibrium pressure)")
-            print(f"  P_max:     {P_MAX_MPA} MPa")
-        elif PRESSURE_SCENARIO == "csv":
-            print(f"  P_eq:      {P_EQUILIBRIUM_MPA} MPa")
-            print(f"  CSV file:  {CSV_FILE_PATH}")
-            print(f"  Rescale:   {'[' + str(RESCALE_MIN_MPA) + ', ' + str(RESCALE_MAX_MPA) + '] MPa' if RESCALE_PRESSURE else 'disabled (using original CSV values)'}")
-            print(f"  Ramp:      {RAMP_HOURS} hours")
-        elif PRESSURE_SCENARIO == "irregular":
-            print(f"  P_eq:      15.0 MPa  (hardcoded, edit base_pressures_MPa[0] to change)")
-        print(f"  Mode:      {SCHEDULE_MODE}")
-        print(f"  Days:      {OPERATION_DAYS}")
-        print(f"  Cycles:    {N_CYCLES}")
-        print(f"  dt:        {dt_hours} hours")
-        print(f"  Desai:     {'enabled' if USE_DESAI else 'disabled'}")
-        print(f"  Thermal:   {'enabled' if USE_THERMAL else 'disabled'}")
-        print(f"  Grid:      {config['grid_folder']}")
+        print(f"  Cavern:           {config['cavern_label']}")
+        print(f"  Cavern z_max:     {config['z_max']:.2f} m")
+        print(f"  Cavern z_center:  {config['z_center']:.2f} m")
+        print(f"  P_ref (at z=660): {config['p_ref_mpa']:.2f} MPa")
+        print(f"  P_lithostatic:    {p_lithostatic_mpa:.2f} MPa (at cavern center)")
+        print("-" * 70)
+
+        if USE_LEACHING:
+            print("  LEACHING PHASE:")
+            print(f"    Mode:           {LEACHING_MODE}")
+            print(f"    Duration:       {LEACHING_DAYS} days")
+            print(f"    P_start:        {p_lithostatic_mpa:.2f} MPa (lithostatic)")
+            print(f"    P_end:          {p_leach_end_mpa:.2f} MPa ({LEACHING_END_FRACTION*100:.0f}%)")
+        else:
+            print("  EQUILIBRIUM PHASE:")
+            print(f"    Duration:       {EQUILIBRIUM_HOURS} hours")
+            print(f"    P_gas:          {p_gas_mpa:.2f} MPa")
+
+        print("-" * 70)
+        print("  OPERATION PHASE:")
+        print(f"    Scenario:       {PRESSURE_SCENARIO}")
+        print(f"    Mode:           {SCHEDULE_MODE}")
+        print(f"    Days:           {OPERATION_DAYS}")
+        print(f"    Cycles:         {N_CYCLES}")
+        print(f"    dt:             {dt_hours} hours")
+        print(f"    Desai:          {'enabled' if USE_DESAI else 'disabled'}")
+        print(f"    Thermal:        {'enabled' if USE_THERMAL else 'disabled'}")
+        print("-" * 70)
+        print(f"  Grid:             {config['grid_folder']}")
         print("=" * 70)
 
     # Load grid
     grid_path = os.path.join("..", "..", "..", "..", "grids", config["grid_folder"])
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
-    # Get derived values
     z_max = config["z_max"]
     p_ref = config["p_ref_mpa"] * ut.MPa
 
     # Output folder
-    output_folder = os.path.join(
-        "output",
-        f"case_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_{config['cavern_type']}"
-    )
+    if USE_LEACHING:
+        output_folder = os.path.join(
+            "output",
+            f"case_leaching_{LEACHING_MODE}_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_{config['cavern_key']}"
+        )
+    else:
+        output_folder = os.path.join(
+            "output",
+            f"case_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_{config['cavern_key']}"
+        )
 
     side_burden = p_ref
     over_burden = p_ref
@@ -900,54 +980,43 @@ def main():
     # Define momentum equation
     mom_eq = LinearMomentumMod(grid, theta=0.5)
 
-    # Define solver
     mom_solver = PETSc.KSP().create(grid.mesh.comm)
     mom_solver.setType("cg")
     mom_solver.getPC().setType("asm")
     mom_solver.setTolerances(rtol=1e-10, max_it=100)
     mom_eq.set_solver(mom_solver)
 
-    # Define material properties
+    # Material
     mat = sf.Material(mom_eq.n_elems)
-
-    # Set material density
-    salt_density = 2200
     rho = salt_density * to.ones(mom_eq.n_elems, dtype=to.float64)
     mat.set_density(rho)
 
-    # Elastic
     E0 = 20.425 * ut.GPa * to.ones(mom_eq.n_elems)
     nu0 = 0.25 * to.ones(mom_eq.n_elems)
     spring_0 = sf.Spring(E0, nu0, "spring")
 
-    # Kelvin-Voigt
     eta = 105e11 * to.ones(mom_eq.n_elems)
     E1 = 10 * ut.GPa * to.ones(mom_eq.n_elems)
     nu1 = 0.25 * to.ones(mom_eq.n_elems)
     kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
 
     sec_per_year = 365.25 * 24 * 3600
-
-    # Dislocation creep
     ndc = 4.6
     A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
     Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
     n_dc = ndc * to.ones(mom_eq.n_elems)
     creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
 
-    # Pressure-solution creep
     A_ps = (14176.0 * 1e-9 / 1e6 / sec_per_year) * to.ones(mom_eq.n_elems)
     d_ps = 5.25e-3 * to.ones(mom_eq.n_elems)
     Q_ps = (3252.0 * 8.32) * to.ones(mom_eq.n_elems)
     creep_pressure = sf.PressureSolutionCreep(A_ps, d_ps, Q_ps, "creep_pressure")
 
-    # Constitutive model
     mat.add_to_elastic(spring_0)
     mat.add_to_non_elastic(kelvin)
     mat.add_to_non_elastic(creep_0)
     mat.add_to_non_elastic(creep_pressure)
 
-    # Thermoelastic element (only when USE_THERMAL is enabled)
     if USE_THERMAL:
         alpha_th = THERMAL_EXPANSION_COEFF * to.ones(mom_eq.n_elems, dtype=to.float64)
         thermo = sf.Thermoelastic(alpha_th, "thermo")
@@ -955,19 +1024,14 @@ def main():
 
     mom_eq.set_material(mat)
 
-    # Body forces
-    g = -9.81
     g_vec = [0.0, 0.0, g]
     mom_eq.build_body_force(g_vec)
 
-    # Initial temperature field
-    # When thermal is enabled, use depth-dependent geothermal gradient
-    Z_SURFACE = 660.0  # m (top of domain)
+    # Temperature
     T_surface_K = T_SURFACE_C + 273.15
-    dTdz = GEOTHERMAL_GRADIENT / 1000.0  # Convert from K/km to K/m
+    dTdz = GEOTHERMAL_GRADIENT / 1000.0
 
     if USE_THERMAL:
-        # Compute temperature at element centroids based on depth
         cell_centroids = grid.mesh.geometry.x[grid.mesh.topology.connectivity(3, 0).array].reshape(-1, 4, 3).mean(axis=1)
         z_coords = cell_centroids[:, 2]
         T0_field = to.tensor(T_surface_K + dTdz * (Z_SURFACE - z_coords), dtype=to.float64)
@@ -977,73 +1041,84 @@ def main():
     mom_eq.set_T0(T0_field)
     mom_eq.set_T(T0_field)
 
-    # Compute initial temperature at cavern depth (for gas temperature reference)
     T_cavern_init_K = T_surface_K + dTdz * (Z_SURFACE - z_max)
 
-    # ===== EQUILIBRIUM STAGE =====
-    tc_equilibrium = sf.TimeController(dt=0.5, initial_time=0.0, final_time=10, time_unit="hour")
+    gas_density = 0.089
 
-    bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_equilibrium.t_final])
-    bc_bottom = momBC.DirichletBC("Bottom", 2, [0.0, 0.0], [0.0, tc_equilibrium.t_final])
-    bc_south = momBC.DirichletBC("South", 1, [0.0, 0.0], [0.0, tc_equilibrium.t_final])
+    # ===== INITIALIZATION PHASE (LEACHING OR EQUILIBRIUM) =====
+    if USE_LEACHING:
+        tc_init = sf.TimeController(
+            dt=LEACHING_DT_HOURS,
+            initial_time=0.0,
+            final_time=LEACHING_DAYS * 24.0,
+            time_unit="hour"
+        )
+
+        t_init, p_init = build_leaching_pressure_schedule(
+            tc_init,
+            p_start_pa=p_lithostatic,
+            p_end_pa=p_leach_end,
+            mode=LEACHING_MODE,
+            n_steps=STEPPED_N_STEPS
+        )
+        init_phase_name = "leaching"
+        save_interval_init = max(1, int(72 / LEACHING_DT_HOURS))
+    else:
+        tc_init = sf.TimeController(
+            dt=EQUILIBRIUM_DT_HOURS,
+            initial_time=0.0,
+            final_time=EQUILIBRIUM_HOURS,
+            time_unit="hour"
+        )
+        t_init = [0.0, tc_init.t_final]
+        p_init = [p_gas, p_gas]
+        init_phase_name = "equilibrium"
+        save_interval_init = 1
+
+    # Initialization BCs
+    bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_init.t_final])
+    bc_bottom = momBC.DirichletBC("Bottom", 2, [0.0, 0.0], [0.0, tc_init.t_final])
+    bc_south = momBC.DirichletBC("South", 1, [0.0, 0.0], [0.0, tc_init.t_final])
 
     bc_east = momBC.NeumannBC("East", 2, salt_density, 660.0,
                               [side_burden, side_burden],
-                              [0.0, tc_equilibrium.t_final],
-                              g=g_vec[2])
+                              [0.0, tc_init.t_final], g=g_vec[2])
     bc_north = momBC.NeumannBC("North", 2, salt_density, 660.0,
                                [side_burden, side_burden],
-                               [0.0, tc_equilibrium.t_final],
-                               g=g_vec[2])
-
+                               [0.0, tc_init.t_final], g=g_vec[2])
     bc_top = momBC.NeumannBC("Top", 2, 0.0, 0.0,
                              [over_burden, over_burden],
-                             [0.0, tc_equilibrium.t_final],
-                             g=g_vec[2])
-
-    gas_density = 0.089  # Hydrogen density in kg/m3 at atmospheric conditions
-
-    # Automatically determine equilibrium pressure based on scenario
-    # This ensures equilibrium matches the starting pressure of operation phase
-    if PRESSURE_SCENARIO == "sinus":
-        p_gas_MPa = P_MEAN_MPA      # sinus starts at mean (sin(0) = 0)
-    elif PRESSURE_SCENARIO == "linear":
-        p_gas_MPa = P_MIN_MPA       # linear cycle starts at minimum
-    elif PRESSURE_SCENARIO == "csv":
-        p_gas_MPa = P_EQUILIBRIUM_MPA  # CSV uses ramp from this value
-    else:  # irregular
-        p_gas_MPa = 15.0            # irregular: edit base_pressures_MPa[0] to match
-
-    p_gas = p_gas_MPa * ut.MPa
-
+                             [0.0, tc_init.t_final], g=g_vec[2])
     bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, z_max,
-                                [p_gas, p_gas],
-                                [0.0, tc_equilibrium.t_final],
-                                g=g_vec[2])
+                                p_init, t_init, g=g_vec[2])
 
-    bc_equilibrium = momBC.BcHandler(mom_eq)
+    bc_init = momBC.BcHandler(mom_eq)
     for bc in [bc_west, bc_bottom, bc_south, bc_east, bc_north, bc_top, bc_cavern]:
-        bc_equilibrium.add_boundary_condition(bc)
+        bc_init.add_boundary_condition(bc)
 
-    mom_eq.set_boundary_conditions(bc_equilibrium)
+    mom_eq.set_boundary_conditions(bc_init)
 
-    output_folder_equilibrium = os.path.join(output_folder, "equilibrium")
+    output_folder_init = os.path.join(output_folder, init_phase_name)
     if MPI.COMM_WORLD.rank == 0:
-        print(output_folder_equilibrium)
+        print(f"\n[{init_phase_name.upper()}] Output: {output_folder_init}")
 
-    output_mom = sf.SaveFields(mom_eq)
-    output_mom.set_output_folder(output_folder_equilibrium)
-    output_mom.add_output_field("u", "Displacement (m)")
-    output_mom.add_output_field("eps_tot", "Total strain (-)")
-    output_mom.add_output_field("sig", "Stress (Pa)")
-    output_mom.add_output_field("p_elems", "Mean stress (Pa)")
-    output_mom.add_output_field("q_elems", "Von Mises stress (Pa)")
-    outputs = [output_mom]
+    output_mom_init = SparseSaveFields(mom_eq, interval=save_interval_init)
+    output_mom_init.set_output_folder(output_folder_init)
+    output_mom_init.add_output_field("u", "Displacement (m)")
+    output_mom_init.add_output_field("eps_tot", "Total strain (-)")
+    output_mom_init.add_output_field("sig", "Stress (Pa)")
+    output_mom_init.add_output_field("p_elems", "Mean stress (Pa)")
+    output_mom_init.add_output_field("q_elems", "Von Mises stress (Pa)")
 
-    sim = sf.Simulator_M(mom_eq, tc_equilibrium, outputs, True)
-    sim.run()
+    os.makedirs(output_folder, exist_ok=True)
 
-    # ===== OPERATION STAGE =====
+    sim_init = sf.Simulator_M(mom_eq, tc_init, [output_mom_init], True)
+    sim_init.run()
+
+    if MPI.COMM_WORLD.rank == 0:
+        print(f"[{init_phase_name.upper()}] Complete.")
+
+    # ===== OPERATION PHASE =====
     if USE_DESAI:
         mu_1 = 5.3665857009859815e-11 * to.ones(mom_eq.n_elems)
         N_1 = 3.1 * to.ones(mom_eq.n_elems)
@@ -1067,16 +1142,21 @@ def main():
     else:
         mom_eq.expect_vp_state = False
 
+    tc_operation = sf.TimeController(
+        dt=dt_hours,
+        initial_time=0.0,
+        final_time=OPERATION_DAYS * 24.0,
+        time_unit="hour"
+    )
 
-    tc_operation = sf.TimeController(dt=dt_hours, initial_time=0.0,
-                                     final_time=OPERATION_DAYS*24.0,
-                                     time_unit="hour")
-
-
+    # Build operation pressure schedule
     if PRESSURE_SCENARIO == "linear":
-        # Linear cycle: starts at P_MIN, rises to P_MAX, returns to P_MIN
-        base_times_h = [0.0, 2.0, 14.0, 16.0, 24.0]
-        base_pressures_MPa = [P_MIN_MPA, P_MAX_MPA, P_MAX_MPA, P_MIN_MPA, P_MIN_MPA]
+        if USE_LEACHING:
+            base_times_h = [0.0, 2.0, 14.0, 16.0, 24.0]
+            base_pressures_MPa = [p_op_min_mpa, p_op_max_mpa, p_op_max_mpa, p_op_min_mpa, p_op_min_mpa]
+        else:
+            base_times_h = [0.0, 2.0, 14.0, 16.0, 24.0]
+            base_pressures_MPa = [P_MIN_MPA, P_MAX_MPA, P_MAX_MPA, P_MIN_MPA, P_MIN_MPA]
 
         t_pressure, p_pressure = build_linear_schedule_multi(
             tc_operation,
@@ -1088,10 +1168,12 @@ def main():
         )
 
     elif PRESSURE_SCENARIO == "sinus":
-        # Sinus cycle: oscillates around P_MEAN with amplitude P_AMPLITUDE
-        # Note: sin(0) = 0, so starting pressure = P_MEAN
-        p_mean = P_MEAN_MPA * ut.MPa
+        if USE_LEACHING:
+            p_mean = p_op_mean_mpa * ut.MPa
+        else:
+            p_mean = P_MEAN_MPA * ut.MPa
         p_ampl = P_AMPLITUDE_MPA * ut.MPa
+
         t_pressure, p_pressure = build_sinus_schedule_multi(
             tc_operation,
             p_mean=p_mean, p_ampl=p_ampl,
@@ -1102,11 +1184,18 @@ def main():
         )
 
     elif PRESSURE_SCENARIO == "irregular":
-        # Irregular cycle: first value must match equilibrium pressure (p_gas_MPa)
         base_waypoints_h = [0, 1.0, 2.0, 3.2, 4.0, 5.0, 6.4, 7.1, 9.0, 11.5,
-                            13.0, 16.0, 18.0, 21.0, 24.0]
-        base_pressures_MPa = [p_gas_MPa, 12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4,
-                              9.3, 10.7, 8.9, 11.6, 9.5, 10.2, 11.0]
+                           13.0, 16.0, 18.0, 21.0, 24.0]
+        base_pressures_orig = [15.0, 12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4,
+                               9.3, 10.7, 8.9, 11.6, 9.5, 10.2, 11.0]
+
+        if USE_LEACHING:
+            orig_min = min(base_pressures_orig)
+            shift = p_op_min_mpa - orig_min
+            base_pressures_MPa = [p + shift for p in base_pressures_orig]
+        else:
+            base_pressures_MPa = base_pressures_orig
+
         t_pressure, p_pressure = build_irregular_schedule_multi(
             tc_operation,
             base_waypoints_h=base_waypoints_h,
@@ -1124,23 +1213,31 @@ def main():
             days=OPERATION_DAYS,
             mode=SCHEDULE_MODE,
             total_cycles=N_CYCLES,
-            rescale=RESCALE_PRESSURE,
+            rescale=RESCALE_PRESSURE if not USE_LEACHING else False,
             rescale_min=RESCALE_MIN_MPA,
             rescale_max=RESCALE_MAX_MPA,
             resample_at_dt=True
         )
 
-        # Apply startup ramp to smoothly transition from equilibrium pressure
+        if USE_LEACHING and CSV_SHIFT_TO_LEACH_END:
+            p_array = np.array(p_pressure)
+            csv_min_pa = p_array.min()
+            shift_pa = p_leach_end - csv_min_pa
+            p_pressure = [p + shift_pa for p in p_pressure]
+            if MPI.COMM_WORLD.rank == 0:
+                new_min = min(p_pressure) / ut.MPa
+                new_max = max(p_pressure) / ut.MPa
+                print(f"[CSV] Shifted profile: new range [{new_min:.2f}, {new_max:.2f}] MPa")
+
         apply_startup_ramp(
             t_pressure, p_pressure,
-            p_start_pa=p_gas,
+            p_start_pa=p_leach_end if USE_LEACHING else p_gas,
             ramp_hours=RAMP_HOURS,
             dt_hours=dt_hours
         )
 
     else:
         raise ValueError(f"Unknown PRESSURE_SCENARIO: {PRESSURE_SCENARIO}")
-    
 
     # Operation BCs
     bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_operation.t_final])
@@ -1149,20 +1246,15 @@ def main():
 
     bc_east = momBC.NeumannBC("East", 2, salt_density, 660.0,
                               [side_burden, side_burden],
-                              [0.0, tc_operation.t_final],
-                              g=g_vec[2])
+                              [0.0, tc_operation.t_final], g=g_vec[2])
     bc_north = momBC.NeumannBC("North", 2, salt_density, 660.0,
                                [side_burden, side_burden],
-                               [0.0, tc_operation.t_final],
-                               g=g_vec[2])
+                               [0.0, tc_operation.t_final], g=g_vec[2])
     bc_top = momBC.NeumannBC("Top", 2, 0.0, 0.0,
                              [over_burden, over_burden],
-                             [0.0, tc_operation.t_final],
-                             g=g_vec[2])
+                             [0.0, tc_operation.t_final], g=g_vec[2])
     bc_cavern = momBC.NeumannBC("Cavern", 2, gas_density, z_max,
-                                p_pressure,
-                                t_pressure,
-                                g=g_vec[2])
+                                p_pressure, t_pressure, g=g_vec[2])
 
     bc_operation = momBC.BcHandler(mom_eq)
     for bc in [bc_west, bc_bottom, bc_south, bc_east, bc_north, bc_top, bc_cavern]:
@@ -1172,19 +1264,20 @@ def main():
 
     output_folder_operation = os.path.join(output_folder, "operation")
     if MPI.COMM_WORLD.rank == 0:
-        print(output_folder_operation)
+        print(f"\n[OPERATION] Output: {output_folder_operation}")
 
+    # Save pressure schedule
     pressure_data = {
-        "cavern_type": config["cavern_type"],
-        "cavern_shape": CAVERN_SHAPE,
-        "cavern_size_m3": CAVERN_SIZE * 1000,
+        "cavern_key": config["cavern_key"],
+        "cavern_label": config["cavern_label"],
+        "use_leaching": USE_LEACHING,
         "scenario": PRESSURE_SCENARIO,
-        "p_equilibrium_mpa": p_gas_MPa,  # automatically derived from scenario
         "mode": SCHEDULE_MODE,
         "n_cycles": N_CYCLES,
         "operation_days": OPERATION_DAYS,
         "dt_hours": dt_hours,
         "use_desai": USE_DESAI,
+        "p_lithostatic_mpa": p_lithostatic_mpa,
         "units": {"t_raw": "s", "p_raw": "Pa", "t": "hour", "p": "MPa"},
         "t_values_s": [float(t) for t in t_pressure],
         "p_values_Pa": [float(p) for p in p_pressure],
@@ -1192,26 +1285,9 @@ def main():
         "p_MPa": [float(p / ut.MPa) for p in p_pressure],
     }
 
-    # Add scenario-specific metadata
-    if PRESSURE_SCENARIO == "sinus":
-        pressure_data["p_mean_mpa"] = P_MEAN_MPA
-        pressure_data["p_amplitude_mpa"] = P_AMPLITUDE_MPA
-    elif PRESSURE_SCENARIO == "linear":
-        pressure_data["p_min_mpa"] = P_MIN_MPA
-        pressure_data["p_max_mpa"] = P_MAX_MPA
-    elif PRESSURE_SCENARIO == "csv":
-        pressure_data["csv_file"] = os.path.basename(CSV_FILE_PATH)
-        pressure_data["rescale_pressure"] = RESCALE_PRESSURE
-        if RESCALE_PRESSURE:
-            pressure_data["rescale_min_mpa"] = RESCALE_MIN_MPA
-            pressure_data["rescale_max_mpa"] = RESCALE_MAX_MPA
-        pressure_data["ramp_hours"] = RAMP_HOURS
-
-    os.makedirs(output_folder, exist_ok=True)
     with open(os.path.join(output_folder, "pressure_schedule.json"), 'w') as f:
         json.dump(pressure_data, f, indent=2)
 
-    # Operation outputs – use sparse saver (every 15th step)
     output_mom_op = SparseSaveFields(mom_eq, interval=15)
     output_mom_op.set_output_folder(output_folder_operation)
     output_mom_op.add_output_field("u", "Displacement (m)")
@@ -1225,17 +1301,14 @@ def main():
     outputs_op = [output_mom_op]
 
     if USE_THERMAL:
-        # ===== HEAT EQUATION SETUP =====
         heat_eq = sf.HeatDiffusion(grid)
 
-        # Define heat solver
         heat_solver = PETSc.KSP().create(grid.mesh.comm)
         heat_solver.setType("cg")
         heat_solver.getPC().setType("asm")
         heat_solver.setTolerances(rtol=1e-12, max_it=100)
         heat_eq.set_solver(heat_solver)
 
-        # Set thermal material properties
         cp = SPECIFIC_HEAT_CAPACITY * to.ones(heat_eq.n_elems, dtype=to.float64)
         mat.set_specific_heat_capacity(cp)
 
@@ -1244,21 +1317,17 @@ def main():
 
         heat_eq.set_material(mat)
 
-        # Set initial temperature field for heat equation (node-based)
-        # Create node temperature field using depth-dependent geothermal gradient
         node_coords = grid.mesh.geometry.x
         z_nodes = node_coords[:, 2]
         T0_nodes = T_surface_K + dTdz * (Z_SURFACE - z_nodes)
         T0_nodes_tensor = to.tensor(T0_nodes, dtype=to.float64)
         heat_eq.set_initial_T(T0_nodes_tensor)
 
-        # Heat boundary conditions
         heat_time_values = [tc_operation.t_initial, tc_operation.t_final]
         nt_heat = len(heat_time_values)
 
         heat_bc_handler = heatBC.BcHandler(heat_eq)
 
-        # Neumann BC (zero flux) on domain boundaries
         bc_heat_west = heatBC.NeumannBC("West", nt_heat * [0.0], heat_time_values)
         bc_heat_east = heatBC.NeumannBC("East", nt_heat * [0.0], heat_time_values)
         bc_heat_south = heatBC.NeumannBC("South", nt_heat * [0.0], heat_time_values)
@@ -1273,22 +1342,14 @@ def main():
         heat_bc_handler.add_boundary_condition(bc_heat_top)
         heat_bc_handler.add_boundary_condition(bc_heat_bottom)
 
-        # Cavern boundary: Robin BC with convective heat transfer
-        # Gas temperature oscillates with same period as pressure
-        # Build gas temperature schedule synchronized with pressure
         n_t_steps = len(t_pressure)
         T_gas_values = []
         for i, t in enumerate(t_pressure):
-            # Oscillate gas temperature with same period as pressure
+            period_s = tc_operation.t_final / N_CYCLES if SCHEDULE_MODE == "stretch" else 24.0 * ut.hour
+            phase = 2.0 * math.pi * t / period_s
             if PRESSURE_SCENARIO == "sinus":
-                # Sync with sinus pressure: max pressure = min temp, min pressure = max temp
-                period_s = tc_operation.t_final / N_CYCLES if SCHEDULE_MODE == "stretch" else 24.0 * ut.hour
-                phase = 2.0 * math.pi * t / period_s
                 T_gas = T_cavern_init_K - T_GAS_AMPLITUDE_C * math.sin(phase)
             else:
-                # For other scenarios, use simple sinusoidal variation
-                period_s = tc_operation.t_final / N_CYCLES if SCHEDULE_MODE == "stretch" else 24.0 * ut.hour
-                phase = 2.0 * math.pi * t / period_s
                 T_gas = T_cavern_init_K + T_GAS_AMPLITUDE_C * math.sin(phase)
             T_gas_values.append(T_gas)
 
@@ -1297,24 +1358,28 @@ def main():
 
         heat_eq.set_boundary_conditions(heat_bc_handler)
 
-        # Add heat output
         output_heat_op = SparseSaveFields(heat_eq, interval=15)
         output_heat_op.set_output_folder(output_folder_operation)
         output_heat_op.add_output_field("T", "Temperature (K)")
         outputs_op.append(output_heat_op)
 
         if MPI.COMM_WORLD.rank == 0:
-            print(f"[THERMAL] Enabled with alpha={THERMAL_EXPANSION_COEFF:.2e} 1/K")
-            print(f"[THERMAL] T_surface={T_SURFACE_C}°C, gradient={GEOTHERMAL_GRADIENT} K/km")
-            print(f"[THERMAL] T_gas_amplitude={T_GAS_AMPLITUDE_C}°C, h_conv={H_CONVECTION} W/(m²·K)")
+            print(f"[THERMAL] Enabled")
 
-        # Run coupled thermo-mechanical simulation
         sim_op = sf.Simulator_TM(mom_eq, heat_eq, tc_operation, outputs_op, False)
         sim_op.run()
     else:
-        # Run mechanical-only simulation
         sim_op = sf.Simulator_M(mom_eq, tc_operation, outputs_op, False)
         sim_op.run()
+
+    if MPI.COMM_WORLD.rank == 0:
+        print("[OPERATION] Complete.")
+        print("=" * 70)
+        print("SIMULATION FINISHED")
+        total_days = (LEACHING_DAYS if USE_LEACHING else EQUILIBRIUM_HOURS/24) + OPERATION_DAYS
+        print(f"  Total simulated time: {total_days:.1f} days")
+        print(f"  Output folder: {output_folder}")
+        print("=" * 70)
 
 
 if __name__ == '__main__':

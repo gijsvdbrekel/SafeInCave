@@ -20,7 +20,7 @@ from case_index import (
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 # ── OUTPUT FOLDER ──────────────────────────────────────────────────────────────
-ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/simulation/output"
+ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/output"
 
 # ── CASE SELECTION ─────────────────────────────────────────────────────────────
 SELECT = {

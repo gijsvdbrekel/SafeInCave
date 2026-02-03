@@ -16,7 +16,7 @@ import csv
 import numpy as np
 import gmsh
 
-DIR = "/home/gvandenbrekel/SafeInCave/VolumeCalculation/Gmsh_600k_interlayer"
+DIR = "/home/gvandenbrekel/SafeInCave/VolumeCalculation/Gmsh_A5"
 OUT_CSV = os.path.join(DIR, "cavern_volumes.csv")
 
 

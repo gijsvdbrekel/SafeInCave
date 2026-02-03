@@ -23,6 +23,9 @@ import csv
 # ║      * "bulbous_ledges_600" / "bulbous_ledges_1200" - 3 interlayers, bulging  ║
 # ║      * "asymmetric_shelf_600" / "asymmetric_shelf_1200" - 2 interlayers, tilt ║
 # ║      * "vertical_intrusion_600" / "vertical_intrusion_1200" - vertical effect ║
+# ║  - For Zuidwending A5 cavern (~965k m³, real depth 1140-1510m):               ║
+# ║      * "A5"             - Homogeneous salt (no interlayers)                   ║
+# ║      * "A5_interlayer"  - Heterogeneous with 2 interlayers (0.2m thick)       ║
 # ║                                                                               ║
 # ║  Interlayers are purely elastic (no creep). You can choose the material       ║
 # ║  for each interlayer independently:                                           ║
@@ -48,14 +51,16 @@ EQUILIBRIUM_DT_HOURS = 0.5
 
 # ── CAVERN SELECTION ───────────────────────────────────────────────────────────
 # CAVERN_TYPE: Choose one of:
-#   "nointerlayer"           - Homogeneous salt, same cavern shape but no interlayer volumes
-#   "interlayer"             - Standard heterogeneous with 2 interlayers (5 material regions)
+#   "nointerlayer"           - Homogeneous salt, same cavern shape as interlayer
+#   "interlayer"             - Standard heterogeneous with 2 interlayers 
 #   "bulbous_ledges_600"     - Irregular bulging shape with 3 interlayers (600,000 m³)
 #   "bulbous_ledges_1200"    - Irregular bulging shape with 3 interlayers (1,200,000 m³)
 #   "asymmetric_shelf_600"   - Asymmetric tilted shape with 2 interlayers (600,000 m³)
 #   "asymmetric_shelf_1200"  - Asymmetric tilted shape with 2 interlayers (1,200,000 m³)
 #   "vertical_intrusion_600" - Shape with vertical interlayer effect (600,000 m³)
 #   "vertical_intrusion_1200"- Shape with vertical interlayer effect (1,200,000 m³)
+#   "A5"                     - Zuidwending cavern A5, homogeneous (~1.000.000 m³, depth 1140-1510m)
+#   "A5_interlayer"          - Zuidwending cavern A5 with 2 interlayers (~1.000.000 m³)
 
 CAVERN_TYPE = "interlayer"
 
@@ -217,6 +222,7 @@ VALID_CAVERN_TYPES = [
     "bulbous_ledges_600", "bulbous_ledges_1200",
     "asymmetric_shelf_600", "asymmetric_shelf_1200",
     "vertical_intrusion_600", "vertical_intrusion_1200",
+    "A5", "A5_interlayer",
 ]
 VALID_SCENARIOS = ["sinus", "linear", "irregular", "csv"]
 VALID_MODES_STANDARD = ["stretch", "repeat"]
@@ -232,6 +238,7 @@ INTERLAYER_PROPERTIES = {
 
 # Cavern parameters per type
 # Each entry: {"z_max": top of cavern, "z_center": center z, "height": cavern height, "n_interlayers": number of interlayers}
+# Optional "p_ref_mpa" overrides the default P_REF_MPA for caverns at different depths
 CAVERN_PARAMS = {
     # Standard interlayer cavern (600k)
     "nointerlayer": {"z_max": 345.0, "z_center": 245.0, "height": 200.0, "n_interlayers": 0},
@@ -245,6 +252,14 @@ CAVERN_PARAMS = {
     # Vertical intrusion effect (2 interlayers)
     "vertical_intrusion_600": {"z_max": 340.0, "z_center": 237.5, "height": 205.0, "n_interlayers": 2},
     "vertical_intrusion_1200": {"z_max": 355.0, "z_center": 247.5, "height": 225.0, "n_interlayers": 2},
+    # ══════════════════════════════════════════════════════════════════════════════
+    # ZUIDWENDING CAVERN A5 (~1.000.000 m³)
+    # Real depth: Roof 1140m, Bottom 1510m, Height 370m
+    # Model coords: z_bot_tip=145, z_top_tip=515
+    # Overburden at z=660: 200m sand + 795m salt → σ_v = 21.18 MPa
+    # ══════════════════════════════════════════════════════════════════════════════
+    "A5": {"z_max": 515.0, "z_center": 330.0, "height": 370.0, "n_interlayers": 0, "p_ref_mpa": 21.18},
+    "A5_interlayer": {"z_max": 515.0, "z_center": 330.0, "height": 370.0, "n_interlayers": 2, "p_ref_mpa": 21.18},
 }
 
 # Domain dimensions
@@ -263,6 +278,8 @@ GRID_FOLDERS = {
     "asymmetric_shelf_1200": "cavern_asymmetric_shelf_1200_3D",
     "vertical_intrusion_600": "cavern_vertical_intrusion_600_3D",
     "vertical_intrusion_1200": "cavern_vertical_intrusion_1200_3D",
+    "A5": "cavern_A5_3D",
+    "A5_interlayer": "cavern_A5_interlayer_3D",
 }
 
 # Mesh filename (standardized)
@@ -348,6 +365,9 @@ def validate_configuration():
     il2_props = INTERLAYER_PROPERTIES.get(INTERLAYER_2_MATERIAL, INTERLAYER_PROPERTIES["mudstone"])
     il3_props = INTERLAYER_PROPERTIES.get(INTERLAYER_3_MATERIAL, INTERLAYER_PROPERTIES["anhydrite"])
 
+    # Use cavern-specific p_ref_mpa if provided, otherwise use global P_REF_MPA
+    p_ref_mpa = cavern_params.get("p_ref_mpa", P_REF_MPA)
+
     return {
         "cavern_type": CAVERN_TYPE,
         "grid_folder": grid_folder,
@@ -355,7 +375,7 @@ def validate_configuration():
         "z_center": cavern_params["z_center"],
         "cavern_height": cavern_params["height"],
         "n_interlayers": n_interlayers,
-        "p_ref_mpa": P_REF_MPA,
+        "p_ref_mpa": p_ref_mpa,
         "interlayer_1_material": INTERLAYER_1_MATERIAL,
         "interlayer_2_material": INTERLAYER_2_MATERIAL,
         "interlayer_3_material": INTERLAYER_3_MATERIAL,
