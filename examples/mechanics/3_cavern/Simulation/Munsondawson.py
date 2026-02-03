@@ -16,12 +16,12 @@ import math
 #  SCENARIO SWITCHES (zet precies ÉÉN preset True)
 # ============================================================
 RUN_FULL             = False   # Kelvin + disloc(CCC) + pressure-solution + Desai
-RUN_MD_ONLY          = True  # Elastic + Munson–Dawson (steady + transient)
+RUN_MD_ONLY          = False  # Elastic + Munson–Dawson (steady + transient)
 RUN_MD_STEADY_ONLY   = False  # Elastic + Munson–Dawson (steady-only) => transient uit
-RUN_FULL_MD          = False  # Kelvin + pressure-solution + Munson–Dawson (steady + transient)
+RUN_FULL_MD          = True  # Kelvin + pressure-solution + Munson–Dawson (steady + transient)
 
 # Equilibrium stage: puur elastisch is het meest consistent voor vergelijking
-EQUILIBRIUM_ELASTIC_ONLY = True
+EQUILIBRIUM_ELASTIC_ONLY = False
 
 
 # ============================================================
@@ -355,19 +355,54 @@ def main():
     # ============================================================
     tc_equilibrium = sf.TimeController(dt=0.5, initial_time=0.0, final_time=10, time_unit="hour")
 
-    if not EQUILIBRIUM_ELASTIC_ONLY:
-        raise ValueError("Voor deze MD-vergelijkrun: zet EQUILIBRIUM_ELASTIC_ONLY=True (anders meng je effecten).")
+    if EQUILIBRIUM_ELASTIC_ONLY:
+        mat_eq = make_material(
+            mom_eq, parts,
+            use_kelvin=False,
+            use_disloc_old=False,
+            use_pressure_solution=False,
+            use_munson_dawson=False,
+            md_transient_on=True,
+            use_desai=False
+        )
+        mom_eq.expect_vp_state = False
+    else:
+        # Use the same inelastic elements as the operation stage for equilibrium
+        # This allows the model to settle with creep before operation
+        eq_use_kelvin = False
+        eq_use_disloc_old = False
+        eq_use_pressure_solution = False
+        eq_use_munson_dawson = False
+        eq_md_transient_on = True
+        eq_use_desai = False
 
-    mat_eq = make_material(
-        mom_eq, parts,
-        use_kelvin=False,
-        use_disloc_old=False,
-        use_pressure_solution=False,
-        use_munson_dawson=False,
-        md_transient_on=True,
-        use_desai=False
-    )
-    mom_eq.expect_vp_state = False
+        if RUN_FULL:
+            eq_use_kelvin = True
+            eq_use_disloc_old = True
+            eq_use_pressure_solution = True
+            eq_use_desai = False  # Desai typically not in equilibrium
+        elif RUN_MD_ONLY:
+            eq_use_munson_dawson = True
+            eq_md_transient_on = True
+        elif RUN_MD_STEADY_ONLY:
+            eq_use_munson_dawson = True
+            eq_md_transient_on = False
+        elif RUN_FULL_MD:
+            eq_use_kelvin = True
+            eq_use_pressure_solution = True
+            eq_use_munson_dawson = True
+            eq_md_transient_on = True
+
+        mat_eq = make_material(
+            mom_eq, parts,
+            use_kelvin=eq_use_kelvin,
+            use_disloc_old=eq_use_disloc_old,
+            use_pressure_solution=eq_use_pressure_solution,
+            use_munson_dawson=eq_use_munson_dawson,
+            md_transient_on=eq_md_transient_on,
+            use_desai=eq_use_desai
+        )
+        mom_eq.expect_vp_state = eq_use_desai
 
     mom_eq.set_material(mat_eq)
     mom_eq.build_body_force(g_vec)

@@ -1651,11 +1651,14 @@ class MunsonDawsonCreep(NonElasticElement):
         r = 1.0 - (self.zeta_old / eps_t_star)
         r2 = r * r
 
-        # Piecewise F
+        # Piecewise F with exponent clamping to prevent numerical overflow
+        # (clamp at ±50 keeps exp() in safe range; exp(50) ≈ 5e21 is far beyond physical F values)
         F = to.ones_like(epsdot_ss)
         mask = self.zeta_old <= eps_t_star
-        F[mask] = to.exp(Delta_cap[mask] * r2[mask])
-        F[~mask] = to.exp(-self.delta[~mask] * r2[~mask])
+        exp_arg_hard = to.clamp(Delta_cap[mask] * r2[mask], min=-50.0, max=50.0)
+        exp_arg_recov = to.clamp(-self.delta[~mask] * r2[~mask], min=-50.0, max=50.0)
+        F[mask] = to.exp(exp_arg_hard)
+        F[~mask] = to.exp(exp_arg_recov)
 
         self.F = F.clone()
 
@@ -1717,9 +1720,9 @@ class MunsonDawsonCreep(NonElasticElement):
         sigma_safe = to.clamp(sigma, min=1e-30)
         epsdot_ss = self.A * to.exp(-self.Q / (self.R * Temp)) * (sigma_safe ** self.n)
 
-        # Explicit update of zeta
+        # Explicit update of zeta (clamp to non-negative; transient strain accumulation can't be negative)
         zeta_dot = (self.F - 1.0) * epsdot_ss
-        self.zeta = self.zeta_old + dt * zeta_dot
+        self.zeta = to.clamp(self.zeta_old + dt * zeta_dot, min=0.0)
 
         # No additional B / H coupling terms (keep minimal & non-invasive)
         B = to.zeros((self.n_elems, 3, 3), dtype=to.float64)

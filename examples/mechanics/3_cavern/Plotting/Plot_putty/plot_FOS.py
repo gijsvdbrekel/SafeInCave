@@ -45,13 +45,12 @@ CAVERN_COLORS = {
     "Tilt":          "#e377c2",   # pink
 }
 
-# --- Linestyle coding by scenario ---
 SCENARIO_LINESTYLES = {
-    "disloc_old_only":  "-",
-    "disloc_new_only":  "--",
-    "desai_only":       "-.",
-    "full_minus_desai": ":",
-    "full":             (0, (3, 1, 1, 1)),  # dash-dot-dot
+    "disloc_old_only": "-",
+    "disloc_new_only": "--",
+    "desai_only": "-.",
+    "full_minus_desai": "-",   # solid
+    "full": "-",               # solid
     # Munson-Dawson scenarios
     "md_only":          "-",
     "md_steady_only":   "--",
@@ -59,16 +58,15 @@ SCENARIO_LINESTYLES = {
     # Interlayer scenarios
     "interlayer":       "-",
     "nointerlayer":     "--",
-    None:               "-",
+    None: "-",
 }
 
-# --- Color coding by scenario ---
 SCENARIO_COLORS = {
     "disloc_old_only":  "#1f77b4",   # blue
     "disloc_new_only":  "#ff7f0e",   # orange
     "desai_only":       "#2ca02c",   # green
-    "full_minus_desai": "#d62728",   # red
-    "full":             "#9467bd",   # purple
+    "full_minus_desai": "#2ca02c",   # green
+    "full":             "#d62728",   # red
     # Munson-Dawson scenarios
     "md_only":          "#17becf",   # cyan
     "md_steady_only":   "#bcbd22",   # olive
@@ -78,6 +76,7 @@ SCENARIO_COLORS = {
     "nointerlayer":     "#8c564b",   # brown
     None:               "#333333",   # dark gray
 }
+
 
 # --- Ordering for legend ---
 CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]

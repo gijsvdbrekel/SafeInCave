@@ -23,9 +23,9 @@ import csv
 # CAVERN_SHAPE: Choose one of:
 #   "regular"      - Standard cylindrical cavern
 #   "tilted"       - Tilted/inclined cavern
-#   "teardrop"     - Teardrop-shaped cavern
+#   "teardrop"     - Reversed teardrop-shaped cavern
 #   "asymmetric"   - Asymmetric cavern geometry
-#   "irregular"    - Irregular/complex shape
+#   "irregular"    - Irregular/complex shape (bulb)
 #   "multichamber" - Multi-chamber cavern
 
 CAVERN_SHAPE = "regular"
