@@ -52,7 +52,7 @@ SCENARIO_LINESTYLES = {
     # Munson-Dawson scenarios
     "md_only":          "-",
     "md_steady_only":   "--",
-    "full_md":          "-.",
+    "full_md":          "-",
     # Interlayer scenarios
     "interlayer":       "-",
     "nointerlayer":     "--",

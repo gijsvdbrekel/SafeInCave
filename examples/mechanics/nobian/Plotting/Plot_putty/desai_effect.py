@@ -32,12 +32,13 @@ CAVERN_COLORS = {
 SCENARIO_COLORS = {
     "full":             "#2ca02c",   # green
     "full_minus_desai": "#d62728",   # red
+    "full_md":          "#1f77b4",   # blue
 }
 
 # =============================================================================
 # DEFAULT CONFIG (can be overridden via command line)
 # =============================================================================
-DEFAULT_ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/3_cavern/output"
+DEFAULT_ROOT = r"/home/gvandenbrekel/SafeInCave/examples/mechanics/nobian/Simulation/output"
 
 DEFAULT_SELECT_BASE = {
     "caverns": ["Regular"],
@@ -48,10 +49,10 @@ DEFAULT_SELECT_BASE = {
 }
 
 SCEN_FULL = "full"
-SCEN_NODESAI = "full_minus_desai"
+SCEN_NODESAI = "full_md"
 
 DEFAULT_DPI = 180
-DEFAULT_SHOW = False
+DEFAULT_SHOW = True
 
 
 # =============================================================================
@@ -70,7 +71,8 @@ def pick_case_for_scenario(all_cases_meta, select_base: dict, scenario_name: str
 
     candidates = filter_cases(all_cases_meta, sel)
 
-    needed_fields = ["q_elems", "eps_ne_rate_eq_total", "eps_ne_rate_eq_desai"]
+    # Only require q_elems - other fields are optional for flexible comparison
+    needed_fields = ["q_elems"]
     keep = []
     for m in candidates:
         cp = m["case_path"]
@@ -89,10 +91,16 @@ def pick_case_for_scenario(all_cases_meta, select_base: dict, scenario_name: str
 
 
 def plot_desai_effect(case_full: str, case_nodesai: str, meta_full: dict, dpi: int):
-    """Generate comparison plots for Desai effect."""
+    """Generate comparison plots between two scenarios."""
     tag = make_case_tag(meta_full)
     cavern_label = meta_full.get("cavern_label", "Unknown")
     base_color = CAVERN_COLORS.get(cavern_label, "#333333")
+
+    # Get scenario labels from the actual scenarios being compared
+    label_A = SCEN_FULL.upper()
+    label_B = SCEN_NODESAI.upper()
+    color_A = SCENARIO_COLORS.get(SCEN_FULL, "#2ca02c")
+    color_B = SCENARIO_COLORS.get(SCEN_NODESAI, "#d62728")
 
     # KSP iterations comparison
     tF, itsF, _, _ = read_ksp_jsonl(case_full)
@@ -100,8 +108,8 @@ def plot_desai_effect(case_full: str, case_nodesai: str, meta_full: dict, dpi: i
 
     fig1, ax = plt.subplots(1, 1, figsize=(11, 4))
     ax.set_title(f"KSP iterations vs time (operation) - {tag}")
-    ax.plot(tF / DAY, itsF, linewidth=1.8, color=SCENARIO_COLORS["full"], label="FULL (with Desai)")
-    ax.plot(tN / DAY, itsN, linewidth=1.8, color=SCENARIO_COLORS["full_minus_desai"], label="FULL_MINUS_DESAI")
+    ax.plot(tF / DAY, itsF, linewidth=1.8, color=color_A, label=label_A)
+    ax.plot(tN / DAY, itsN, linewidth=1.8, color=color_B, label=label_B)
     ax.set_xlabel("Time (days)")
     ax.set_ylabel("KSP iterations")
     ax.grid(True, alpha=0.3)
@@ -115,47 +123,69 @@ def plot_desai_effect(case_full: str, case_nodesai: str, meta_full: dict, dpi: i
 
     fig2, ax2 = plt.subplots(1, 1, figsize=(11, 4))
     ax2.set_title(f"Mean q_elems vs time - {tag}")
-    ax2.plot(tqF / DAY, qF / MPA, linewidth=1.8, color=SCENARIO_COLORS["full"], label="FULL (with Desai)")
-    ax2.plot(tqN / DAY, qN / MPA, linewidth=1.8, color=SCENARIO_COLORS["full_minus_desai"], label="FULL_MINUS_DESAI")
+    ax2.plot(tqF / DAY, qF / MPA, linewidth=1.8, color=color_A, label=label_A)
+    ax2.plot(tqN / DAY, qN / MPA, linewidth=1.8, color=color_B, label=label_B)
     ax2.set_xlabel("Time (days)")
     ax2.set_ylabel("Mean von Mises (MPa)")
     ax2.grid(True, alpha=0.3)
     ax2.legend(loc="best")
 
-    # Strain rates comparison (log scale)
-    ttF, rtotF_list = read_cell_scalar_timeseries(path_field_xdmf(case_full, "eps_ne_rate_eq_total"))
-    tdF, rdesF_list = read_cell_scalar_timeseries(path_field_xdmf(case_full, "eps_ne_rate_eq_desai"))
-    ttN, rtotN_list = read_cell_scalar_timeseries(path_field_xdmf(case_nodesai, "eps_ne_rate_eq_total"))
-    tdN, rdesN_list = read_cell_scalar_timeseries(path_field_xdmf(case_nodesai, "eps_ne_rate_eq_desai"))
+    # Strain rates comparison (log scale) - try total strain rate if available
+    fig3, fig4 = None, None
+    try:
+        ttF, rtotF_list = read_cell_scalar_timeseries(path_field_xdmf(case_full, "eps_ne_rate_eq_total"))
+        ttN, rtotN_list = read_cell_scalar_timeseries(path_field_xdmf(case_nodesai, "eps_ne_rate_eq_total"))
+        ttF, rtotF = series_mean(ttF, rtotF_list)
+        ttN, rtotN = series_mean(ttN, rtotN_list)
 
-    ttF, rtotF = series_mean(ttF, rtotF_list)
-    tdF, rdesF = series_mean(tdF, rdesF_list)
-    ttN, rtotN = series_mean(ttN, rtotN_list)
-    tdN, rdesN = series_mean(tdN, rdesN_list)
+        fig3, ax3 = plt.subplots(1, 1, figsize=(11, 4))
+        ax3.set_title(f"Mean eq strain-rates (log scale) - {tag}")
+        ax3.semilogy(ttF / DAY, np.maximum(rtotF, 1e-30), linewidth=1.8, color=color_A, label=f"{label_A} total")
+        ax3.semilogy(ttN / DAY, np.maximum(rtotN, 1e-30), linewidth=1.8, color=color_B, label=f"{label_B} total")
 
-    fig3, ax3 = plt.subplots(1, 1, figsize=(11, 4))
-    ax3.set_title(f"Mean eq strain-rates (log scale) - {tag}")
-    ax3.semilogy(ttF / DAY, np.maximum(rtotF, 1e-30), linewidth=1.8, color=SCENARIO_COLORS["full"], label="FULL total")
-    ax3.semilogy(tdF / DAY, np.maximum(rdesF, 1e-30), linewidth=1.8, color=SCENARIO_COLORS["full"], linestyle="--", label="FULL Desai component")
-    ax3.semilogy(ttN / DAY, np.maximum(rtotN, 1e-30), linewidth=1.8, color=SCENARIO_COLORS["full_minus_desai"], label="NO_DESAI total")
-    ax3.semilogy(tdN / DAY, np.maximum(rdesN, 1e-30), linewidth=1.8, color=SCENARIO_COLORS["full_minus_desai"], linestyle="--", label="NO_DESAI Desai component")
-    ax3.set_xlabel("Time (days)")
-    ax3.set_ylabel("Mean eq strain-rate (1/s)")
-    ax3.grid(True, alpha=0.3)
-    ax3.legend(loc="best")
+        # Try to add Desai component if available
+        try:
+            tdF, rdesF_list = read_cell_scalar_timeseries(path_field_xdmf(case_full, "eps_ne_rate_eq_desai"))
+            tdF, rdesF = series_mean(tdF, rdesF_list)
+            ax3.semilogy(tdF / DAY, np.maximum(rdesF, 1e-30), linewidth=1.8, color=color_A, linestyle="--", label=f"{label_A} Desai")
+        except Exception:
+            pass
 
-    # Desai contribution ratio (new plot)
-    fig4, ax4 = plt.subplots(1, 1, figsize=(11, 4))
-    ax4.set_title(f"Desai contribution ratio (Desai / Total) - {tag}")
-    ratio_F = np.where(rtotF > 1e-30, rdesF / rtotF, 0.0)
-    ratio_N = np.where(rtotN > 1e-30, rdesN / rtotN, 0.0)
-    ax4.plot(ttF / DAY, ratio_F * 100, linewidth=1.8, color=SCENARIO_COLORS["full"], label="FULL")
-    ax4.plot(ttN / DAY, ratio_N * 100, linewidth=1.8, color=SCENARIO_COLORS["full_minus_desai"], label="NO_DESAI")
-    ax4.set_xlabel("Time (days)")
-    ax4.set_ylabel("Desai contribution (%)")
-    ax4.set_ylim(0, 105)
-    ax4.grid(True, alpha=0.3)
-    ax4.legend(loc="best")
+        try:
+            tdN, rdesN_list = read_cell_scalar_timeseries(path_field_xdmf(case_nodesai, "eps_ne_rate_eq_desai"))
+            tdN, rdesN = series_mean(tdN, rdesN_list)
+            ax3.semilogy(tdN / DAY, np.maximum(rdesN, 1e-30), linewidth=1.8, color=color_B, linestyle="--", label=f"{label_B} Desai")
+        except Exception:
+            pass
+
+        ax3.set_xlabel("Time (days)")
+        ax3.set_ylabel("Mean eq strain-rate (1/s)")
+        ax3.grid(True, alpha=0.3)
+        ax3.legend(loc="best")
+
+        # Ratio plot only if Desai fields exist for both
+        try:
+            tdF, rdesF_list = read_cell_scalar_timeseries(path_field_xdmf(case_full, "eps_ne_rate_eq_desai"))
+            tdN, rdesN_list = read_cell_scalar_timeseries(path_field_xdmf(case_nodesai, "eps_ne_rate_eq_desai"))
+            tdF, rdesF = series_mean(tdF, rdesF_list)
+            tdN, rdesN = series_mean(tdN, rdesN_list)
+
+            fig4, ax4 = plt.subplots(1, 1, figsize=(11, 4))
+            ax4.set_title(f"Desai contribution ratio (Desai / Total) - {tag}")
+            ratio_F = np.where(rtotF > 1e-30, rdesF / rtotF, 0.0)
+            ratio_N = np.where(rtotN > 1e-30, rdesN / rtotN, 0.0)
+            ax4.plot(ttF / DAY, ratio_F * 100, linewidth=1.8, color=color_A, label=label_A)
+            ax4.plot(ttN / DAY, ratio_N * 100, linewidth=1.8, color=color_B, label=label_B)
+            ax4.set_xlabel("Time (days)")
+            ax4.set_ylabel("Desai contribution (%)")
+            ax4.set_ylim(0, 105)
+            ax4.grid(True, alpha=0.3)
+            ax4.legend(loc="best")
+        except Exception:
+            print("[INFO] Desai contribution ratio plot skipped (Desai fields not available)")
+
+    except Exception as e:
+        print(f"[INFO] Strain rate plots skipped: {e}")
 
     return fig1, fig2, fig3, fig4, tag
 
@@ -226,33 +256,37 @@ def main():
     case_full, meta_full = pick_case_for_scenario(all_cases, select_base, SCEN_FULL)
     case_nodesai, _ = pick_case_for_scenario(all_cases, select_base, SCEN_NODESAI)
 
-    print(f"\n[INFO] FULL case:      {case_full}")
-    print(f"[INFO] NO_DESAI case:  {case_nodesai}")
+    print(f"\n[INFO] {SCEN_FULL} case:    {case_full}")
+    print(f"[INFO] {SCEN_NODESAI} case:  {case_nodesai}")
 
     fig1, fig2, fig3, fig4, tag = plot_desai_effect(case_full, case_nodesai, meta_full, args.dpi)
 
-    p1 = os.path.join(out_dir, f"desai_effect_ksp_{tag}.png")
-    p2 = os.path.join(out_dir, f"desai_effect_qmean_{tag}.png")
-    p3 = os.path.join(out_dir, f"desai_effect_rates_{tag}.png")
-    p4 = os.path.join(out_dir, f"desai_effect_ratio_{tag}.png")
+    p1 = os.path.join(out_dir, f"scenario_compare_ksp_{tag}.png")
+    p2 = os.path.join(out_dir, f"scenario_compare_qmean_{tag}.png")
+    p3 = os.path.join(out_dir, f"scenario_compare_rates_{tag}.png")
+    p4 = os.path.join(out_dir, f"scenario_compare_ratio_{tag}.png")
 
     fig1.savefig(p1, dpi=args.dpi, bbox_inches="tight")
     fig2.savefig(p2, dpi=args.dpi, bbox_inches="tight")
-    fig3.savefig(p3, dpi=args.dpi, bbox_inches="tight")
-    fig4.savefig(p4, dpi=args.dpi, bbox_inches="tight")
-
     print(f"\n[SAVED] {p1}")
     print(f"[SAVED] {p2}")
-    print(f"[SAVED] {p3}")
-    print(f"[SAVED] {p4}")
+
+    if fig3 is not None:
+        fig3.savefig(p3, dpi=args.dpi, bbox_inches="tight")
+        print(f"[SAVED] {p3}")
+    if fig4 is not None:
+        fig4.savefig(p4, dpi=args.dpi, bbox_inches="tight")
+        print(f"[SAVED] {p4}")
 
     if args.show:
         plt.show()
 
     plt.close(fig1)
     plt.close(fig2)
-    plt.close(fig3)
-    plt.close(fig4)
+    if fig3 is not None:
+        plt.close(fig3)
+    if fig4 is not None:
+        plt.close(fig4)
 
 
 if __name__ == "__main__":

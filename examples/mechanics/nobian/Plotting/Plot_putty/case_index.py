@@ -8,7 +8,7 @@ DAY = 24.0 * 3600.0
 MPA = 1e6
 
 KNOWN_PRESSURES = {"sinus", "irregular", "csv_profile", "linear"}
-KNOWN_SCENARIOS = {"desai_only", "disloc_old_only", "disloc_new_only", "full", "full_minus_desai"}
+KNOWN_SCENARIOS = {"desai_only", "disloc_old_only", "disloc_new_only", "full", "full_minus_desai", "full_md", "md_only", "md_steady_only"}
 
 # matches regular600, irregular1200, tilted600, etc.
 _CAVERN_RE = re.compile(r"(regular|irregularfine|irregular|tilted|tilt|teardrop|asymmetric|multichamber)(600|1200)", re.I)
@@ -98,7 +98,8 @@ def read_case_metadata(case_path: str) -> dict:
                 break
 
     if meta["scenario_preset"] is None:
-        for s in KNOWN_SCENARIOS:
+        # Sort by length descending to match longer names first (e.g., "full_md" before "full")
+        for s in sorted(KNOWN_SCENARIOS, key=len, reverse=True):
             if f"_{s}_" in name or name.startswith(f"case_{s}_"):
                 meta["scenario_preset"] = s
                 break
@@ -313,7 +314,14 @@ def read_cell_scalar_timeseries(xdmf_path: str, timesteps: list[int] | None = No
             key = list(cell_data.keys())[0]
 
         arr_blocks = cell_data[key]
-        arr = np.asarray(arr_blocks[0] if isinstance(arr_blocks, list) else arr_blocks, float)
+        # Handle different meshio formats: list, dict, or direct array
+        if isinstance(arr_blocks, list):
+            arr = np.asarray(arr_blocks[0], float)
+        elif isinstance(arr_blocks, dict):
+            # meshio sometimes returns {'tetra': array, ...} - take first value
+            arr = np.asarray(list(arr_blocks.values())[0], float)
+        else:
+            arr = np.asarray(arr_blocks, float)
         vals.append(arr)
 
     return np.asarray(times, float), vals

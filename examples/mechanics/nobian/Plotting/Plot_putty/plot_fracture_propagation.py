@@ -20,13 +20,13 @@ from case_index import (
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 # ── OUTPUT FOLDER ──────────────────────────────────────────────────────────────
-ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/output"
+ROOT = r"/home/gvandenbrekel/SafeInCave/examples/mechanics/nobian/Simulation/output"
 
 # ── CASE SELECTION ─────────────────────────────────────────────────────────────
 SELECT = {
     "caverns": None,
     "pressure": "sinus",
-    "scenario": ["full", "full_minus_desai"],
+    "scenario": ["full", "full_md"],
     "n_cycles": None,
     "operation_days": None,
     "case_contains": None,
@@ -52,7 +52,7 @@ FOS_THRESHOLD = 1.0
 
 # ── OUTPUT SETTINGS ────────────────────────────────────────────────────────────
 OUT_DIR = os.path.join(ROOT, "_figures")
-SHOW = False
+SHOW = True
 DPI = 180
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗

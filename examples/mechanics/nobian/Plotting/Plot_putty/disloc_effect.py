@@ -33,12 +33,14 @@ CAVERN_COLORS = {
 SCENARIO_COLORS = {
     "disloc_old_only": "#1f77b4",   # blue
     "disloc_new_only": "#ff7f0e",   # orange
+    "full":            "#2ca02c",   # green
+    "full_md":         "#d62728",   # red
 }
 
 # =============================================================================
 # DEFAULT CONFIG (can be overridden via command line)
 # =============================================================================
-DEFAULT_ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/3_cavern/output"
+DEFAULT_ROOT = r"/home/gvandenbrekel/SafeInCave/examples/mechanics/nobian/Simulation/output"
 
 DEFAULT_SELECT_BASE = {
     "caverns": ["Regular"],
@@ -48,12 +50,12 @@ DEFAULT_SELECT_BASE = {
     "case_contains": None,
 }
 
-SCEN_OLD = "disloc_old_only"
-SCEN_NEW = "disloc_new_only"
+SCEN_OLD = "full"
+SCEN_NEW = "full_md"
 
 DEFAULT_PICK_PEAK = "last"  # "first", "last", or "cycle_N" where N is cycle number
 DEFAULT_DPI = 180
-DEFAULT_SHOW = False
+DEFAULT_SHOW = True
 
 
 # =============================================================================
@@ -124,7 +126,8 @@ def pick_case_for_scenario(all_cases_meta, select_base: dict, scenario_name: str
     sel["scenario"] = scenario_name
     candidates = filter_cases(all_cases_meta, sel)
 
-    needed_fields = ["q_elems", "eps_ne_rate_eq_disloc"]
+    # Only require q_elems - other fields are optional
+    needed_fields = ["q_elems"]
     keep = []
     for m in candidates:
         cp = m["case_path"]
@@ -143,60 +146,35 @@ def pick_case_for_scenario(all_cases_meta, select_base: dict, scenario_name: str
 
 
 def plot_old_vs_new(case_old: str, case_new: str, meta_old: dict, pick_peak: str, use_hexbin: bool = False):
-    """Generate comparison plots for old vs new dislocation model."""
+    """Generate comparison plots between two scenarios."""
     tag = make_case_tag(meta_old)
+
+    # Get scenario labels and colors
+    label_A = SCEN_OLD.upper()
+    label_B = SCEN_NEW.upper()
+    color_A = SCENARIO_COLORS.get(SCEN_OLD, "#1f77b4")
+    color_B = SCENARIO_COLORS.get(SCEN_NEW, "#ff7f0e")
 
     t_sched_s, p_sched_mpa = read_pressure_schedule(case_old)
     i_peak = pick_peak_timestep_index(t_sched_s, p_sched_mpa, pick_peak)
     target_t = t_sched_s[i_peak]
 
-    # Read timeseries data
+    # Read q_elems timeseries data
     q_old_t, q_old_list = read_cell_scalar_timeseries(path_field_xdmf(case_old, "q_elems"))
-    r_old_t, r_old_list = read_cell_scalar_timeseries(path_field_xdmf(case_old, "eps_ne_rate_eq_disloc"))
-
     q_new_t, q_new_list = read_cell_scalar_timeseries(path_field_xdmf(case_new, "q_elems"))
-    r_new_t, r_new_list = read_cell_scalar_timeseries(path_field_xdmf(case_new, "eps_ne_rate_eq_disloc"))
 
-    # Find closest timestep to target
-    k_old = int(np.argmin(np.abs(q_old_t - target_t)))
-    k_new = int(np.argmin(np.abs(q_new_t - target_t)))
-
-    q_old = np.asarray(q_old_list[k_old], float) / MPA
-    r_old = np.asarray(r_old_list[k_old], float)
-    q_new = np.asarray(q_new_list[k_new], float) / MPA
-    r_new = np.asarray(r_new_list[k_new], float)
-
-    # Log transform
-    eps = 1e-30
-    x_old = np.log10(np.maximum(q_old, eps))
-    y_old = np.log10(np.maximum(r_old, eps))
-    x_new = np.log10(np.maximum(q_new, eps))
-    y_new = np.log10(np.maximum(r_new, eps))
-
-    # Main scatter/hexbin plot
-    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
-    ax.set_title(f"Dislocation: log10(strain-rate) vs log10(von Mises)\npeak='{pick_peak}' @ t={target_t / DAY:.2f} days - {tag}")
-
-    if use_hexbin:
-        # Use hexbin for dense data visualization
-        hb_old = ax.hexbin(x_old, y_old, gridsize=40, cmap='Blues', mincnt=1, alpha=0.6, label="OLD dislocation")
-        hb_new = ax.hexbin(x_new, y_new, gridsize=40, cmap='Oranges', mincnt=1, alpha=0.6, label="NEW dislocation")
-    else:
-        ax.scatter(x_old, y_old, s=4, alpha=0.25, color=SCENARIO_COLORS["disloc_old_only"], label="OLD dislocation")
-        ax.scatter(x_new, y_new, s=4, alpha=0.25, color=SCENARIO_COLORS["disloc_new_only"], label="NEW dislocation")
-
-    # Add median trend lines
-    xm_old, ym_old = bin_median_trend(x_old, y_old)
-    if xm_old is not None:
-        ax.plot(xm_old, ym_old, linewidth=2.5, color=SCENARIO_COLORS["disloc_old_only"], label="OLD median trend")
-    xm_new, ym_new = bin_median_trend(x_new, y_new)
-    if xm_new is not None:
-        ax.plot(xm_new, ym_new, linewidth=2.5, color=SCENARIO_COLORS["disloc_new_only"], label="NEW median trend")
-
-    ax.set_xlabel("log10(q_elems [MPa])")
-    ax.set_ylabel("log10(epsdot_disloc_eq [1/s])")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="best")
+    # Try to read strain rate field - first try disloc, then total
+    rate_field = None
+    rate_label = "strain-rate"
+    for field_name in ["eps_ne_rate_eq_disloc", "eps_ne_rate_eq_total"]:
+        try:
+            r_old_t, r_old_list = read_cell_scalar_timeseries(path_field_xdmf(case_old, field_name))
+            r_new_t, r_new_list = read_cell_scalar_timeseries(path_field_xdmf(case_new, field_name))
+            rate_field = field_name
+            rate_label = field_name.replace("eps_ne_rate_eq_", "")
+            break
+        except Exception:
+            continue
 
     # Pressure schedule plot showing selected peak
     fig2, ax2 = plt.subplots(1, 1, figsize=(10, 3))
@@ -208,23 +186,65 @@ def plot_old_vs_new(case_old: str, case_new: str, meta_old: dict, pick_peak: str
     ax2.grid(True, alpha=0.3)
     ax2.legend(loc="best")
 
-    # Additional plot: rate ratio comparison over time (mean values)
-    fig3, ax3 = plt.subplots(1, 1, figsize=(10, 4))
-    ax3.set_title(f"Mean dislocation strain-rate over time - {tag}")
+    fig, fig3 = None, None
 
-    # Compute mean rates at each timestep
-    r_old_mean = np.array([np.nanmean(r) for r in r_old_list])
-    r_new_mean = np.array([np.nanmean(r) for r in r_new_list])
+    if rate_field is not None:
+        # Find closest timestep to target
+        k_old = int(np.argmin(np.abs(q_old_t - target_t)))
+        k_new = int(np.argmin(np.abs(q_new_t - target_t)))
 
-    ax3.semilogy(r_old_t / DAY, np.maximum(r_old_mean, 1e-30), linewidth=1.8,
-                 color=SCENARIO_COLORS["disloc_old_only"], label="OLD dislocation")
-    ax3.semilogy(r_new_t / DAY, np.maximum(r_new_mean, 1e-30), linewidth=1.8,
-                 color=SCENARIO_COLORS["disloc_new_only"], label="NEW dislocation")
-    ax3.axvline(target_t / DAY, color="#d62728", linestyle="--", alpha=0.7, label=f"Selected peak")
-    ax3.set_xlabel("Time (days)")
-    ax3.set_ylabel("Mean eq strain-rate (1/s)")
-    ax3.grid(True, alpha=0.3)
-    ax3.legend(loc="best")
+        q_old = np.asarray(q_old_list[k_old], float) / MPA
+        r_old = np.asarray(r_old_list[k_old], float)
+        q_new = np.asarray(q_new_list[k_new], float) / MPA
+        r_new = np.asarray(r_new_list[k_new], float)
+
+        # Log transform
+        eps = 1e-30
+        x_old = np.log10(np.maximum(q_old, eps))
+        y_old = np.log10(np.maximum(r_old, eps))
+        x_new = np.log10(np.maximum(q_new, eps))
+        y_new = np.log10(np.maximum(r_new, eps))
+
+        # Main scatter/hexbin plot
+        fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+        ax.set_title(f"{rate_label}: log10(strain-rate) vs log10(von Mises)\npeak='{pick_peak}' @ t={target_t / DAY:.2f} days - {tag}")
+
+        if use_hexbin:
+            hb_old = ax.hexbin(x_old, y_old, gridsize=40, cmap='Blues', mincnt=1, alpha=0.6, label=label_A)
+            hb_new = ax.hexbin(x_new, y_new, gridsize=40, cmap='Oranges', mincnt=1, alpha=0.6, label=label_B)
+        else:
+            ax.scatter(x_old, y_old, s=4, alpha=0.25, color=color_A, label=label_A)
+            ax.scatter(x_new, y_new, s=4, alpha=0.25, color=color_B, label=label_B)
+
+        # Add median trend lines
+        xm_old, ym_old = bin_median_trend(x_old, y_old)
+        if xm_old is not None:
+            ax.plot(xm_old, ym_old, linewidth=2.5, color=color_A, label=f"{label_A} median")
+        xm_new, ym_new = bin_median_trend(x_new, y_new)
+        if xm_new is not None:
+            ax.plot(xm_new, ym_new, linewidth=2.5, color=color_B, label=f"{label_B} median")
+
+        ax.set_xlabel("log10(q_elems [MPa])")
+        ax.set_ylabel(f"log10({rate_field} [1/s])")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best")
+
+        # Time series plot: rate comparison over time (mean values)
+        fig3, ax3 = plt.subplots(1, 1, figsize=(10, 4))
+        ax3.set_title(f"Mean {rate_label} strain-rate over time - {tag}")
+
+        r_old_mean = np.array([np.nanmean(r) for r in r_old_list])
+        r_new_mean = np.array([np.nanmean(r) for r in r_new_list])
+
+        ax3.semilogy(r_old_t / DAY, np.maximum(r_old_mean, 1e-30), linewidth=1.8, color=color_A, label=label_A)
+        ax3.semilogy(r_new_t / DAY, np.maximum(r_new_mean, 1e-30), linewidth=1.8, color=color_B, label=label_B)
+        ax3.axvline(target_t / DAY, color="#d62728", linestyle="--", alpha=0.7, label=f"Selected peak")
+        ax3.set_xlabel("Time (days)")
+        ax3.set_ylabel("Mean eq strain-rate (1/s)")
+        ax3.grid(True, alpha=0.3)
+        ax3.legend(loc="best")
+    else:
+        print("[INFO] No strain rate field found, scatter/timeseries plots skipped")
 
     return fig, fig2, fig3, tag
 
@@ -301,29 +321,32 @@ def main():
     case_old, meta_old = pick_case_for_scenario(all_cases, select_base, SCEN_OLD)
     case_new, _ = pick_case_for_scenario(all_cases, select_base, SCEN_NEW)
 
-    print(f"\n[INFO] OLD case: {case_old}")
-    print(f"[INFO] NEW case: {case_new}")
+    print(f"\n[INFO] {SCEN_OLD} case: {case_old}")
+    print(f"[INFO] {SCEN_NEW} case: {case_new}")
 
     fig, fig2, fig3, tag = plot_old_vs_new(case_old, case_new, meta_old, args.pick_peak, args.hexbin)
 
-    p1 = os.path.join(out_dir, f"disloc_effect_scatter_{tag}_peak={args.pick_peak}.png")
-    p2 = os.path.join(out_dir, f"disloc_effect_pressure_{tag}_peak={args.pick_peak}.png")
-    p3 = os.path.join(out_dir, f"disloc_effect_timeseries_{tag}.png")
+    p1 = os.path.join(out_dir, f"scenario_compare_scatter_{tag}_peak={args.pick_peak}.png")
+    p2 = os.path.join(out_dir, f"scenario_compare_pressure_{tag}_peak={args.pick_peak}.png")
+    p3 = os.path.join(out_dir, f"scenario_compare_timeseries_{tag}.png")
 
-    fig.savefig(p1, dpi=args.dpi, bbox_inches="tight")
+    if fig is not None:
+        fig.savefig(p1, dpi=args.dpi, bbox_inches="tight")
+        print(f"\n[SAVED] {p1}")
     fig2.savefig(p2, dpi=args.dpi, bbox_inches="tight")
-    fig3.savefig(p3, dpi=args.dpi, bbox_inches="tight")
-
-    print(f"\n[SAVED] {p1}")
     print(f"[SAVED] {p2}")
-    print(f"[SAVED] {p3}")
+    if fig3 is not None:
+        fig3.savefig(p3, dpi=args.dpi, bbox_inches="tight")
+        print(f"[SAVED] {p3}")
 
     if args.show:
         plt.show()
 
-    plt.close(fig)
+    if fig is not None:
+        plt.close(fig)
     plt.close(fig2)
-    plt.close(fig3)
+    if fig3 is not None:
+        plt.close(fig3)
 
 
 if __name__ == "__main__":
