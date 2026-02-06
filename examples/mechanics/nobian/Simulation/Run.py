@@ -44,12 +44,14 @@ EQUILIBRIUM_DT_HOURS = 0.5
 # ── CAVERN SELECTION ───────────────────────────────────────────────────────────
 # CAVERN_TYPE: Choose one of:
 #   Standard shapes (with CAVERN_SIZE 600 or 1200):
-#     "regular"      - Standard cylindrical cavern
-#     "tilted"       - Tilted/inclined cavern
-#     "teardrop"     - Teardrop-shaped cavern
-#     "asymmetric"   - Asymmetric cavern geometry
-#     "irregular"    - Irregular/complex shape
-#     "multichamber" - Multi-chamber cavern
+#     "regular"        - Standard cylindrical cavern
+#     "tilted"         - Tilted/inclined cavern
+#     "teardrop"       - Teardrop-shaped cavern
+#     "asymmetric"     - Asymmetric cavern geometry
+#     "irregular"      - Irregular/complex shape
+#     "multichamber"   - Multi-chamber cavern
+#     "fastleached"    - Fast-leached rough barrel shape
+#     "tubingfailure"  - Tubing failure (exaggerated multi-chamber)
 #   Special caverns (CAVERN_SIZE is ignored):
 #     "A5"           - Zuidwending cavern A5 (~1.000.000k m³, depth 1140-1510m)
 
@@ -79,6 +81,23 @@ STEPPED_N_STEPS = 6
 #   When USE_LEACHING = True: Leaching ends at this fraction
 #   When USE_LEACHING = False: Equilibrium pressure for sinus/linear derived from this
 LEACHING_END_FRACTION = 0.40
+
+# ── DEBRINING PHASE SETTINGS (only used when USE_LEACHING = True) ────────────
+# After leaching, the cavern undergoes debrining where brine is displaced.
+# During debrining, pressure stays constant at the leaching end pressure.
+
+# DEBRINING_DAYS: Duration of debrining phase in days (constant pressure)
+#   Set to 0 to skip debrining phase
+DEBRINING_DAYS = 30
+
+# ── TRANSITION SETTINGS ──────────────────────────────────────────────────────
+# RAMP_UP_HOURS: Duration of smooth fade-in at the start of the operational phase.
+#   The operational pressure scheme starts dampened and gradually reaches full
+#   amplitude over this period, using a smooth cosine transition.
+#   Prevents abrupt pressure changes after leaching/equilibrium.
+#   Applies to both leaching and equilibrium initialization modes.
+#   Set to 0 to disable (not recommended).
+RAMP_UP_HOURS = 336 # 2 weeks
 
 # ── PRESSURE SCENARIO ──────────────────────────────────────────────────────────
 # PRESSURE_SCENARIO: Choose one of:
@@ -146,7 +165,7 @@ T_GAS_AMPLITUDE_C = 20.0
 # AUTOMATIC CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-VALID_SHAPES = ["regular", "tilted", "teardrop", "asymmetric", "irregular", "multichamber"]
+VALID_SHAPES = ["regular", "tilted", "teardrop", "asymmetric", "irregular", "multichamber", "fastleached", "tubingfailure"]
 VALID_SPECIAL_CAVERNS = ["A5"]
 VALID_SIZES = [600, 1200]
 VALID_SCENARIOS = ["sinus", "linear", "irregular", "csv"]
@@ -168,6 +187,10 @@ Z_MAX_BY_CAVERN = {
     "asymmetric1200": 422.76,
     "irregular1200": 402.21,
     "multichamber1200": 420.82,
+    "fastleached600": 378.19,
+    "fastleached1200": 400.08,
+    "tubingfailure600": 420.90,
+    "tubingfailure1200": 444.53,
     # Zuidwending A5
     "A5": 515.0,
 }
@@ -186,6 +209,10 @@ CAVERN_HEIGHT_BY_TYPE = {
     "asymmetric1200": 210.0,
     "irregular1200": 195.0,
     "multichamber1200": 190.0,
+    "fastleached600": 170.0,
+    "fastleached1200": 215.0,
+    "tubingfailure600": 182.0,
+    "tubingfailure1200": 230.0,
     "A5": 370.0,
 }
 
@@ -213,6 +240,10 @@ GRID_FOLDERS = {
     "asymmetric1200": "cavern_asymmetric_1200_3D",
     "irregular1200": "cavern_irregular_1200_3D",
     "multichamber1200": "cavern_multichamber_1200_3D",
+    "fastleached600": "cavern_fastleached_600_3D",
+    "fastleached1200": "cavern_fastleached_1200_3D",
+    "tubingfailure600": "cavern_tubingfailure_600_3D",
+    "tubingfailure1200": "cavern_tubingfailure_1200_3D",
     "A5": "cavern_A5_3D",
 }
 
@@ -260,6 +291,10 @@ def validate_configuration():
             errors.append(f"STEPPED_N_STEPS must be at least 2, got {STEPPED_N_STEPS}")
         if LEACHING_END_FRACTION <= 0.0 or LEACHING_END_FRACTION >= 1.0:
             errors.append(f"LEACHING_END_FRACTION must be between 0 and 1 (exclusive), got {LEACHING_END_FRACTION}")
+        if DEBRINING_DAYS < 0:
+            errors.append(f"DEBRINING_DAYS must be non-negative, got {DEBRINING_DAYS}")
+        if RAMP_UP_HOURS < 0:
+            errors.append(f"RAMP_UP_HOURS must be non-negative, got {RAMP_UP_HOURS}")
     else:
         if EQUILIBRIUM_HOURS <= 0:
             errors.append(f"EQUILIBRIUM_HOURS must be positive, got {EQUILIBRIUM_HOURS}")
@@ -353,6 +388,50 @@ def build_leaching_pressure_schedule(tc, *, p_start_pa, p_end_pa, mode, n_steps=
         raise ValueError(f"Unknown leaching mode: {mode}")
 
     return t_vals, p_vals
+
+
+def prepend_debrining(t_pressure, p_pressure, *, p_leach_end_pa, debrining_days):
+    """Prepend debrining plateau to operational schedule.
+
+    After leaching, pressure stays constant during debrining before the
+    operational phase begins.
+    """
+    debrining_s = debrining_days * 24.0 * 3600.0
+
+    if debrining_s <= 0.0:
+        return t_pressure, p_pressure
+
+    t_pre = [0.0, debrining_s]
+    p_pre = [p_leach_end_pa, p_leach_end_pa]
+
+    # Shift operation schedule and skip its first point (debrining end replaces it)
+    t_shifted = [t + debrining_s for t in t_pressure[1:]]
+    p_shifted = list(p_pressure[1:])
+
+    return t_pre + t_shifted, p_pre + p_shifted
+
+
+def apply_fade_in(t_pressure, p_pressure, *, p_start_pa, fade_in_hours):
+    """Apply smooth fade-in to the beginning of a pressure schedule.
+
+    Blends from p_start_pa to the actual schedule values using a smooth
+    cosine transition over fade_in_hours. This dampens initial pressure
+    swings and prevents abrupt pressure changes.
+
+    p(t) = (1 - alpha) * p_start + alpha * p_operational(t)
+    where alpha = 0.5 * (1 - cos(pi * t / T_fade))
+    """
+    if fade_in_hours <= 0.0:
+        return
+
+    fade_in_s = fade_in_hours * 3600.0
+
+    for i in range(len(t_pressure)):
+        t = t_pressure[i]
+        if t >= fade_in_s:
+            break
+        alpha = 0.5 * (1.0 - math.cos(math.pi * t / fade_in_s))
+        p_pressure[i] = (1.0 - alpha) * p_start_pa + alpha * p_pressure[i]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -937,6 +1016,10 @@ def main():
             print(f"    Duration:       {LEACHING_DAYS} days")
             print(f"    P_start:        {p_lithostatic_mpa:.2f} MPa (lithostatic)")
             print(f"    P_end:          {p_leach_end_mpa:.2f} MPa ({LEACHING_END_FRACTION*100:.0f}%)")
+            if DEBRINING_DAYS > 0 or RAMP_UP_HOURS > 0:
+                print("  DEBRINING/RAMP-UP:")
+                print(f"    Debrining:      {DEBRINING_DAYS} days at {p_leach_end_mpa:.2f} MPa")
+                print(f"    Ramp-up:        {RAMP_UP_HOURS} hours")
         else:
             print("  EQUILIBRIUM PHASE:")
             print(f"    Duration:       {EQUILIBRIUM_HOURS} hours")
@@ -1142,7 +1225,8 @@ def main():
     else:
         mom_eq.expect_vp_state = False
 
-    tc_operation = sf.TimeController(
+    # Build cycling schedule using a temporary tc for just the operational cycling period
+    tc_cycling = sf.TimeController(
         dt=dt_hours,
         initial_time=0.0,
         final_time=OPERATION_DAYS * 24.0,
@@ -1159,7 +1243,7 @@ def main():
             base_pressures_MPa = [P_MIN_MPA, P_MAX_MPA, P_MAX_MPA, P_MIN_MPA, P_MIN_MPA]
 
         t_pressure, p_pressure = build_linear_schedule_multi(
-            tc_operation,
+            tc_cycling,
             base_times_h, base_pressures_MPa,
             days=OPERATION_DAYS,
             mode=SCHEDULE_MODE,
@@ -1175,7 +1259,7 @@ def main():
         p_ampl = P_AMPLITUDE_MPA * ut.MPa
 
         t_pressure, p_pressure = build_sinus_schedule_multi(
-            tc_operation,
+            tc_cycling,
             p_mean=p_mean, p_ampl=p_ampl,
             days=OPERATION_DAYS, mode=SCHEDULE_MODE,
             daily_period_hours=24.0,
@@ -1197,7 +1281,7 @@ def main():
             base_pressures_MPa = base_pressures_orig
 
         t_pressure, p_pressure = build_irregular_schedule_multi(
-            tc_operation,
+            tc_cycling,
             base_waypoints_h=base_waypoints_h,
             base_pressures_MPa=base_pressures_MPa,
             days=OPERATION_DAYS, mode=SCHEDULE_MODE,
@@ -1208,7 +1292,7 @@ def main():
 
     elif PRESSURE_SCENARIO == "csv":
         t_pressure, p_pressure = build_csv_pressure_schedule(
-            tc_operation,
+            tc_cycling,
             csv_file=CSV_FILE_PATH,
             days=OPERATION_DAYS,
             mode=SCHEDULE_MODE,
@@ -1229,15 +1313,47 @@ def main():
                 new_max = max(p_pressure) / ut.MPa
                 print(f"[CSV] Shifted profile: new range [{new_min:.2f}, {new_max:.2f}] MPa")
 
-        apply_startup_ramp(
-            t_pressure, p_pressure,
-            p_start_pa=p_leach_end if USE_LEACHING else p_gas,
-            ramp_hours=RAMP_HOURS,
-            dt_hours=dt_hours
-        )
+        # Only apply CSV startup ramp if fade-in is not active
+        if RAMP_UP_HOURS <= 0:
+            apply_startup_ramp(
+                t_pressure, p_pressure,
+                p_start_pa=p_leach_end if USE_LEACHING else p_gas,
+                ramp_hours=RAMP_HOURS,
+                dt_hours=dt_hours
+            )
 
     else:
         raise ValueError(f"Unknown PRESSURE_SCENARIO: {PRESSURE_SCENARIO}")
+
+    # Apply smooth fade-in to dampen initial pressure swings
+    if RAMP_UP_HOURS > 0:
+        p_fade_start = p_leach_end if USE_LEACHING else p_gas
+        apply_fade_in(t_pressure, p_pressure,
+                      p_start_pa=p_fade_start,
+                      fade_in_hours=RAMP_UP_HOURS)
+        if MPI.COMM_WORLD.rank == 0:
+            print(f"[TRANSITION] Fade-in: {RAMP_UP_HOURS:.1f} hours from {p_fade_start/ut.MPa:.2f} MPa")
+
+    # Prepend debrining plateau when using leaching
+    extra_hours = 0.0
+    if USE_LEACHING and DEBRINING_DAYS > 0:
+        extra_hours = DEBRINING_DAYS * 24.0
+        t_pressure, p_pressure = prepend_debrining(
+            t_pressure, p_pressure,
+            p_leach_end_pa=p_leach_end,
+            debrining_days=DEBRINING_DAYS
+        )
+        if MPI.COMM_WORLD.rank == 0:
+            print(f"[TRANSITION] Debrining: {DEBRINING_DAYS} days at {p_leach_end_mpa:.2f} MPa")
+
+    # Create tc_operation with full duration (including debrining)
+    total_operation_hours = OPERATION_DAYS * 24.0 + extra_hours
+    tc_operation = sf.TimeController(
+        dt=dt_hours,
+        initial_time=0.0,
+        final_time=total_operation_hours,
+        time_unit="hour"
+    )
 
     # Operation BCs
     bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_operation.t_final])
@@ -1271,6 +1387,8 @@ def main():
         "cavern_key": config["cavern_key"],
         "cavern_label": config["cavern_label"],
         "use_leaching": USE_LEACHING,
+        "debrining_days": DEBRINING_DAYS if USE_LEACHING else 0,
+        "ramp_up_hours": RAMP_UP_HOURS if USE_LEACHING else 0,
         "scenario": PRESSURE_SCENARIO,
         "mode": SCHEDULE_MODE,
         "n_cycles": N_CYCLES,
@@ -1376,7 +1494,8 @@ def main():
         print("[OPERATION] Complete.")
         print("=" * 70)
         print("SIMULATION FINISHED")
-        total_days = (LEACHING_DAYS if USE_LEACHING else EQUILIBRIUM_HOURS/24) + OPERATION_DAYS
+        extra_d = DEBRINING_DAYS if USE_LEACHING else 0.0
+        total_days = (LEACHING_DAYS if USE_LEACHING else EQUILIBRIUM_HOURS/24) + extra_d + OPERATION_DAYS
         print(f"  Total simulated time: {total_days:.1f} days")
         print(f"  Output folder: {output_folder}")
         print("=" * 70)

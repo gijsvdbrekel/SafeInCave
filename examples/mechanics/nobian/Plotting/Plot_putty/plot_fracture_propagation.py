@@ -26,7 +26,7 @@ ROOT = r"/home/gvandenbrekel/SafeInCave/examples/mechanics/nobian/Simulation/out
 SELECT = {
     "caverns": None,
     "pressure": "sinus",
-    "scenario": ["full", "full_md"],
+    "scenario": ["full_minus_ps", "md_only"],
     "n_cycles": None,
     "operation_days": None,
     "case_contains": None,
@@ -36,7 +36,7 @@ SELECT = {
 ONE_CASE_PER_SERIES = True
 
 # PLOT_MODE: "combined" or "separate"
-PLOT_MODE = "combined"
+PLOT_MODE = "seperate"
 
 # ── RADIAL SAMPLING ────────────────────────────────────────────────────────────
 # RADIAL_DISTANCES: Distances from cavern wall into the rock (meters)
@@ -68,31 +68,33 @@ HOUR = 3600.0
 DAY = 24.0 * HOUR
 
 SCENARIO_COLORS = {
-    "disloc_old_only":  "#1f77b4",
-    "disloc_new_only":  "#ff7f0e",
-    "desai_only":       "#2ca02c",
-    "full_minus_desai": "#d62728",
-    "full":             "#9467bd",
-    "md_only":          "#17becf",
-    "md_steady_only":   "#bcbd22",
-    "full_md":          "#e377c2",
-    "interlayer":       "#7f7f7f",
-    "nointerlayer":     "#8c564b",
-    None:               "#333333",
+    "disloc_old_only":        "#1f77b4",
+    "disloc_new_only":        "#ff7f0e",
+    "desai_only":             "#2ca02c",
+    "full_minus_desai":       "#d62728",
+    "full":                   "#9467bd",
+    "full_minus_ps": "#d62728",   # red
+    "md_only":                "#1f77b4",   # blue
+    "md_steady_only":         "#bcbd22",
+    "full_md":                "#e377c2",
+    "interlayer":             "#7f7f7f",
+    "nointerlayer":           "#8c564b",
+    None:                     "#333333",
 }
 
 SCENARIO_LINESTYLES = {
-    "disloc_old_only":  "-",
-    "disloc_new_only":  "--",
-    "desai_only":       "-.",
-    "full_minus_desai": ":",
-    "full":             "-",
-    "md_only":          "-",
-    "md_steady_only":   "--",
-    "full_md":          "-.",
-    "interlayer":       "-",
-    "nointerlayer":     "--",
-    None:               "-",
+    "disloc_old_only":        "-",
+    "disloc_new_only":        "--",
+    "desai_only":             "-.",
+    "full_minus_desai":       ":",
+    "full":                   "-",
+    "full_minus_ps": "-",
+    "md_only":                "-",
+    "md_steady_only":         "--",
+    "full_md":                "-.",
+    "interlayer":             "-",
+    "nointerlayer":           "--",
+    None:                     "-",
 }
 
 # Probe location colors
@@ -109,16 +111,17 @@ PROBE_COLORS = {
 # FOS COMPUTATION FUNCTIONS (from stress tensor with Lode angle)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def compute_p_q_psi_from_sigma(sig_voigt):
+def compute_psi_from_sigma(sig_voigt):
     """
-    Compute mean stress p, von Mises stress q, and Lode angle psi from stress tensor.
+    Compute only the Lode angle psi from stress tensor.
+
+    The Lode angle requires the third invariant J3 which cannot be recovered
+    from p and q alone, so it must be computed directly from the stress tensor.
 
     sig_voigt: array of shape (..., 6) in Voigt notation [s11, s22, s33, s12, s13, s23]
                (compression positive convention)
 
     Returns:
-        p: mean stress (MPa)
-        q: von Mises stress (MPa)
         psi: Lode angle (radians, range [-pi/6, pi/6])
     """
     s11 = sig_voigt[..., 0]
@@ -140,9 +143,6 @@ def compute_p_q_psi_from_sigma(sig_voigt):
     J2 = 0.5 * (dev11**2 + dev22**2 + dev33**2) + s12**2 + s13**2 + s23**2
     J2 = np.maximum(J2, 1e-30)  # Avoid numerical issues
 
-    # Von Mises stress
-    q = np.sqrt(3.0 * J2)
-
     # J3 = det(deviatoric stress tensor)
     J3 = (dev11 * (dev22 * dev33 - s23**2)
           - s12 * (s12 * dev33 - s23 * s13)
@@ -154,7 +154,7 @@ def compute_p_q_psi_from_sigma(sig_voigt):
     arg = np.clip(arg, -1.0, 1.0)
     psi = (1.0 / 3.0) * np.arcsin(arg)
 
-    return p, q, psi
+    return psi
 
 
 def q_dil_devries(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):
@@ -236,11 +236,19 @@ def path_geom_msh(case_folder):
 def path_sig_xdmf(case_folder):
     return os.path.join(case_folder, "operation", "sig", "sig.xdmf")
 
+def path_p_xdmf(case_folder):
+    return os.path.join(case_folder, "operation", "p_elems", "p_elems.xdmf")
+
+def path_q_xdmf(case_folder):
+    return os.path.join(case_folder, "operation", "q_elems", "q_elems.xdmf")
+
 def case_has_required_files(case_path: str) -> bool:
     return all(os.path.isfile(p) for p in [
         path_u_xdmf(case_path),
         path_geom_msh(case_path),
         path_sig_xdmf(case_path),
+        path_p_xdmf(case_path),
+        path_q_xdmf(case_path),
     ])
 
 
@@ -408,42 +416,81 @@ def generate_radial_sample_points(wall_points, probes, normals, radial_distances
 # STRESS DATA READING
 # ══════════════════════════════════════════════════════════════════════════════
 
+def tensor33_to_voigt6(sig33):
+    """
+    Convert (...,3,3) tensor to (...,6) Voigt: [s11,s22,s33,s12,s13,s23]
+    """
+    s11 = sig33[..., 0, 0]
+    s22 = sig33[..., 1, 1]
+    s33 = sig33[..., 2, 2]
+    s12 = sig33[..., 0, 1]
+    s13 = sig33[..., 0, 2]
+    s23 = sig33[..., 1, 2]
+    return np.stack([s11, s22, s33, s12, s13, s23], axis=-1)
+
+
 def read_stress_at_points(case_folder, sample_points):
     """
-    Read stress tensor values at all sample points over time.
-    Computes p, q, and Lode angle (psi) from the stress tensor.
+    Read stress state at all sample points over time.
+
+    Uses STORED p_elems and q_elems (smoothed values written during simulation)
+    for consistency with the solver output. The Lode angle psi is computed
+    directly from the stress tensor since it requires J3 which cannot be
+    recovered from p and q alone.
 
     Returns:
         time_days: array of time values in days
         stress_data: dict[probe_name] -> dict[distance] -> (p_array, q_array, psi_array)
     """
-    sig_path = path_sig_xdmf(case_folder)
+    # Read stored p_elems and q_elems (smoothed values from simulation)
+    p_path = path_p_xdmf(case_folder)
+    q_path = path_q_xdmf(case_folder)
 
-    # Read stress tensor (6 components in Voigt notation)
-    points_sig, time_list, sig_vals = post.read_cell_vector(sig_path)
+    centroids_p, time_list_p, p_elems = post.read_cell_scalar(p_path)  # (nT, nC)
+    centroids_q, time_list_q, q_elems = post.read_cell_scalar(q_path)  # (nT, nC)
+
+    # Read stress tensor for Lode angle computation
+    sig_path = path_sig_xdmf(case_folder)
+    centroids_sig, time_list_sig, sig33 = post.read_cell_tensor(sig_path)  # (nT, nC, 3, 3)
+
+    # Synchronize time steps (use the minimum common length)
+    n_times = min(len(time_list_p), len(time_list_q), len(time_list_sig))
+    time_list = time_list_p[:n_times]
+    p_elems = p_elems[:n_times]
+    q_elems = q_elems[:n_times]
+    sig33 = sig33[:n_times]
 
     time_days = np.array(time_list) / DAY
-    n_times = len(time_list)
 
-    # Convert stress to MPa with compression positive
-    # SafeInCave stores stress with tension positive, so negate
-    sig_vals_MPa = -sig_vals / MPA
+    # Convert p to compression-positive convention and to MPa:
+    # SafeInCave stores tension-positive => negate
+    p_elems_MPa = -p_elems / MPA
+    q_elems_MPa = q_elems / MPA  # q is always positive (magnitude)
+
+    # Convert stress tensor to compression-positive for psi calculation
+    sig33_MPa = -sig33 / MPA
 
     stress_data = {}
     for probe_name, dist_points in sample_points.items():
         stress_data[probe_name] = {}
         for dist, xyz in dist_points:
-            idx = post.find_closest_point(xyz, points_sig)
+            # Find closest cell for each field (should be same cell, but be robust)
+            idx_p = post.find_closest_point(xyz, centroids_p)
+            idx_sig = post.find_closest_point(xyz, centroids_sig)
 
-            # Extract stress tensor at this point over time (shape: n_times x 6)
-            sig_point = sig_vals_MPa[:, idx, :]
+            # Get stored p and q values (smoothed)
+            p = p_elems_MPa[:, idx_p]
+            q = q_elems_MPa[:, idx_p]
 
-            # Compute p, q, psi from stress tensor
-            p, q, psi = compute_p_q_psi_from_sigma(sig_point)
+            # Compute psi from stress tensor (requires J3)
+            sig_point33 = sig33_MPa[:, idx_sig, :, :]
+            sig_point6 = tensor33_to_voigt6(sig_point33)
+            psi = compute_psi_from_sigma(sig_point6)
 
             stress_data[probe_name][dist] = (p, q, psi)
 
     return time_days, stress_data
+
 
 
 def compute_FOS_data(time_days, stress_data):
@@ -648,7 +695,7 @@ def plot_single_case(case_meta, wall_points, sample_points, time_days, stress_da
     ax_pq.legend(loc='upper left', fontsize=8)
 
     fig.suptitle(f'Fracture Propagation Analysis (FOS): {case_label}\n'
-                 f'(De Vries criterion with Lode angle, Radial distances: {RADIAL_DISTANCES} m)',
+                 f'(De Vries criterion, p/q from stored fields, psi from σ, Radial distances: {RADIAL_DISTANCES} m)',
                  fontsize=12, fontweight='bold')
     fig.tight_layout(rect=[0, 0, 1, 0.95])
 
@@ -667,6 +714,8 @@ def main():
     print(f"  Radial distances:  {RADIAL_DISTANCES} m")
     print(f"  FOS threshold:     {FOS_THRESHOLD} (FOS < threshold = dilating)")
     print(f"  Criterion:         De Vries 2005 with Lode angle")
+    print(f"  p, q source:       Stored p_elems/q_elems (smoothed)")
+    print(f"  psi source:        Computed from stress tensor (J3)")
     print(f"  Plot mode:         {PLOT_MODE}")
     print("=" * 70)
 
@@ -706,7 +755,7 @@ def main():
                 wall_points, probes, normals, RADIAL_DISTANCES
             )
 
-            # Read stress data (p, q, psi from stress tensor)
+            # Read stress data (p, q from stored fields; psi from stress tensor)
             time_days, stress_data = read_stress_at_points(folder, sample_points)
 
             # Compute Factor of Safety

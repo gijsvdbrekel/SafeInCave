@@ -18,14 +18,14 @@ DAY  = 24.0 * HOUR
 # =============================================================================
 
 # --- Output folder containing simulation results ---
-ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/output"
+ROOT = r"/home/gvandenbrekel/SafeInCave/examples/mechanics/nobian/Simulation/output"
 
 # --- Case selection filters ---
 # Set any filter to None to include all values for that parameter
 SELECT = {
     "caverns": ["Regular"],                    # e.g. ["Regular", "Tilted"] or None for all
     "pressure": "sinus",                       # "sinus", "linear", "irregular", "csv_profile", or None
-    "scenario": ["full", "full_minus_desai"],  # e.g. ["full", "desai_only"] or None
+    "scenario": ["full_md"],  # e.g. ["full", "desai_only"] or None
     "case_contains": None,                     # substring filter on case name, or None
 }
 
@@ -43,6 +43,8 @@ CAVERN_COLORS = {
     "Regular":       "#9467bd",   # purple
     "Teardrop":      "#8c564b",   # brown
     "Tilt":          "#e377c2",   # pink
+    "Fastleached":   "#17becf",   # cyan
+    "Tubingfailure": "#bcbd22",   # olive
 }
 
 SCENARIO_LINESTYLES = {
@@ -79,7 +81,7 @@ SCENARIO_COLORS = {
 
 
 # --- Ordering for legend ---
-CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
+CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "Fastleached", "Tubingfailure", "IrregularFine"]
 SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full",
                   "md_only", "md_steady_only", "full_md", "interlayer", "nointerlayer", None]
 
@@ -118,6 +120,26 @@ def pick_existing(*paths):
         if os.path.isfile(p):
             return p
     return None
+
+def path_p_xdmf(case_folder):
+    return os.path.join(case_folder, "operation", "p_elems", "p_elems.xdmf")
+
+def path_q_xdmf(case_folder):
+    return os.path.join(case_folder, "operation", "q_elems", "q_elems.xdmf")
+
+def load_p_q(case_folder):
+    """Load stored p_elems and q_elems (smoothed values from simulation)."""
+    p_path = path_p_xdmf(case_folder)
+    q_path = path_q_xdmf(case_folder)
+    if not os.path.isfile(p_path):
+        raise FileNotFoundError(f"Missing p_elems for {case_folder}")
+    if not os.path.isfile(q_path):
+        raise FileNotFoundError(f"Missing q_elems for {case_folder}")
+    _, t_p, p_elems = post.read_cell_scalar(p_path)
+    _, t_q, q_elems = post.read_cell_scalar(q_path)
+    # Synchronize time steps
+    n = min(len(t_p), len(t_q))
+    return np.asarray(t_p[:n], float), np.asarray(p_elems[:n], float), np.asarray(q_elems[:n], float)
 
 def load_sig(case_folder):
     sig_path = pick_existing(
@@ -222,33 +244,63 @@ def q_dil_rd(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):
     sqrtJ2_dil = num / denom
     return np.sqrt(3.0) * sqrtJ2_dil
 
-def compute_p_q_psi_from_sigma(sig_Pa, compression_positive=True):
+def compute_psi_from_sigma(sig_Pa, compression_positive=True):
+    """
+    Compute only the Lode angle psi from stress tensor.
+
+    The Lode angle requires the third invariant J3 which cannot be recovered
+    from p and q alone, so it must be computed directly from the stress tensor.
+    """
     sig = 0.5 * (sig_Pa + np.swapaxes(sig_Pa, -1, -2))
     sig_eff = -sig if compression_positive else sig
     vals = np.linalg.eigvalsh(sig_eff)
     s1, s2, s3 = vals[:, 2], vals[:, 1], vals[:, 0]
     I1 = s1 + s2 + s3
-    p_MPa = (I1 / 3.0) / MPA
     mean = I1 / 3.0
     s1d, s2d, s3d = s1 - mean, s2 - mean, s3 - mean
     J2 = (1.0/6.0) * ((s1d - s2d)**2 + (s2d - s3d)**2 + (s3d - s1d)**2)
     J3 = s1d * s2d * s3d
-    q_MPa = np.sqrt(3.0 * np.maximum(J2, 0.0)) / MPA
     J2_safe = np.maximum(J2, 1e-30)
     x = (3.0*np.sqrt(3.0)/2.0) * (J3 / (J2_safe**1.5))
     x = np.clip(x, -1.0, 1.0)
     theta = (1.0/3.0) * np.arccos(x)
     psi = theta - np.pi/6.0
-    return p_MPa, q_MPa, psi
+    return psi
 
-def compute_FOS(sig_vals, *, compression_positive=True, q_tol_MPa=1e-3):
-    nt, nc = sig_vals.shape[0], sig_vals.shape[1]
+def compute_FOS(p_elems, q_elems, sig_vals, *, compression_positive=True, q_tol_MPa=1e-3):
+    """
+    Compute Factor of Safety using stored p_elems/q_elems and psi from stress tensor.
+
+    Uses STORED p_elems and q_elems (smoothed values written during simulation)
+    for consistency with the solver output. The Lode angle psi is computed
+    directly from the stress tensor since it requires J3.
+
+    Parameters:
+        p_elems: stored mean stress (Pa, tension-positive convention) shape (nt, nc)
+        q_elems: stored von Mises stress (Pa) shape (nt, nc)
+        sig_vals: stress tensor (Pa) shape (nt, nc, 3, 3)
+        compression_positive: if True, convert to compression-positive convention
+        q_tol_MPa: minimum q value to avoid division by zero
+    """
+    nt, nc = p_elems.shape[0], p_elems.shape[1]
     FOS = np.full((nt, nc), np.inf, dtype=float)
+
     for it in range(nt):
-        p_MPa, q_MPa, psi = compute_p_q_psi_from_sigma(sig_vals[it], compression_positive=compression_positive)
+        # Use stored p and q, convert to compression-positive convention and MPa
+        # SafeInCave stores tension-positive => negate p
+        p_MPa = -p_elems[it] / MPA
+        q_MPa = q_elems[it] / MPA  # q is always positive (magnitude)
+
+        # Compute psi from stress tensor (requires J3)
+        psi = compute_psi_from_sigma(sig_vals[it], compression_positive=compression_positive)
+
+        # Compute dilatancy boundary
         q_dil = q_dil_rd(p_MPa, psi)
+
+        # Compute FOS
         mask = q_MPa >= float(q_tol_MPa)
         FOS[it, mask] = q_dil[mask] / q_MPa[mask]
+
     FOS[~np.isfinite(FOS)] = np.inf
     return np.clip(FOS, 0.0, 1e6)
 
@@ -310,6 +362,8 @@ def print_config_summary():
     print(f"  Pressure:    {SELECT.get('pressure', 'all')}")
     print(f"  Scenario:    {SELECT.get('scenario', 'all')}")
     print(f"  Contains:    {SELECT.get('case_contains', 'any')}")
+    print(f"  p, q source: Stored p_elems/q_elems (smoothed)")
+    print(f"  psi source:  Computed from stress tensor (J3)")
     print("=" * 60)
 
 
@@ -328,8 +382,20 @@ def plot_combined(cases):
         label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
 
         try:
-            time_list, sig_vals, sig_path = load_sig(c["case_path"])
-            FOS = compute_FOS(sig_vals, compression_positive=COMPRESSION_POSITIVE, q_tol_MPa=Q_TOL_MPA)
+            # Load stored p_elems and q_elems (smoothed values from simulation)
+            time_list_pq, p_elems, q_elems = load_p_q(c["case_path"])
+            # Load stress tensor for psi calculation
+            time_list_sig, sig_vals, sig_path = load_sig(c["case_path"])
+
+            # Synchronize time steps
+            n_times = min(len(time_list_pq), len(time_list_sig))
+            time_list = time_list_pq[:n_times]
+            p_elems = p_elems[:n_times]
+            q_elems = q_elems[:n_times]
+            sig_vals = sig_vals[:n_times]
+
+            # Compute FOS using stored p/q and psi from sigma
+            FOS = compute_FOS(p_elems, q_elems, sig_vals, compression_positive=COMPRESSION_POSITIVE, q_tol_MPa=Q_TOL_MPA)
 
             if WRITE_XDMF:
                 write_fos_xdmf_from_sig(c["case_path"], sig_path, time_list, FOS)
@@ -392,8 +458,20 @@ def plot_separate(cases):
         label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
 
         try:
-            time_list, sig_vals, sig_path = load_sig(c["case_path"])
-            FOS = compute_FOS(sig_vals, compression_positive=COMPRESSION_POSITIVE, q_tol_MPa=Q_TOL_MPA)
+            # Load stored p_elems and q_elems (smoothed values from simulation)
+            time_list_pq, p_elems, q_elems = load_p_q(c["case_path"])
+            # Load stress tensor for psi calculation
+            time_list_sig, sig_vals, sig_path = load_sig(c["case_path"])
+
+            # Synchronize time steps
+            n_times = min(len(time_list_pq), len(time_list_sig))
+            time_list = time_list_pq[:n_times]
+            p_elems = p_elems[:n_times]
+            q_elems = q_elems[:n_times]
+            sig_vals = sig_vals[:n_times]
+
+            # Compute FOS using stored p/q and psi from sigma
+            FOS = compute_FOS(p_elems, q_elems, sig_vals, compression_positive=COMPRESSION_POSITIVE, q_tol_MPa=Q_TOL_MPA)
 
             if WRITE_XDMF:
                 write_fos_xdmf_from_sig(c["case_path"], sig_path, time_list, FOS)
@@ -446,13 +524,15 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
     all_cases = detect_layout_and_collect_cases(ROOT)
-    # keep only cases that have sig + mesh for slices
+    # keep only cases that have sig + mesh + p_elems + q_elems
     kept = []
     for m in all_cases:
         case_path = m["case_path"]
         sig_ok = os.path.isfile(os.path.join(case_path, "operation", "sig", "sig.xdmf")) or os.path.isfile(os.path.join(case_path, "operation", "sig.xdmf"))
         msh_ok = os.path.isfile(os.path.join(case_path, "operation", "mesh", "geom.msh"))
-        if sig_ok and msh_ok:
+        p_ok = os.path.isfile(path_p_xdmf(case_path))
+        q_ok = os.path.isfile(path_q_xdmf(case_path))
+        if sig_ok and msh_ok and p_ok and q_ok:
             kept.append(m)
     all_cases = kept
 

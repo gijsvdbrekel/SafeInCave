@@ -19,7 +19,7 @@ from case_index import (
 
 # ── OUTPUT FOLDER ──────────────────────────────────────────────────────────────
 # ROOT: Path to the output folder containing simulation results
-ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/output"
+ROOT = r"/home/gvandenbrekel/SafeInCave/examples/mechanics/nobian/Simulation/output"
 
 # ── CASE SELECTION ─────────────────────────────────────────────────────────────
 # SELECT: Filter which cases to plot (set to None to include all)
@@ -35,7 +35,7 @@ ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/
 SELECT = {
     "caverns": None,                                      # e.g. ["Regular", "Irregular"]
     "pressure": "sinus",                                  # "sinus"/"irregular"/"linear"/"csv_profile"
-    "scenario": ["full", "full_minus_desai"],   # from ScenarioTest.py
+    "scenario": ["full_minus_ps", "md_only"],
     "n_cycles": None,
     "operation_days": None,
     "case_contains": None,
@@ -57,7 +57,7 @@ SHOW_DILATANCY = ["ratigan_027", "spiers", "devries_comp", "devries_ext"]
 
 # ── OUTPUT SETTINGS ────────────────────────────────────────────────────────────
 OUT_DIR = os.path.join(ROOT, "_figures")
-SHOW = False       # Set True to display plots interactively (requires GUI)
+SHOW = True       # Set True to display plots interactively (requires GUI)
 DPI = 180
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -73,9 +73,10 @@ HOUR = 3600.0
 DAY = 24.0 * HOUR
 
 # Ordering for consistent legend/colors
-CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
+CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "Fastleached", "Tubingfailure", "IrregularFine"]
 SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full",
-                  "md_only", "md_steady_only", "full_md", "interlayer", "nointerlayer", None]
+                  "full_minus_ps", "md_only", "md_steady_only", "full_md",
+                  "interlayer", "nointerlayer", None]
 
 # Color and linestyle definitions
 CAVERN_COLORS = {
@@ -87,38 +88,42 @@ CAVERN_COLORS = {
     "Asymmetric": "#9467bd",    # purple
     "Multichamber": "#8c564b",  # brown
     "IrregularFine": "#e377c2", # pink
+    "Fastleached":   "#17becf", # cyan
+    "Tubingfailure": "#bcbd22", # olive
 }
 
 SCENARIO_LINESTYLES = {
-    "disloc_old_only": "-",
-    "disloc_new_only": "--",
-    "desai_only": "-.",
-    "full_minus_desai": "-",   # solid
-    "full": "-",               # solid
+    "disloc_old_only":        "-",
+    "disloc_new_only":        "--",
+    "desai_only":             "-.",
+    "full_minus_desai":       "-",
+    "full":                   "-",
+    "full_minus_ps": "-",
     # Munson-Dawson scenarios
-    "md_only":          "-",
-    "md_steady_only":   "--",
-    "full_md":          "-",
+    "md_only":                "-",
+    "md_steady_only":         "-",
+    "full_md":                "-",
     # Interlayer scenarios
-    "interlayer":       "-",
-    "nointerlayer":     "--",
-    None: "-",
+    "interlayer":             "-",
+    "nointerlayer":           "--",
+    None:                     "-",
 }
 
 SCENARIO_COLORS = {
-    "disloc_old_only":  "#1f77b4",   # blue
-    "disloc_new_only":  "#ff7f0e",   # orange
-    "desai_only":       "#2ca02c",   # green
-    "full_minus_desai": "#2ca02c",   # green
-    "full":             "#d62728",   # red
+    "disloc_old_only":        "#1f77b4",   # blue
+    "disloc_new_only":        "#ff7f0e",   # orange
+    "desai_only":             "#2ca02c",   # green
+    "full_minus_desai":       "#2ca02c",   # green
+    "full":                   "#d62728",   # red
+    "full_minus_ps": "#d62728",   # red
     # Munson-Dawson scenarios
-    "md_only":          "#17becf",   # cyan
-    "md_steady_only":   "#bcbd22",   # olive
-    "full_md":          "#e377c2",   # pink
+    "md_only":                "#1f77b4",   # blue
+    "md_steady_only":         "#bcbd22",   # olive
+    "full_md":                "#e377c2",   # pink
     # Interlayer scenarios
-    "interlayer":       "#7f7f7f",   # gray
-    "nointerlayer":     "#8c564b",   # brown
-    None:               "#333333",   # dark gray
+    "interlayer":             "#7f7f7f",   # gray
+    "nointerlayer":           "#8c564b",   # brown
+    None:                     "#333333",   # dark gray
 }
 
 

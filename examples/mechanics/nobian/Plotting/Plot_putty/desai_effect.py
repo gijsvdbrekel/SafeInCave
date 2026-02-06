@@ -27,6 +27,8 @@ CAVERN_COLORS = {
     "Regular":       "#9467bd",   # purple
     "Teardrop":      "#8c564b",   # brown
     "Tilt":          "#e377c2",   # pink
+    "Fastleached":   "#17becf",   # cyan
+    "Tubingfailure": "#bcbd22",   # olive
 }
 
 SCENARIO_COLORS = {

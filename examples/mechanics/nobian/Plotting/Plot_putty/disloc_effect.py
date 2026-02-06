@@ -28,13 +28,17 @@ CAVERN_COLORS = {
     "Regular":       "#9467bd",   # purple
     "Teardrop":      "#8c564b",   # brown
     "Tilt":          "#e377c2",   # pink
+    "Fastleached":   "#17becf",   # cyan
+    "Tubingfailure": "#bcbd22",   # olive
 }
 
 SCENARIO_COLORS = {
-    "disloc_old_only": "#1f77b4",   # blue
-    "disloc_new_only": "#ff7f0e",   # orange
-    "full":            "#2ca02c",   # green
-    "full_md":         "#d62728",   # red
+    "disloc_old_only":        "#1f77b4",   # blue
+    "disloc_new_only":        "#ff7f0e",   # orange
+    "full":                   "#2ca02c",   # green
+    "full_md":                "#d62728",   # red
+    "full_minus_ps": "#d62728",   # red
+    "md_only":                "#1f77b4",   # blue
 }
 
 # =============================================================================
@@ -50,8 +54,8 @@ DEFAULT_SELECT_BASE = {
     "case_contains": None,
 }
 
-SCEN_OLD = "full"
-SCEN_NEW = "full_md"
+SCEN_OLD = "full_minus_ps"
+SCEN_NEW = "md_only"
 
 DEFAULT_PICK_PEAK = "last"  # "first", "last", or "cycle_N" where N is cycle number
 DEFAULT_DPI = 180

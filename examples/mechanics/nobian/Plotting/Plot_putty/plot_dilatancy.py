@@ -52,6 +52,8 @@ CAVERN_COLORS = {
     "Regular":       "#9467bd",   # purple
     "Teardrop":      "#8c564b",   # brown
     "Tilt":          "#e377c2",   # pink
+    "Fastleached":   "#17becf",   # cyan
+    "Tubingfailure": "#bcbd22",   # olive
 }
 
 # --- Linestyle coding by scenario ---
@@ -65,7 +67,7 @@ SCENARIO_LINESTYLES = {
 }
 
 # --- Ordering for legend ---
-CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "IrregularFine"]
+CAVERN_ORDER = ["Asymmetric", "Irregular", "Multichamber", "Regular", "Teardrop", "Tilt", "Fastleached", "Tubingfailure", "IrregularFine"]
 SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai", "full", None]
 
 # --- Profile extraction settings (IMPORTANT for 3D meshes) ---

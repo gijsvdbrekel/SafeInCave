@@ -15,10 +15,11 @@ import math
 # ============================================================
 #  SCENARIO SWITCHES (zet precies ÉÉN preset True)
 # ============================================================
-RUN_FULL             = False   # Kelvin + disloc(CCC) + pressure-solution + Desai
-RUN_MD_ONLY          = False  # Elastic + Munson–Dawson (steady + transient)
-RUN_MD_STEADY_ONLY   = False  # Elastic + Munson–Dawson (steady-only) => transient uit
-RUN_FULL_MD          = True  # Kelvin + pressure-solution + Munson–Dawson (steady + transient)
+RUN_FULL                      = False  # Kelvin + disloc(CCC) + pressure-solution + Desai
+RUN_MD_ONLY                   = False   # Elastic + Munson–Dawson (steady + transient)
+RUN_MD_STEADY_ONLY            = False  # Elastic + Munson–Dawson (steady-only) => transient uit
+RUN_FULL_MD                   = False  # Kelvin + pressure-solution + Munson–Dawson (steady + transient)
+RUN_FULL_PRESSURE_SOLUTION    = True  # Elastic + Kelvin + Dislocation(CCC) + Desai  (no pressure-solution, no Munson–Dawson)
 
 # Equilibrium stage: puur elastisch is het meest consistent voor vergelijking
 EQUILIBRIUM_ELASTIC_ONLY = False
@@ -97,48 +98,138 @@ def _scenario_name():
         return "md_steady_only"
     if RUN_FULL_MD:
         return "full_md"
+    if RUN_FULL_PRESSURE_SOLUTION:
+        # name kept for folder compatibility; contents are Kelvin+Disloc+Desai (no PS)
+        return "full_pressure_solution"
     return "unknown"
 
 
 def _validate_scenario():
-    flags = [RUN_FULL, RUN_MD_ONLY, RUN_MD_STEADY_ONLY, RUN_FULL_MD]
+    flags = [RUN_FULL, RUN_MD_ONLY, RUN_MD_STEADY_ONLY, RUN_FULL_MD, RUN_FULL_PRESSURE_SOLUTION]
     if sum(bool(x) for x in flags) != 1:
         raise ValueError(
             "Zet precies één scenario True: "
-            "RUN_FULL, RUN_MD_ONLY, RUN_MD_STEADY_ONLY, RUN_FULL_MD"
+            "RUN_FULL, RUN_MD_ONLY, RUN_MD_STEADY_ONLY, RUN_FULL_MD, RUN_FULL_PRESSURE_SOLUTION"
         )
 
 
+def _equivalent_rate_from_tensor(eps_rate_3x3: to.Tensor) -> to.Tensor:
+    """
+    Equivalent strain-rate scalar per element.
+    eps_rate_3x3: (N,3,3)
+    Return: (N,) in 1/s
+    """
+    # Deviatoric part
+    tr = eps_rate_3x3[:, 0, 0] + eps_rate_3x3[:, 1, 1] + eps_rate_3x3[:, 2, 2]
+    mean = tr / 3.0
+    dev = eps_rate_3x3.clone()
+    dev[:, 0, 0] -= mean
+    dev[:, 1, 1] -= mean
+    dev[:, 2, 2] -= mean
+
+    # J2-equivalent: sqrt(2/3 * dev:dev)
+    dd = (dev * dev).sum(dim=(1, 2))
+    eq = to.sqrt((2.0 / 3.0) * dd + 1e-30)
+    return eq
+
+
+def _to_tensor_epsrate(er, n_elems: int) -> to.Tensor | None:
+    """
+    Convert eps_ne_rate-like object to torch tensor (N,3,3) float64.
+    Return None if shape/type not usable.
+    """
+    if isinstance(er, to.Tensor):
+        t = er.to(dtype=to.float64)
+    else:
+        try:
+            t = to.as_tensor(er, dtype=to.float64)
+        except Exception:
+            return None
+
+    if t.ndim != 3 or t.shape[0] != n_elems or t.shape[1:] != (3, 3):
+        return None
+    return t
+
+
 class LinearMomentumMod(sf.LinearMomentum):
+    """
+    Uitbreiding om extra DG0 velden weg te schrijven:
+      - eps_vp (tensor) uit inelastic update (waar beschikbaar)
+      - Desai state: Fvp, alpha (waar beschikbaar)
+      - Equivalent strain-rate scalars (1/s):
+          eps_ne_rate_eq_total
+          eps_ne_rate_eq_disloc
+          eps_ne_rate_eq_desai
+    """
     def __init__(self, grid, theta):
         super().__init__(grid, theta)
         self.expect_vp_state = False
 
     def initialize(self) -> None:
         self.C.x.array[:] = to.flatten(self.mat.C)
-        # placeholders (blijven leeg als je geen Desai gebruikt)
+
+        # Existing fields
         self.Fvp = do.fem.Function(self.DG0_1)
         self.alpha = do.fem.Function(self.DG0_1)
         self.eps_vp = do.fem.Function(self.DG0_3x3)
 
+        # New strain-rate fields (DG0 scalar)
+        self.eps_ne_rate_eq_total = do.fem.Function(self.DG0_1)
+        self.eps_ne_rate_eq_disloc = do.fem.Function(self.DG0_1)
+        self.eps_ne_rate_eq_desai = do.fem.Function(self.DG0_1)
+
+        # Initialize to 0
+        self.eps_ne_rate_eq_total.x.array[:] = 0.0
+        self.eps_ne_rate_eq_disloc.x.array[:] = 0.0
+        self.eps_ne_rate_eq_desai.x.array[:] = 0.0
+
     def run_after_solve(self):
-        # in deze MD-vergelijk run gebruiken we geen Desai,
-        # dus dit is vooral “veilig laten staan”
-        if not hasattr(self, "eps_vp"):
-            return
-
+        # --- eps_vp / Desai state via laatste non-elastic element ---
         elems = getattr(self.mat, "elems_ne", None)
-        if not elems:
-            return
-        st = elems[-1]
+        if elems:
+            st_last = elems[-1]
 
-        if hasattr(st, "eps_ne_k"):
-            self.eps_vp.x.array[:] = to.flatten(st.eps_ne_k)
+            if hasattr(st_last, "eps_ne_k"):
+                self.eps_vp.x.array[:] = to.flatten(st_last.eps_ne_k)
 
-        if self.expect_vp_state:
-            if hasattr(st, "Fvp") and hasattr(st, "alpha"):
-                self.Fvp.x.array[:] = st.Fvp
-                self.alpha.x.array[:] = st.alpha
+            if self.expect_vp_state:
+                if hasattr(st_last, "Fvp") and hasattr(st_last, "alpha"):
+                    self.Fvp.x.array[:] = st_last.Fvp
+                    self.alpha.x.array[:] = st_last.alpha
+
+        # --- strain-rate outputs ---
+        n = self.n_elems
+
+        # tensor sums (N,3,3) -> then take equivalent
+        er_total = to.zeros((n, 3, 3), dtype=to.float64)
+        er_disloc = to.zeros((n, 3, 3), dtype=to.float64)
+        er_desai = to.zeros((n, 3, 3), dtype=to.float64)
+
+        if elems:
+            for el in elems:
+                if not hasattr(el, "eps_ne_rate"):
+                    continue
+
+                er = _to_tensor_epsrate(el.eps_ne_rate, n)
+                if er is None:
+                    continue
+
+                er_total += er
+
+                # Match on element name for categorization
+                name = str(getattr(el, "name", "")).lower()
+                if "dislocation" in name or "munson" in name:
+                    er_disloc += er
+                if "desai" in name:
+                    er_desai += er
+
+        rate_total = _equivalent_rate_from_tensor(er_total)
+        rate_disloc = _equivalent_rate_from_tensor(er_disloc)
+        rate_desai = _equivalent_rate_from_tensor(er_desai)
+
+        self.eps_ne_rate_eq_total.x.array[:] = rate_total.detach().cpu().numpy()
+        self.eps_ne_rate_eq_disloc.x.array[:] = rate_disloc.detach().cpu().numpy()
+        self.eps_ne_rate_eq_desai.x.array[:] = rate_desai.detach().cpu().numpy()
 
 
 class SparseSaveFields(sf.SaveFields):
@@ -154,6 +245,66 @@ class SparseSaveFields(sf.SaveFields):
         self._counter += 1
         if self._counter % self.interval == 0:
             return super().save_fields(t)
+
+
+class KSPConvergenceLogger:
+    """
+    Log PETSc KSP stats per time step to a JSONL file (1 json per line).
+    Call .record(t) after each solve.
+    """
+    def __init__(self, ksp: PETSc.KSP, filepath: str):
+        self.ksp = ksp
+        self.filepath = filepath
+        self._fh = None
+        if MPI.COMM_WORLD.rank == 0:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            self._fh = open(filepath, "w", buffering=1)
+
+    def record(self, t: float):
+        if MPI.COMM_WORLD.rank != 0 or self._fh is None:
+            return
+        try:
+            its = int(self.ksp.getIterationNumber())
+        except Exception:
+            its = None
+        try:
+            rnorm = float(self.ksp.getResidualNorm())
+        except Exception:
+            rnorm = None
+        try:
+            reason = int(self.ksp.getConvergedReason())
+        except Exception:
+            reason = None
+
+        rec = {"t": float(t), "ksp_its": its, "ksp_rnorm": rnorm, "ksp_reason": reason}
+        self._fh.write(json.dumps(rec) + "\n")
+
+    def close(self):
+        if MPI.COMM_WORLD.rank == 0 and self._fh is not None:
+            self._fh.close()
+            self._fh = None
+
+
+class SimulatorWithKSPLog(sf.Simulator_M):
+    """
+    Minimal wrapper: after each time step, log KSP stats.
+    """
+    def __init__(self, mom_eq, tc, outputs, is_equilibrium, ksp_logger: KSPConvergenceLogger):
+        super().__init__(mom_eq, tc, outputs, is_equilibrium)
+        self._ksp_logger = ksp_logger
+
+    def run(self):
+        for out in self.outputs:
+            if hasattr(out, "save_fields"):
+                orig = out.save_fields
+
+                def wrapped_save_fields(t, _orig=orig, _logger=self._ksp_logger):
+                    _logger.record(t)
+                    return _orig(t)
+
+                out.save_fields = wrapped_save_fields
+
+        return super().run()
 
 
 def make_solver(grid):
@@ -252,7 +403,7 @@ def build_base_material_parts(mom_eq):
         "spring": spring_0,
         "kelvin": kelvin,
         "disloc_old": creep_disloc_old,
-        "pressure_solution": creep_pressure,
+        "pressure_solution": creep_pressure,  # kept available for RUN_FULL / RUN_FULL_MD
         "munson_dawson": md,
         "desai": desai,
 
@@ -368,7 +519,6 @@ def main():
         mom_eq.expect_vp_state = False
     else:
         # Use the same inelastic elements as the operation stage for equilibrium
-        # This allows the model to settle with creep before operation
         eq_use_kelvin = False
         eq_use_disloc_old = False
         eq_use_pressure_solution = False
@@ -392,6 +542,12 @@ def main():
             eq_use_pressure_solution = True
             eq_use_munson_dawson = True
             eq_md_transient_on = True
+        elif RUN_FULL_PRESSURE_SOLUTION:
+            # Kelvin + Dislocation only (NO pressure-solution), no Desai in equilibrium
+            eq_use_kelvin = True
+            eq_use_disloc_old = True
+            eq_use_pressure_solution = False
+            eq_use_desai = False
 
         mat_eq = make_material(
             mom_eq, parts,
@@ -521,6 +677,15 @@ def main():
         md_transient_on = True
         use_desai = False
 
+    elif RUN_FULL_PRESSURE_SOLUTION:
+        # Kelvin + Dislocation + Desai (NO pressure-solution)
+        use_kelvin = True
+        use_disloc_old = True
+        use_pressure_solution = False
+        use_munson_dawson = False
+        md_transient_on = True  # irrelevant
+        use_desai = True
+
     # Build operation material
     mat_op = make_material(
         mom_eq, parts,
@@ -599,8 +764,13 @@ def main():
     if MPI.COMM_WORLD.rank == 0:
         print("Operation out:", output_folder_operation)
 
+    # KSP logger for operation stage
+    ksp_log_op = KSPConvergenceLogger(
+        mom_eq.solver,
+        os.path.join(output_folder, "ksp_operation.jsonl")
+    )
+
     # interval: bij lange runs niet alles wegschrijven
-    # (vuistregel: ~200-400 frames totaal is genoeg voor plots)
     n_steps = int(math.ceil(tc_operation.t_final / tc_operation.dt))
     target_frames = 300
     interval = max(1, int(round(n_steps / target_frames)))
@@ -612,14 +782,22 @@ def main():
     out_op.add_output_field("p_elems", "Mean stress (Pa)")
     out_op.add_output_field("q_elems", "Von Mises stress (Pa)")
     out_op.add_output_field("sig", "Stress (Pa)")
-    if use_desai:
-        out_op.add_output_field("eps_vp", "Viscoplastic strain (-)")
-        out_op.add_output_field("alpha", "Hardening parameter (-)")
-        out_op.add_output_field("Fvp", "Yield function (-)")
 
-    sim_op = sf.Simulator_M(mom_eq, tc_operation, [out_op], False)
+    # Desai fields (remain empty/0 if Desai is off)
+    out_op.add_output_field("eps_vp", "Viscoplastic strain (-)")
+    out_op.add_output_field("alpha", "Hardening parameter (-)")
+    out_op.add_output_field("Fvp", "Yield function (-)")
+
+    # Strain-rate outputs (1/s) - for plotting scripts compatibility
+    out_op.add_output_field("eps_ne_rate_eq_total", "Non-elastic eq strain rate total (1/s)")
+    out_op.add_output_field("eps_ne_rate_eq_disloc", "Dislocation eq strain rate (1/s)")
+    out_op.add_output_field("eps_ne_rate_eq_desai", "Desai eq strain rate (1/s)")
+
+    sim_op = SimulatorWithKSPLog(mom_eq, tc_operation, [out_op], False, ksp_log_op)
     sim_op.run()
+    ksp_log_op.close()
 
 
 if __name__ == "__main__":
     main()
+

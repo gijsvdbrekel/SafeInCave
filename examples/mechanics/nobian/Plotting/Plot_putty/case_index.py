@@ -8,10 +8,10 @@ DAY = 24.0 * 3600.0
 MPA = 1e6
 
 KNOWN_PRESSURES = {"sinus", "irregular", "csv_profile", "linear"}
-KNOWN_SCENARIOS = {"desai_only", "disloc_old_only", "disloc_new_only", "full", "full_minus_desai", "full_md", "md_only", "md_steady_only"}
+KNOWN_SCENARIOS = {"desai_only", "disloc_old_only", "disloc_new_only", "full", "full_minus_desai", "full_md", "full_minus_ps", "md_only", "md_steady_only"}
 
 # matches regular600, irregular1200, tilted600, etc.
-_CAVERN_RE = re.compile(r"(regular|irregularfine|irregular|tilted|tilt|teardrop|asymmetric|multichamber)(600|1200)", re.I)
+_CAVERN_RE = re.compile(r"(regular|irregularfine|irregular|tilted|tilt|teardrop|asymmetric|multichamber|fastleached|tubingfailure)(600|1200)", re.I)
 
 def _safe_read_json(path: str):
     try:
@@ -49,6 +49,10 @@ def _nice_cavern_label(cavern_type_or_group: str) -> str:
         return "IrregularFine"
     if low.startswith("irregular"):
         return "Irregular"
+    if low.startswith("fastleached"):
+        return "Fastleached"
+    if low.startswith("tubingfailure"):
+        return "Tubingfailure"
     return (cavern_type_or_group or "").split("_")[0] if cavern_type_or_group else "Unknown"
 
 def read_case_metadata(case_path: str) -> dict:
