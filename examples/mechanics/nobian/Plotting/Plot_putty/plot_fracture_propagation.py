@@ -20,15 +20,15 @@ from case_index import (
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 # ── OUTPUT FOLDER ──────────────────────────────────────────────────────────────
-ROOT = r"/home/gvandenbrekel/SafeInCave/examples/mechanics/nobian/Simulation/output"
+ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/output"
 
 # ── CASE SELECTION ─────────────────────────────────────────────────────────────
 SELECT = {
-    "caverns": None,
-    "pressure": "sinus",
-    "scenario": ["full_minus_ps", "md_only"],
+    "caverns": ["Regular", "Irregular", "Multichamber", "Asymmetric", "Teardrop", "Tilt"],
+    "pressure": "csv_profile",
+    "scenario": None,
     "n_cycles": None,
-    "operation_days": None,
+    "operation_days": 1095,
     "case_contains": None,
 }
 
@@ -36,7 +36,7 @@ SELECT = {
 ONE_CASE_PER_SERIES = True
 
 # PLOT_MODE: "combined" or "separate"
-PLOT_MODE = "seperate"
+PLOT_MODE = "separate"
 
 # ── RADIAL SAMPLING ────────────────────────────────────────────────────────────
 # RADIAL_DISTANCES: Distances from cavern wall into the rock (meters)
@@ -52,7 +52,7 @@ FOS_THRESHOLD = 1.0
 
 # ── OUTPUT SETTINGS ────────────────────────────────────────────────────────────
 OUT_DIR = os.path.join(ROOT, "_figures")
-SHOW = True
+SHOW = False
 DPI = 180
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -66,6 +66,19 @@ DPI = 180
 MPA = 1e6
 HOUR = 3600.0
 DAY = 24.0 * HOUR
+
+# --- Color coding by cavern shape (consistent across all plot scripts) ---
+CAVERN_COLORS = {
+    "Asymmetric":    "#1f77b4",   # blue
+    "Irregular":     "#ff7f0e",   # orange
+    "IrregularFine": "#d62728",   # red
+    "Multichamber":  "#2ca02c",   # green
+    "Regular":       "#9467bd",   # purple
+    "Teardrop":      "#8c564b",   # brown
+    "Tilt":          "#e377c2",   # pink
+    "Fastleached":   "#17becf",   # cyan
+    "Tubingfailure": "#bcbd22",   # olive
+}
 
 SCENARIO_COLORS = {
     "disloc_old_only":        "#1f77b4",

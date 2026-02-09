@@ -44,7 +44,7 @@ SCENARIO_COLORS = {
 # =============================================================================
 # DEFAULT CONFIG (can be overridden via command line)
 # =============================================================================
-DEFAULT_ROOT = r"/home/gvandenbrekel/SafeInCave/examples/mechanics/nobian/Simulation/output"
+DEFAULT_ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/output"
 
 DEFAULT_SELECT_BASE = {
     "caverns": ["Regular"],

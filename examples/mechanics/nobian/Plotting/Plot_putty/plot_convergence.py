@@ -16,7 +16,7 @@ MPA = 1e6
 # =============================================================================
 
 # --- Output folder containing simulation results ---
-ROOT = r"/home/gvandenbrekel/SafeInCave/examples/mechanics/nobian/Simulation/output"
+ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/output"
 
 # --- Case selection filters ---
 # Set any filter to None to include all values for that parameter

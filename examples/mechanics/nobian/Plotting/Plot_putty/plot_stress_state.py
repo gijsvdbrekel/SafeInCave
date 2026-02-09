@@ -19,7 +19,7 @@ from case_index import (
 
 # ── OUTPUT FOLDER ──────────────────────────────────────────────────────────────
 # ROOT: Path to the output folder containing simulation results
-ROOT = r"/home/gvandenbrekel/SafeInCave/examples/mechanics/nobian/Simulation/output"
+ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/output"
 
 # ── CASE SELECTION ─────────────────────────────────────────────────────────────
 # SELECT: Filter which cases to plot (set to None to include all)
