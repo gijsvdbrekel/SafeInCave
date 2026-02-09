@@ -33,11 +33,11 @@ ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/
 # --- Case selection filters ---
 # Set any filter to None to include all values for that parameter
 SELECT = {
-    "caverns": ["Regular", "Irregular", "Multichamber", "Asymmetric", "Teardrop", "Tilt"],
-    "pressure": "csv_profile",                 # "sinus", "linear", "irregular", "csv_profile", or None
+    "caverns": None,                           # e.g. ["Regular", "Tilted"] or None for all
+    "pressure": None,                          # "sinus", "linear", "irregular", "csv_profile", or None
     "scenario": None,                          # e.g. ["full", "desai_only"] or None
     "n_cycles": None,                          # e.g. 10, 50, or None for any
-    "operation_days": 1095,                    # e.g. 365, or None for any
+    "operation_days": None,                    # e.g. 365, or None for any
     "case_contains": None,                     # substring filter on case name, or None
     "one_case_per_cavern": True,               # only one case per cavern shape
     "t_step": "last",                          # "last" or specific timestep index (int)

@@ -34,8 +34,8 @@ ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/
 
 SELECT = {
     "caverns": None,                                      # e.g. ["Regular", "Irregular"]
-    "pressure": "sinus",                                  # "sinus"/"irregular"/"linear"/"csv_profile"
-    "scenario": ["full_minus_ps", "md_only"],
+    "pressure": None,                                     # "sinus"/"irregular"/"linear"/"csv_profile"
+    "scenario": None,
     "n_cycles": None,
     "operation_days": None,
     "case_contains": None,
@@ -80,16 +80,15 @@ SCENARIO_ORDER = ["disloc_old_only", "disloc_new_only", "desai_only", "full_minu
 
 # Color and linestyle definitions
 CAVERN_COLORS = {
-    "Regular": "#1f77b4",       # blue
-    "Irregular": "#ff7f0e",     # orange
-    "Tilted": "#2ca02c",        # green
-    "Tilt": "#2ca02c",          # green (alias)
-    "Teardrop": "#d62728",      # red
-    "Asymmetric": "#9467bd",    # purple
-    "Multichamber": "#8c564b",  # brown
-    "IrregularFine": "#e377c2", # pink
-    "Fastleached":   "#17becf", # cyan
-    "Tubingfailure": "#bcbd22", # olive
+    "Asymmetric":    "#1f77b4",   # blue
+    "Irregular":     "#ff7f0e",   # orange
+    "IrregularFine": "#d62728",   # red
+    "Multichamber":  "#2ca02c",   # green
+    "Regular":       "#9467bd",   # purple
+    "Teardrop":      "#8c564b",   # brown
+    "Tilt":          "#e377c2",   # pink
+    "Fastleached":   "#17becf",   # cyan
+    "Tubingfailure": "#bcbd22",   # olive
 }
 
 SCENARIO_LINESTYLES = {
@@ -385,8 +384,11 @@ def pick_one_case_per_series(cases_meta):
 # MAIN
 # =============================================================================
 def get_case_color_and_style(cavern_label, scenario_preset):
-    """Get color (by scenario) and linestyle (by scenario) for a case."""
-    color = SCENARIO_COLORS.get(scenario_preset, CAVERN_COLORS.get(cavern_label, "#333333"))
+    """Get color and linestyle for a case. Uses cavern color when no scenario."""
+    if scenario_preset is not None:
+        color = SCENARIO_COLORS.get(scenario_preset, "#333333")
+    else:
+        color = CAVERN_COLORS.get(cavern_label, "#333333")
     linestyle = SCENARIO_LINESTYLES.get(scenario_preset, "-")
     return color, linestyle
 

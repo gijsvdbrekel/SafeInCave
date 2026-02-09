@@ -23,9 +23,9 @@ ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/
 # --- Case selection filters ---
 # Set any filter to None to include all values for that parameter
 SELECT = {
-    "caverns": ["Regular"],                    # e.g. ["Regular", "Tilted"] or None for all
-    "pressure": "sinus",                       # "sinus", "linear", "irregular", "csv_profile", or None
-    "scenario": ["full_md"],  # e.g. ["full", "desai_only"] or None
+    "caverns": None,                           # e.g. ["Regular", "Tilted"] or None for all
+    "pressure": None,                          # "sinus", "linear", "irregular", "csv_profile", or None
+    "scenario": None,                          # e.g. ["full", "desai_only"] or None
     "case_contains": None,                     # substring filter on case name, or None
 }
 
@@ -106,9 +106,11 @@ def get_cavern_color(cavern_label):
     return CAVERN_COLORS.get(cavern_label, "#333333")
 
 
-def get_scenario_color(scenario):
-    """Get color for a scenario, with fallback."""
-    return SCENARIO_COLORS.get(scenario, "#333333")
+def get_case_color(cavern_label, scenario):
+    """Get color: use scenario color if scenario is set, otherwise cavern color."""
+    if scenario is not None:
+        return SCENARIO_COLORS.get(scenario, "#333333")
+    return CAVERN_COLORS.get(cavern_label, "#333333")
 
 
 def get_scenario_linestyle(scenario):
@@ -377,9 +379,9 @@ def plot_combined(cases):
     for c in cases:
         cav = c.get("cavern_label")
         sc = c.get("scenario_preset")
-        col = get_scenario_color(sc)
+        col = get_case_color(cav, sc)
         ls = get_scenario_linestyle(sc)
-        label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
+        label = f"{cav} | {sc}" if sc is not None else f"{cav}"
 
         try:
             # Load stored p_elems and q_elems (smoothed values from simulation)
@@ -454,8 +456,8 @@ def plot_separate(cases):
     for c in cases:
         cav = c.get("cavern_label")
         sc = c.get("scenario_preset")
-        col = get_scenario_color(sc)
-        label = f"{cav} | {sc}" if sc is not None else f"{cav} | (no scenario)"
+        col = get_case_color(cav, sc)
+        label = f"{cav} | {sc}" if sc is not None else f"{cav}"
 
         try:
             # Load stored p_elems and q_elems (smoothed values from simulation)

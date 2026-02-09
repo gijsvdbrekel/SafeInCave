@@ -24,11 +24,11 @@ ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/
 
 # ── CASE SELECTION ─────────────────────────────────────────────────────────────
 SELECT = {
-    "caverns": ["Regular", "Irregular", "Multichamber", "Asymmetric", "Teardrop", "Tilt"],
-    "pressure": "csv_profile",
+    "caverns": None,
+    "pressure": None,
     "scenario": None,
     "n_cycles": None,
-    "operation_days": 1095,
+    "operation_days": None,
     "case_contains": None,
 }
 
@@ -642,8 +642,11 @@ def plot_dilating_points_count(ax, time_days, fos_data, radial_distances, thresh
 
 
 def get_case_color_and_style(cavern_label, scenario_preset):
-    """Get color and linestyle for a case."""
-    color = SCENARIO_COLORS.get(scenario_preset, "#333333")
+    """Get color and linestyle for a case. Uses cavern color when no scenario."""
+    if scenario_preset is not None:
+        color = SCENARIO_COLORS.get(scenario_preset, "#333333")
+    else:
+        color = CAVERN_COLORS.get(cavern_label, "#333333")
     linestyle = SCENARIO_LINESTYLES.get(scenario_preset, "-")
     return color, linestyle
 
