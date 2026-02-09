@@ -53,8 +53,8 @@ DEFAULT_SELECT_BASE = {
     "case_contains": None,
 }
 
-SCEN_OLD = "full_minus_ps"
-SCEN_NEW = "md_only"
+SCEN_OLD = "disloc_old_only"
+SCEN_NEW = "disloc_new_only"
 
 DEFAULT_PICK_PEAK = "last"  # "first", "last", or "cycle_N" where N is cycle number
 DEFAULT_DPI = 180
@@ -201,16 +201,16 @@ def plot_old_vs_new(case_old: str, case_new: str, meta_old: dict, pick_peak: str
         q_new = np.asarray(q_new_list[k_new], float) / MPA
         r_new = np.asarray(r_new_list[k_new], float)
 
-        # Log transform
+        # Log transform — x = strain-rate, y = stress
         eps = 1e-30
-        x_old = np.log10(np.maximum(q_old, eps))
-        y_old = np.log10(np.maximum(r_old, eps))
-        x_new = np.log10(np.maximum(q_new, eps))
-        y_new = np.log10(np.maximum(r_new, eps))
+        x_old = np.log10(np.maximum(r_old, eps))
+        y_old = np.log10(np.maximum(q_old, eps))
+        x_new = np.log10(np.maximum(r_new, eps))
+        y_new = np.log10(np.maximum(q_new, eps))
 
         # Main scatter/hexbin plot
         fig, ax = plt.subplots(1, 1, figsize=(10, 6))
-        ax.set_title(f"{rate_label}: log10(strain-rate) vs log10(von Mises)\npeak='{pick_peak}' @ t={target_t / DAY:.2f} days - {tag}")
+        ax.set_title(f"{rate_label}: log10(von Mises) vs log10(strain-rate)\npeak='{pick_peak}' @ t={target_t / DAY:.2f} days - {tag}")
 
         if use_hexbin:
             hb_old = ax.hexbin(x_old, y_old, gridsize=40, cmap='Blues', mincnt=1, alpha=0.6, label=label_A)
@@ -227,8 +227,8 @@ def plot_old_vs_new(case_old: str, case_new: str, meta_old: dict, pick_peak: str
         if xm_new is not None:
             ax.plot(xm_new, ym_new, linewidth=2.5, color=color_B, label=f"{label_B} median")
 
-        ax.set_xlabel("log10(q_elems [MPa])")
-        ax.set_ylabel(f"log10({rate_field} [1/s])")
+        ax.set_xlabel(f"log10({rate_field} [1/s])")
+        ax.set_ylabel("log10(q_elems [MPa])")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="best")
 
