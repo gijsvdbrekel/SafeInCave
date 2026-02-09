@@ -495,7 +495,7 @@ def generate_geo(name, description, levels, filename):
 # FAST-LEACHED CAVERN BASE PROFILE
 # ==========================================
 # Rough barrel shape with oscillating radii (jagged walls)
-# NOTE: Tubing failure cavern uses multichamber structure (hand-written .geo)
+# NOTE: Tube-failure cavern uses multi-chamber structure (hand-written .geo)
 FL_BASE = [
     (190, 0),      # bottom tip
     (198, 22),     # small bottom

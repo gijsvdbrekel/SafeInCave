@@ -11,7 +11,7 @@ KNOWN_PRESSURES = {"sinus", "irregular", "csv_profile", "linear"}
 KNOWN_SCENARIOS = {"desai_only", "disloc_old_only", "disloc_new_only", "full", "full_minus_desai", "full_md", "full_minus_ps", "md_only", "md_steady_only"}
 
 # matches regular600, irregular1200, tilted600, etc.
-_CAVERN_RE = re.compile(r"(regular|irregularfine|irregular|tilted|tilt|teardrop|asymmetric|multichamber|fastleached|tubingfailure)(600|1200)", re.I)
+_CAVERN_RE = re.compile(r"(regular|irregularfine|irregular|tilted|tilt|directcirculation|reversedcirculation|asymmetric|fastleached|tubefailure)(600|1200)", re.I)
 
 def _safe_read_json(path: str):
     try:
@@ -37,10 +37,10 @@ def _nice_cavern_label(cavern_type_or_group: str) -> str:
     low = (cavern_type_or_group or "").lower()
     if low.startswith("asymmetric"):
         return "Asymmetric"
-    if low.startswith("multichamber"):
-        return "Multichamber"
-    if low.startswith("teardrop"):
-        return "Teardrop"
+    if low.startswith("directcirculation"):
+        return "Direct-circulation"
+    if low.startswith("reversedcirculation"):
+        return "Reversed-circulation"
     if low.startswith("tilt") or low.startswith("tilted"):
         return "Tilt"
     if low.startswith("regular"):
@@ -50,9 +50,9 @@ def _nice_cavern_label(cavern_type_or_group: str) -> str:
     if low.startswith("irregular"):
         return "Irregular"
     if low.startswith("fastleached"):
-        return "Fastleached"
-    if low.startswith("tubingfailure"):
-        return "Tubingfailure"
+        return "Fast-leached"
+    if low.startswith("tubefailure"):
+        return "Tube-failure"
     return (cavern_type_or_group or "").split("_")[0] if cavern_type_or_group else "Unknown"
 
 def read_case_metadata(case_path: str) -> dict:

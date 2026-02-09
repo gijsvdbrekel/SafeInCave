@@ -24,8 +24,9 @@ import csv
 # ║  - USE_LEACHING = False: Equilibrium phase (short constant pressure phase)    ║
 # ║                                                                               ║
 # ║  CAVERN SELECTION:                                                            ║
-# ║  - Standard shapes: regular, tilted, teardrop, asymmetric, irregular,         ║
-# ║                     multichamber (sizes: 600k or 1200k m³)                    ║
+# ║  - Standard shapes: regular, tilted, directcirculation, asymmetric,           ║
+# ║                     reversedcirculation, fastleached, tubefailure             ║
+# ║                     (sizes: 600k or 1200k m³)                                ║
 # ║  - Zuidwending A5: ~1.000.000k m³, real depth 1140-1510m                            ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -44,14 +45,13 @@ EQUILIBRIUM_DT_HOURS = 0.5
 # ── CAVERN SELECTION ───────────────────────────────────────────────────────────
 # CAVERN_TYPE: Choose one of:
 #   Standard shapes (with CAVERN_SIZE 600 or 1200):
-#     "regular"        - Standard cylindrical cavern
-#     "tilted"         - Tilted/inclined cavern
-#     "teardrop"       - Teardrop-shaped cavern
-#     "asymmetric"     - Asymmetric cavern geometry
-#     "irregular"      - Irregular/complex shape
-#     "multichamber"   - Multi-chamber cavern
-#     "fastleached"    - Fast-leached rough barrel shape
-#     "tubingfailure"  - Tubing failure (exaggerated multi-chamber)
+#     "regular"              - Standard cylindrical cavern
+#     "tilted"               - Tilted/inclined cavern
+#     "directcirculation"    - Direct-circulation leached cavern
+#     "asymmetric"           - Asymmetric cavern geometry
+#     "reversedcirculation"  - Reversed-circulation leached cavern
+#     "fastleached"          - Fast-leached rough barrel shape
+#     "tubefailure"          - Tube-failure (exaggerated multi-chamber)
 #   Special caverns (CAVERN_SIZE is ignored):
 #     "A5"           - Zuidwending cavern A5 (~1.000.000k m³, depth 1140-1510m)
 
@@ -165,7 +165,7 @@ T_GAS_AMPLITUDE_C = 20.0
 # AUTOMATIC CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-VALID_SHAPES = ["regular", "tilted", "teardrop", "asymmetric", "irregular", "multichamber", "fastleached", "tubingfailure"]
+VALID_SHAPES = ["regular", "tilted", "directcirculation", "asymmetric", "reversedcirculation", "fastleached", "tubefailure"]
 VALID_SPECIAL_CAVERNS = ["A5"]
 VALID_SIZES = [600, 1200]
 VALID_SCENARIOS = ["sinus", "linear", "irregular", "csv"]
@@ -177,20 +177,18 @@ VALID_LEACHING_MODES = ["linear", "stepped"]
 Z_MAX_BY_CAVERN = {
     "regular600": 315.26,
     "tilted600": 345.67,
-    "teardrop600": 353.15,
+    "directcirculation600": 319.86,
     "asymmetric600": 338.89,
-    "irregular600": 319.86,
-    "multichamber600": 334.14,
+    "reversedcirculation600": 353.15,
     "regular1200": 393.21,
     "tilted1200": 430.78,
-    "teardrop1200": 445.06,
+    "directcirculation1200": 402.21,
     "asymmetric1200": 422.76,
-    "irregular1200": 402.21,
-    "multichamber1200": 420.82,
+    "reversedcirculation1200": 445.06,
     "fastleached600": 378.19,
     "fastleached1200": 400.08,
-    "tubingfailure600": 420.90,
-    "tubingfailure1200": 444.53,
+    "tubefailure600": 420.90,
+    "tubefailure1200": 444.53,
     # Zuidwending A5
     "A5": 515.0,
 }
@@ -199,20 +197,18 @@ Z_MAX_BY_CAVERN = {
 CAVERN_HEIGHT_BY_TYPE = {
     "regular600": 150.0,
     "tilted600": 160.0,
-    "teardrop600": 180.0,
+    "directcirculation600": 145.0,
     "asymmetric600": 155.0,
-    "irregular600": 145.0,
-    "multichamber600": 140.0,
+    "reversedcirculation600": 180.0,
     "regular1200": 200.0,
     "tilted1200": 215.0,
-    "teardrop1200": 240.0,
+    "directcirculation1200": 195.0,
     "asymmetric1200": 210.0,
-    "irregular1200": 195.0,
-    "multichamber1200": 190.0,
+    "reversedcirculation1200": 240.0,
     "fastleached600": 170.0,
     "fastleached1200": 215.0,
-    "tubingfailure600": 182.0,
-    "tubingfailure1200": 230.0,
+    "tubefailure600": 182.0,
+    "tubefailure1200": 230.0,
     "A5": 370.0,
 }
 
@@ -230,20 +226,18 @@ P_REF_BY_CAVERN = {
 GRID_FOLDERS = {
     "regular600": "cavern_regular_600_3D",
     "tilted600": "cavern_tilted_600_3D",
-    "teardrop600": "cavern_teardrop_600_3D",
+    "directcirculation600": "cavern_directcirculation_600_3D",
     "asymmetric600": "cavern_asymmetric_600_3D",
-    "irregular600": "cavern_irregular_600_3D",
-    "multichamber600": "cavern_multichamber_600_3D",
+    "reversedcirculation600": "cavern_reversedcirculation_600_3D",
     "regular1200": "cavern_regular_1200_3D",
     "tilted1200": "cavern_tilted_1200_3D",
-    "teardrop1200": "cavern_teardrop_1200_3D",
+    "directcirculation1200": "cavern_directcirculation_1200_3D",
     "asymmetric1200": "cavern_asymmetric_1200_3D",
-    "irregular1200": "cavern_irregular_1200_3D",
-    "multichamber1200": "cavern_multichamber_1200_3D",
+    "reversedcirculation1200": "cavern_reversedcirculation_1200_3D",
     "fastleached600": "cavern_fastleached_600_3D",
     "fastleached1200": "cavern_fastleached_1200_3D",
-    "tubingfailure600": "cavern_tubingfailure_600_3D",
-    "tubingfailure1200": "cavern_tubingfailure_1200_3D",
+    "tubefailure600": "cavern_tubefailure_600_3D",
+    "tubefailure1200": "cavern_tubefailure_1200_3D",
     "A5": "cavern_A5_3D",
 }
 

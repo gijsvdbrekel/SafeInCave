@@ -69,15 +69,14 @@ DAY = 24.0 * HOUR
 
 # --- Color coding by cavern shape (consistent across all plot scripts) ---
 CAVERN_COLORS = {
-    "Asymmetric":    "#1f77b4",   # blue
-    "Irregular":     "#ff7f0e",   # orange
-    "IrregularFine": "#d62728",   # red
-    "Multichamber":  "#2ca02c",   # green
-    "Regular":       "#9467bd",   # purple
-    "Teardrop":      "#8c564b",   # brown
-    "Tilt":          "#e377c2",   # pink
-    "Fastleached":   "#17becf",   # cyan
-    "Tubingfailure": "#bcbd22",   # olive
+    "Asymmetric":          "#1f77b4",   # blue
+    "Direct-circulation":  "#ff7f0e",   # orange
+    "IrregularFine":       "#d62728",   # red
+    "Regular":             "#9467bd",   # purple
+    "Reversed-circulation":"#8c564b",   # brown
+    "Tilt":                "#e377c2",   # pink
+    "Fast-leached":        "#17becf",   # cyan
+    "Tube-failure":        "#bcbd22",   # olive
 }
 
 SCENARIO_COLORS = {

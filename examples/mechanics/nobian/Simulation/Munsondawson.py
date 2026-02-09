@@ -454,22 +454,41 @@ def make_material(mom_eq, parts, *,
 def main():
     _validate_scenario()
 
-    grid_path = os.path.join("..", "..", "..", "..", "grids", "cavern_regular_600_3D")
+    GRID_FOLDERS = {
+        "regular600": "cavern_regular_600_3D",
+        "tilted600": "cavern_tilted_600_3D",
+        "directcirculation600": "cavern_directcirculation_600_3D",
+        "asymmetric600": "cavern_asymmetric_600_3D",
+        "reversedcirculation600": "cavern_reversedcirculation_600_3D",
+        "regular1200": "cavern_regular_1200_3D",
+        "tilted1200": "cavern_tilted_1200_3D",
+        "directcirculation1200": "cavern_directcirculation_1200_3D",
+        "asymmetric1200": "cavern_asymmetric_1200_3D",
+        "reversedcirculation1200": "cavern_reversedcirculation_1200_3D",
+        "fastleached600": "cavern_fastleached_600_3D",
+        "fastleached1200": "cavern_fastleached_1200_3D",
+        "tubefailure600": "cavern_tubefailure_600_3D",
+        "tubefailure1200": "cavern_tubefailure_1200_3D",
+    }
+
+    grid_path = os.path.join("..", "..", "..", "..", "grids", GRID_FOLDERS[CAVERN_TYPE])
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     Z_MAX_BY_CAVERN = {
         "regular600": 315.26,
         "tilted600": 345.67,
-        "teardrop600": 353.15,
+        "directcirculation600": 319.86,
         "asymmetric600": 338.89,
-        "irregular600": 319.86,
-        "multichamber600": 334.14,
+        "reversedcirculation600": 353.15,
         "regular1200": 393.21,
         "tilted1200":  430.78,
-        "teardrop1200":  445.06,
+        "directcirculation1200":  402.21,
         "asymmetric1200":  422.76,
-        "irregular1200":  402.21,
-        "multichamber1200":  420.82,
+        "reversedcirculation1200":  445.06,
+        "fastleached600": 378.19,
+        "fastleached1200": 400.08,
+        "tubefailure600": 420.90,
+        "tubefailure1200": 444.53,
     }
     z_max = Z_MAX_BY_CAVERN[CAVERN_TYPE]
 
