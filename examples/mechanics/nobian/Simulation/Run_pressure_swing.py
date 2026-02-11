@@ -49,11 +49,11 @@ USE_THERMAL = False
 
 # ── SWING SELECTION ──────────────────────────────────────────────────────────
 # Set the swing value in bar for this run. Change this before each run.
-# Valid values: 10, 12, 14, 16, 18, 20, 30
+# Valid values: 10, 12, 15, 16, 18, 20, 30
 SWING_BAR = 10
 
 # All swing values for reference (used only when running all sequentially via --all)
-SWING_VALUES_MPA = [1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 3.0]
+SWING_VALUES_MPA = [1.0, 1.2, 1.5, 1.6, 1.8, 2.0, 3.0]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
