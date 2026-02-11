@@ -185,13 +185,20 @@ def read_pressure_schedule(case_folder):
 def get_wall_indices_from_msh(msh_path):
     msh = meshio.read(msh_path)
     wall_idx = None
+
     if hasattr(msh, "cells_dict") and "line" in msh.cells_dict:
         wall_idx = np.unique(np.asarray(msh.cells_dict["line"]).reshape(-1))
+
+    if wall_idx is None and isinstance(getattr(msh, "cells", None), dict):
+        if "line" in msh.cells:
+            wall_idx = np.unique(np.asarray(msh.cells["line"]).reshape(-1))
+
     if wall_idx is None:
         for cb in msh.cells:
             if getattr(cb, "type", None) == "line":
                 wall_idx = np.unique(np.asarray(cb.data).reshape(-1))
                 break
+
     if wall_idx is None:
         raise ValueError(f"No 'line' cells found in {msh_path}")
     return msh.points, wall_idx
