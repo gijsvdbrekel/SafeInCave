@@ -1,15 +1,18 @@
 """
-Run_pressure_swing.py — Daily Pressure Depletion Parameter Study
+Run_pressure_swing.py — Daily Pressure Swing Parameter Study
 
 Tests the effect of maximum allowable daily net pressure change on cavern
 stability. Current Dutch regulation limits net pressure depletion to
 10 bar/day (1 MPa/day). This script tests whether exceeding that limit
-(10, 12, 14, 16, 18, 20 bar/day) is mechanically acceptable.
+(10, 12, 14, 16, 18, 20, 30 bar/day) is mechanically acceptable.
 
 Cavern: regular, 1200k m³
-Pressure profile: linear triangular wave, repeated daily
-  - 12 h ramp up by swing_MPa  (injection)
-  - 12 h ramp down by swing_MPa (depletion)
+Pressure profile: symmetric triangle wave, 48h period
+  - 24 h linear ramp up from p_min to p_min + swing  (injection)
+  - 24 h linear ramp down back to p_min              (withdrawal)
+  Example: 10 bar/day → 11 MPa → 12 MPa → 11 MPa over 2 days.
+
+For swing >= 30 bar, dt is reduced to 1 hour (from default 2 hours).
 
 Each swing value runs independently from scratch (leaching → operation).
 
@@ -18,7 +21,7 @@ Usage:
   2. Run:  mpirun -np 4 python Run_pressure_swing.py
   3. Change SWING_BAR, run again in another screen, etc.
 
-  To run all 6 values sequentially in one go:
+  To run all values sequentially in one go:
   mpirun -np 4 python Run_pressure_swing.py --all
 
 Output folders:
@@ -78,11 +81,11 @@ USE_THERMAL = False
 
 # ── SWING SELECTION ──────────────────────────────────────────────────────────
 # Set the swing value in bar for this run. Change this before each run.
-# Valid values: 10, 12, 14, 16, 18, 20
+# Valid values: 10, 12, 14, 16, 18, 20, 30
 SWING_BAR = 10
 
 # All swing values for reference (used only when running all sequentially via --all)
-SWING_VALUES_MPA = [1.0, 1.2, 1.4, 1.6, 1.8, 2.0]
+SWING_VALUES_MPA = [1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 3.0]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -332,8 +335,10 @@ def run_single_swing(swing_mpa):
         print(f"  P_lithostatic:    {p_lithostatic_mpa:.2f} MPa (at cavern center)")
         print(f"  P_leach_end:      {p_leach_end_mpa:.2f} MPa ({LEACHING_END_FRACTION*100:.0f}%)")
         print(f"  Swing:            {swing_mpa:.1f} MPa = {swing_bar} bar")
+        print(f"  Profile:          Triangle wave (24h up, 24h down, 48h period)")
         print(f"  P_min:            {p_leach_end_mpa:.2f} MPa")
         print(f"  P_max:            {p_leach_end_mpa + swing_mpa:.2f} MPa")
+        print(f"  dt:               {1.0 if swing_bar >= 30 else DT_HOURS} hours")
         print(f"  Output:           {output_folder}")
         print("=" * 70)
 
@@ -477,27 +482,53 @@ def run_single_swing(swing_mpa):
     else:
         mom_eq.expect_vp_state = False
 
-    # ═════ BUILD TRIANGULAR WAVE PRESSURE ═════
+    # ═════ BUILD TRIANGLE WAVE PRESSURE (48h period) ═════
+    # Symmetric triangle: 24h ramp up from p_min to p_max, 24h ramp back down.
+    # The swing_bar is the DAILY rate, so in 24h the pressure changes by swing_mpa.
+    # Full cycle = 48h.  Example: 10 bar/day → 11 MPa → 12 MPa → 11 MPa over 2 days.
     p_min_mpa = p_leach_end_mpa
+    p_max_mpa = p_min_mpa + swing_mpa
 
-    # Triangular wave: 12h up, 12h down — repeated daily
-    base_times_h = [0.0, 12.0, 24.0]
-    base_pressures_MPa = [p_min_mpa, p_min_mpa + swing_mpa, p_min_mpa]
+    # Use smaller dt for large swings (30 bar) to resolve the steep ramp
+    dt_hours = 1.0 if swing_bar >= 30 else DT_HOURS
 
     tc_cycling = sf.TimeController(
-        dt=DT_HOURS,
+        dt=dt_hours,
         initial_time=0.0,
         final_time=OPERATION_DAYS * 24.0,
         time_unit="hour"
     )
 
-    t_pressure, p_pressure = build_linear_schedule_multi(
-        tc_cycling,
-        base_times_h, base_pressures_MPa,
-        days=OPERATION_DAYS,
-        mode="repeat",
-        resample_at_dt=True,
-    )
+    # Number of full 48h cycles that fit, plus handle remainder
+    n_full_cycles = OPERATION_DAYS // 2
+    remainder_days = OPERATION_DAYS % 2
+
+    knots_t_h = []
+    knots_p_mpa = []
+    for c in range(n_full_cycles):
+        t_off = c * 48.0
+        if c == 0:
+            knots_t_h.append(t_off + 0.0)
+            knots_p_mpa.append(p_min_mpa)
+        knots_t_h.append(t_off + 24.0)
+        knots_p_mpa.append(p_max_mpa)
+        knots_t_h.append(t_off + 48.0)
+        knots_p_mpa.append(p_min_mpa)
+    # If odd number of days, add the final ramp-up half
+    if remainder_days > 0:
+        t_off = n_full_cycles * 48.0
+        if n_full_cycles == 0:
+            knots_t_h.append(t_off)
+            knots_p_mpa.append(p_min_mpa)
+        knots_t_h.append(t_off + 24.0)
+        knots_p_mpa.append(p_max_mpa)
+
+    knots_t_s = np.array(knots_t_h) * ut.hour
+    knots_p_pa = np.array(knots_p_mpa) * ut.MPa
+
+    # Resample at dt
+    t_pressure = _sample_at_dt(tc_cycling)
+    p_pressure = np.interp(t_pressure, knots_t_s, knots_p_pa).tolist()
 
     # Apply smooth fade-in
     if RAMP_UP_HOURS > 0:
@@ -522,7 +553,7 @@ def run_single_swing(swing_mpa):
     # ═════ OPERATION PHASE ═════
     total_operation_hours = OPERATION_DAYS * 24.0 + extra_hours
     tc_operation = sf.TimeController(
-        dt=DT_HOURS,
+        dt=dt_hours,
         initial_time=0.0,
         final_time=total_operation_hours,
         time_unit="hour"
@@ -564,12 +595,12 @@ def run_single_swing(swing_mpa):
         "leaching_end_fraction": LEACHING_END_FRACTION,
         "debrining_days": DEBRINING_DAYS,
         "ramp_up_hours": RAMP_UP_HOURS,
-        "scenario": "linear",
-        "mode": "repeat",
+        "scenario": "triangle_48h",
+        "mode": "triangle_48h",
         "swing_mpa": swing_mpa,
         "swing_bar": swing_bar,
         "operation_days": OPERATION_DAYS,
-        "dt_hours": DT_HOURS,
+        "dt_hours": dt_hours,
         "use_desai": USE_DESAI,
         "p_lithostatic_mpa": p_lithostatic_mpa,
         "p_leach_end_mpa": p_leach_end_mpa,
