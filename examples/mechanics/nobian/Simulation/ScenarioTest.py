@@ -15,12 +15,12 @@ import math
 # ============================================================
 RUN_DESAI_ONLY = False            # spring + desai (alleen viscoplastisch)
 RUN_DISLOC_OLD_ONLY = False      # spring + dislocation (oude params)
-RUN_DISLOC_NEW_ONLY = False      # spring + dislocation (nieuwe params)
-RUN_FULL = True                 # spring + kelvin + disloc + pressure-solution + desai
+RUN_DISLOC_NEW_ONLY = True      # spring + dislocation (nieuwe params)
+RUN_FULL = False                 # spring + kelvin + disloc + pressure-solution + desai
 RUN_FULL_MINUS_DESAI = False     # spring + kelvin + disloc + pressure-solution (zonder desai)
 
 # Equilibrium: meestal wil je puur elastisch initialiseren (aanrader)
-EQUILIBRIUM_ELASTIC_ONLY = False
+EQUILIBRIUM_ELASTIC_ONLY = True
 
 # ============================================================
 #  FIXED RUN SETTINGS
@@ -397,6 +397,11 @@ def build_base_material_parts(mom_eq):
     n_new = 3.0 * to.ones(mom_eq.n_elems)
     creep_disloc_new = sf.DislocationCreep(A_new, Q_new, n_new, "creep_dislocation_new")
 
+    # Elastic spring for disloc_new scenario (anhydrite-like stiffness)
+    E0_new = 102.0 * ut.GPa * to.ones(mom_eq.n_elems)
+    nu0_new = 0.32 * to.ones(mom_eq.n_elems)
+    spring_new = sf.Spring(E0_new, nu0_new, "spring_new")
+
     # Pressure-solution creep
     A_ps = (14176.0 * 1e-9 / 1e6 / sec_per_year) * to.ones(mom_eq.n_elems)
     d_ps = 5.25e-3 * to.ones(mom_eq.n_elems)
@@ -427,6 +432,7 @@ def build_base_material_parts(mom_eq):
         "kelvin": kelvin,
         "disloc_old": creep_disloc_old,
         "disloc_new": creep_disloc_new,
+        "spring_new": spring_new,
         "pressure_solution": creep_pressure,
         "desai": desai,
     }
@@ -435,7 +441,8 @@ def build_base_material_parts(mom_eq):
 def make_material(mom_eq, parts, *, use_kelvin, use_disloc_old, use_disloc_new, use_pressure_solution, use_desai):
     mat = sf.Material(mom_eq.n_elems)
     mat.set_density(parts["rho"])
-    mat.add_to_elastic(parts["spring"])
+    spring_key = "spring_new" if use_disloc_new else "spring"
+    mat.add_to_elastic(parts[spring_key])
 
     if use_kelvin:
         mat.add_to_non_elastic(parts["kelvin"])
@@ -516,7 +523,7 @@ def main():
     if EQUILIBRIUM_ELASTIC_ONLY:
         mat_eq = make_material(
             mom_eq, parts,
-            use_kelvin=False, use_disloc_old=False, use_disloc_new=False,
+            use_kelvin=False, use_disloc_old=False, use_disloc_new=RUN_DISLOC_NEW_ONLY,
             use_pressure_solution=False, use_desai=False
         )
         mom_eq.expect_vp_state = False
@@ -524,7 +531,7 @@ def main():
         # als je tóch inelastic in equilibrium wil (niet ideaal voor isolatie)
         mat_eq = make_material(
             mom_eq, parts,
-            use_kelvin=True, use_disloc_old=True, use_disloc_new=False,
+            use_kelvin=True, use_disloc_old=(not RUN_DISLOC_NEW_ONLY), use_disloc_new=RUN_DISLOC_NEW_ONLY,
             use_pressure_solution=True, use_desai=False
         )
         mom_eq.expect_vp_state = False

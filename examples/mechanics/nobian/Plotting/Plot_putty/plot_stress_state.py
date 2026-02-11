@@ -302,52 +302,20 @@ def load_wall_points(case_folder):
     order = np.argsort(wall_points[:, 2])
     return wall_points[order]
 
-def auto_generate_probes_from_wall_points(wall_points_sorted_z, n_bend_probes=2, min_gap_idx=5):
+def auto_generate_probes_from_wall_points(wall_points_sorted_z):
+    """Generate probe locations at evenly-spaced heights along the wall."""
     pts = wall_points_sorted_z
-    x = pts[:, 0]
     z = pts[:, 2]
+    z_min, z_max = z.min(), z.max()
 
-    idx_bottom = int(np.argmin(z))
-    idx_top    = int(np.argmax(z))
-    z_mid      = 0.5 * (z[idx_bottom] + z[idx_top])
-    idx_mid    = int(np.argmin(np.abs(z - z_mid)))
+    fractions = {"bottom": 0.0, "threequarter": 0.25, "mid": 0.5, "quarter": 0.75, "top": 1.0}
 
-    base_idx = [idx_top, idx_mid, idx_bottom]
+    probes = {}
+    for name, frac in fractions.items():
+        z_target = z_min + frac * (z_max - z_min)
+        idx = int(np.argmin(np.abs(z - z_target)))
+        probes[name] = pts[idx]
 
-    dx  = np.gradient(x)
-    dz_ = np.gradient(z)
-    ddx = np.gradient(dx)
-    ddz = np.gradient(dz_)
-
-    denom = (dx*dx + dz_*dz_)**1.5
-    denom[denom == 0.0] = np.inf
-    curvature = np.abs(dx * ddz - dz_ * ddx) / denom
-    curvature[np.isnan(curvature)] = 0.0
-
-    idx_all = np.argsort(curvature)[::-1]
-
-    def too_close(new_i, existing, gap=min_gap_idx):
-        return any(abs(new_i - ei) < gap for ei in existing)
-
-    bend_idx = []
-    for i in idx_all:
-        if len(bend_idx) >= n_bend_probes:
-            break
-        if i in base_idx:
-            continue
-        if too_close(i, base_idx + bend_idx):
-            continue
-        bend_idx.append(int(i))
-
-    bend_idx = sorted(bend_idx, key=lambda k: z[k], reverse=True)
-
-    probes = {
-        "top": pts[idx_top],
-        "bend1": pts[bend_idx[0]] if len(bend_idx) > 0 else pts[idx_mid],
-        "bend2": pts[bend_idx[1]] if len(bend_idx) > 1 else pts[idx_mid],
-        "mid": pts[idx_mid],
-        "bottom": pts[idx_bottom],
-    }
     return probes
 
 def read_stress_paths(case_folder, probes_dict):
@@ -394,7 +362,7 @@ def get_case_color_and_style(cavern_label, scenario_preset):
 
 def plot_combined(cases_meta, stress_by_series):
     """Plot all cases combined in one figure."""
-    probe_types = ["top", "mid", "bottom", "bend1", "bend2"]
+    probe_types = ["top", "quarter", "mid", "threequarter", "bottom"]
 
     fig, axes = plt.subplots(2, 3, figsize=(16, 9))
     axes = axes.flatten()
@@ -456,7 +424,7 @@ def plot_combined(cases_meta, stress_by_series):
 
 def plot_separate(cases_meta, stress_by_series):
     """Plot each case in a separate figure."""
-    probe_types = ["top", "mid", "bottom", "bend1", "bend2"]
+    probe_types = ["top", "quarter", "mid", "threequarter", "bottom"]
 
     for (cav, sc), d in stress_by_series.items():
         fig, axes = plt.subplots(2, 3, figsize=(14, 8))
@@ -559,7 +527,7 @@ def main():
         folder = m["case_path"]
         try:
             wall_points = load_wall_points(folder)
-            probes = auto_generate_probes_from_wall_points(wall_points, n_bend_probes=2, min_gap_idx=5)
+            probes = auto_generate_probes_from_wall_points(wall_points)
             series_key = (m.get("cavern_label"), m.get("scenario_preset"))
             stress_by_series[series_key] = read_stress_paths(folder, probes)
         except Exception as e:

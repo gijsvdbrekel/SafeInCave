@@ -112,9 +112,9 @@ SCENARIO_LINESTYLES = {
 # Probe location colors
 PROBE_COLORS = {
     "top": "#e41a1c",
-    "bend1": "#377eb8",
+    "quarter": "#377eb8",
     "mid": "#4daf4a",
-    "bend2": "#984ea3",
+    "threequarter": "#984ea3",
     "bottom": "#ff7f00",
 }
 
@@ -348,56 +348,20 @@ def compute_outward_normal_2d(wall_points):
     return normals
 
 
-def auto_generate_probes_from_wall_points(wall_points_sorted_z, n_bend_probes=2, min_gap_idx=5):
-    """Generate probe locations at key points along the wall."""
+def auto_generate_probes_from_wall_points(wall_points_sorted_z):
+    """Generate probe locations at evenly-spaced heights along the wall."""
     pts = wall_points_sorted_z
-    x = pts[:, 0]
     z = pts[:, 2]
+    z_min, z_max = z.min(), z.max()
 
-    idx_bottom = int(np.argmin(z))
-    idx_top = int(np.argmax(z))
-    z_mid = 0.5 * (z[idx_bottom] + z[idx_top])
-    idx_mid = int(np.argmin(np.abs(z - z_mid)))
+    fractions = {"bottom": 0.0, "threequarter": 0.25, "mid": 0.5, "quarter": 0.75, "top": 1.0}
 
-    base_idx = [idx_top, idx_mid, idx_bottom]
+    probes = {}
+    for name, frac in fractions.items():
+        z_target = z_min + frac * (z_max - z_min)
+        idx = int(np.argmin(np.abs(z - z_target)))
+        probes[name] = {"wall_idx": idx, "wall_point": pts[idx]}
 
-    # Curvature-based bend detection
-    dx = np.gradient(x)
-    dz_ = np.gradient(z)
-    ddx = np.gradient(dx)
-    ddz = np.gradient(dz_)
-
-    denom = (dx*dx + dz_*dz_)**1.5
-    denom[denom == 0.0] = np.inf
-    curvature = np.abs(dx * ddz - dz_ * ddx) / denom
-    curvature[np.isnan(curvature)] = 0.0
-
-    idx_all = np.argsort(curvature)[::-1]
-
-    def too_close(new_i, existing, gap=min_gap_idx):
-        return any(abs(new_i - ei) < gap for ei in existing)
-
-    bend_idx = []
-    for i in idx_all:
-        if len(bend_idx) >= n_bend_probes:
-            break
-        if i in base_idx:
-            continue
-        if too_close(i, base_idx + bend_idx):
-            continue
-        bend_idx.append(int(i))
-
-    bend_idx = sorted(bend_idx, key=lambda k: z[k], reverse=True)
-
-    probes = {
-        "top": {"wall_idx": idx_top, "wall_point": pts[idx_top]},
-        "bend1": {"wall_idx": bend_idx[0] if len(bend_idx) > 0 else idx_mid,
-                  "wall_point": pts[bend_idx[0]] if len(bend_idx) > 0 else pts[idx_mid]},
-        "bend2": {"wall_idx": bend_idx[1] if len(bend_idx) > 1 else idx_mid,
-                  "wall_point": pts[bend_idx[1]] if len(bend_idx) > 1 else pts[idx_mid]},
-        "mid": {"wall_idx": idx_mid, "wall_point": pts[idx_mid]},
-        "bottom": {"wall_idx": idx_bottom, "wall_point": pts[idx_bottom]},
-    }
     return probes
 
 
@@ -607,7 +571,7 @@ def plot_propagation_depth(ax, time_days, fos_data, radial_distances, threshold=
 
     ax.set_xlabel('Time (days)')
     ax.set_ylabel('FOS<1 penetration depth (m)')
-    ax.set_title('Fracture propagation depth into rock')
+    ax.set_title('Connected dilating zone size')
     ax.grid(True, alpha=0.3)
     ax.legend(loc='upper left', fontsize=9)
 
@@ -660,59 +624,23 @@ def pick_one_case_per_series(cases_meta):
 
 
 def plot_single_case(case_meta, wall_points, sample_points, time_days, stress_data, fos_data):
-    """Create full visualization for a single case."""
+    """Create visualization for a single case: cavern profile + dilating zone depth."""
     cav = case_meta.get("cavern_label")
     sc = case_meta.get("scenario_preset")
     case_label = f"{cav} | {sc}" if sc else cav
 
-    fig = plt.figure(figsize=(18, 12))
+    fig, (ax_cavern, ax_depth) = plt.subplots(1, 2, figsize=(16, 8))
 
-    # Layout: 3x3 grid
-    # Row 1: Cavern profile (large) + propagation depth + dilating count
-    # Row 2-3: Individual probe FOS evolution (5 probes)
-
-    ax_cavern = fig.add_subplot(3, 3, 1)
-    ax_depth = fig.add_subplot(3, 3, 2)
-    ax_count = fig.add_subplot(3, 3, 3)
-
-    # Plot cavern with probes
+    # Left: cavern profile with probe sample points
     plot_cavern_with_probes(ax_cavern, wall_points, sample_points)
 
-    # Plot propagation depth (FOS < 1)
+    # Right: connected dilating zone size over time
     plot_propagation_depth(ax_depth, time_days, fos_data, RADIAL_DISTANCES, FOS_THRESHOLD)
 
-    # Plot dilating points count (FOS < 1)
-    plot_dilating_points_count(ax_count, time_days, fos_data, RADIAL_DISTANCES, FOS_THRESHOLD)
-
-    # Individual probe plots
-    probe_names = ["top", "bend1", "mid", "bend2", "bottom"]
-    for i, probe_name in enumerate(probe_names):
-        ax = fig.add_subplot(3, 3, 4 + i)
-        plot_FOS_time_evolution(ax, time_days, fos_data, probe_name, RADIAL_DISTANCES)
-
-    # Last subplot: p-q stress path for wall points
-    ax_pq = fig.add_subplot(3, 3, 9)
-    for probe_name in probe_names:
-        color = PROBE_COLORS.get(probe_name, 'gray')
-        p, q, psi = stress_data[probe_name][0.0]  # Wall point (distance = 0)
-        ax_pq.plot(p, q, linewidth=1.5, color=color, label=probe_name)
-        ax_pq.scatter(p[-1], q[-1], s=30, color=color, edgecolors='black', zorder=5)
-
-    # Add dilatancy boundary to p-q plot (using compression branch for reference)
-    p_range = np.linspace(0.1, 40, 200)
-    q_boundary = compute_dilatancy_boundary_q(p_range, psi=None)  # Compression branch
-    ax_pq.plot(p_range, q_boundary, 'r--', linewidth=1.5, alpha=0.7, label='De Vries boundary')
-
-    ax_pq.set_xlabel('Mean stress p (MPa)')
-    ax_pq.set_ylabel('Von Mises q (MPa)')
-    ax_pq.set_title('Stress paths at wall')
-    ax_pq.grid(True, alpha=0.3)
-    ax_pq.legend(loc='upper left', fontsize=8)
-
-    fig.suptitle(f'Fracture Propagation Analysis (FOS): {case_label}\n'
-                 f'(De Vries criterion, p/q from stored fields, psi from σ, Radial distances: {RADIAL_DISTANCES} m)',
+    fig.suptitle(f'Dilatancy Zone Analysis: {case_label}\n'
+                 f'(De Vries criterion, radial distances: {RADIAL_DISTANCES} m)',
                  fontsize=12, fontweight='bold')
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
 
     return fig
 
@@ -721,7 +649,7 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
     print("=" * 70)
-    print("FRACTURE PROPAGATION ANALYSIS (Factor of Safety)")
+    print("DILATANCY ZONE ANALYSIS (Factor of Safety)")
     print("=" * 70)
     print(f"  ROOT:              {ROOT}")
     print(f"  Pressure:          {SELECT.get('pressure')}")
