@@ -1029,9 +1029,9 @@ def setup_material_homogeneous(mat, n_elems):
     kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
 
     # Dislocation creep
-    ndc = 4.6
-    A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems)
-    Q_dc = (6495.0 * 8.32) * to.ones(n_elems)
+    ndc = 4.91
+    A_dc = (15.8 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems)
+    Q_dc = (6445.0 * 8.32) * to.ones(n_elems)
     n_dc = ndc * to.ones(n_elems)
     creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
 

@@ -338,7 +338,7 @@ def build_base_material_parts(mom_eq):
 
     sec_per_year = 365.25 * 24 * 3600
 
-    # Dislocation creep (CCC oude params)
+    # Dislocation creep (CCC site specific params)
     ndc = 4.6
     A_dc = (40.0 * (1e-6) ** ndc / sec_per_year) * to.ones(mom_eq.n_elems)
     Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)

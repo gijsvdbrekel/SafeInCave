@@ -51,15 +51,20 @@ SELECT = {
     "case_contains": None,
 }
 
-# ── PLOT OPTIONS ───────────────────────────────────────────────────────────────
-# ONE_CASE_PER_SERIES: If True, pick only one case per (cavern, scenario) to avoid duplicates
+# ── PLOT MODE ─────────────────────────────────────────────────────────────────
+# PLOT_MODE controls how figures are grouped:
+#
+#   "compare_shapes"    - One figure per plot type, all cavern shapes overlaid.
+#                         Use when running all shapes with the same settings
+#                         (same pressure, scenario, cycles).
+#                         Color = cavern shape, linestyle = scenario.
+#
+#   "compare_scenarios" - One figure PER CAVERN SHAPE, with different
+#                         scenarios / pressures / cycles overlaid on it.
+#                         Use when comparing what-if settings for the same cavern.
+#                         Color = scenario, linestyle = scenario.
 
-# PLOT_MODE: How to arrange the plots
-#   "combined"  - All cases in one figure (overlay stress paths)
-#   "separate"  - One figure per case
-
-PLOT_MODE = "combined"          # "combined" or "separate"
-ONE_CASE_PER_SERIES = True
+PLOT_MODE = "compare_shapes"    # "compare_shapes" or "compare_scenarios"
 
 FIGURES = {
     "convergence": True,         # Figure 1: volume convergence
@@ -238,12 +243,22 @@ def get_case_color_and_style(cavern_label, scenario_preset):
 
 
 def pick_one_case_per_series(cases_meta):
+    """In compare_shapes mode, keep one case per (cavern, scenario, pressure) combo."""
     out = {}
     for m in cases_meta:
         key = (m.get("cavern_label"), m.get("scenario_preset"), m.get("pressure_scenario"))
         if key not in out:
             out[key] = m
     return list(out.values())
+
+
+def group_cases_by_cavern(cases):
+    """Group cases by cavern_label. Returns dict: cavern_label -> [cases]."""
+    groups = {}
+    for c in cases:
+        cav = c.get("cavern_label", "unknown")
+        groups.setdefault(cav, []).append(c)
+    return groups
 
 
 def case_has_convergence_files(case_path):
@@ -956,6 +971,55 @@ def plot_convergence_separate(cases):
         plt.close(fig)
 
 
+def plot_convergence_per_cavern(cases):
+    """One convergence figure per cavern, scenarios overlaid."""
+    groups = group_cases_by_cavern(cases)
+    for cav_label, cav_cases in groups.items():
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 7), sharex=True,
+                                       gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
+        fig.suptitle(f"3D cavern volume convergence — {cav_label}")
+
+        for c in cav_cases:
+            sc = c.get("scenario_preset")
+            col, ls = get_case_color_and_style(cav_label, sc)
+            label = f"{sc}" if sc is not None else c.get("case_name", "")
+            try:
+                t_days, conv = compute_convergence_3d_percent(c["case_path"], cavern_phys_tag=CAVERN_PHYS_TAG)
+            except Exception as e:
+                print(f"[SKIP] {cav_label}/{sc}: {e}")
+                continue
+            ax1.plot(t_days, conv, linewidth=2.0, color=col, linestyle=ls, alpha=0.95, label=label)
+
+        ax1.set_ylabel("Convergence (ΔV/V0) (%)")
+        ax1.grid(True, alpha=0.3)
+        h, l = ax1.get_legend_handles_labels()
+        uniq = {}
+        for hh, ll in zip(h, l):
+            if ll not in uniq:
+                uniq[ll] = hh
+        if uniq:
+            ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=9, frameon=True)
+
+        tH, pMPa = read_pressure_schedule(cav_cases[0]["case_path"])
+        if tH is None:
+            ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
+        else:
+            ax2.plot(tH / 24.0, pMPa, linewidth=1.7)
+        ax2.set_ylabel("Pressure (MPa)")
+        ax2.set_xlabel("Time (days)")
+        ax2.grid(True, alpha=0.3)
+
+        safe_cav = cav_label.replace(" ", "_")
+        outname = f"convergence_{safe_cav}.png"
+        outpath = os.path.join(OUT_DIR, outname)
+        fig.savefig(outpath, dpi=DPI)
+        print("[SAVED]", outpath)
+
+        if SHOW:
+            plt.show()
+        plt.close(fig)
+
+
 # =============================================================================
 # 10. FIGURE 2 PLOTTING — Stress state
 # =============================================================================
@@ -1069,6 +1133,83 @@ def plot_stress_separate(cases, stress_by_series):
 
         safe_name = f"{cav}_{sc}".replace(" ", "_").replace("/", "_")
         outname = f"pq_paths_{safe_name}.png"
+        outpath = os.path.join(OUT_DIR, outname)
+        fig.savefig(outpath, dpi=DPI)
+        print("[SAVED]", outpath)
+
+        if SHOW:
+            plt.show()
+        plt.close(fig)
+
+
+def plot_stress_per_cavern(cases):
+    """One stress-state figure per cavern, scenarios overlaid."""
+    probe_types = ["top", "quarter", "mid", "threequarter", "bottom"]
+    groups = group_cases_by_cavern(cases)
+
+    for cav_label, cav_cases in groups.items():
+        # Build stress paths for all cases of this cavern
+        stress_by_series = {}
+        for m in cav_cases:
+            folder = m["case_path"]
+            try:
+                wall_points = load_wall_points(folder)
+                probes = auto_generate_probes_from_wall_points(wall_points)
+                series_key = (m.get("cavern_label"), m.get("scenario_preset"))
+                stress_by_series[series_key] = read_stress_paths(folder, probes)
+            except Exception as e:
+                print(f"[WARN] Skipping stress state for {m.get('case_name')}: {e}")
+        if not stress_by_series:
+            print(f"[STRESS STATE] No valid data for {cav_label}")
+            continue
+
+        fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+        axes = axes.flatten()
+
+        for i, ptype in enumerate(probe_types):
+            ax = axes[i]
+            plot_dilatancy_boundaries(ax, show_boundaries=SHOW_DILATANCY)
+
+            for (cav, sc), d in stress_by_series.items():
+                p, q = d[ptype]
+                color, linestyle = get_case_color_and_style(cav, sc)
+                label = f"{sc}" if sc is not None else "default"
+
+                ax.plot(p, q, linewidth=2.0, color=color, linestyle=linestyle, label=label)
+                ax.scatter(p[-1], q[-1], s=30, edgecolors="black", linewidths=0.6,
+                           color=color, zorder=5)
+
+            ax.set_title(f"p-q stress path: {ptype}")
+            ax.set_xlabel("Mean stress p (MPa)")
+            ax.set_ylabel("Von Mises q (MPa)")
+            ax.grid(True, alpha=0.3)
+
+        axp = axes[5]
+        tH, pMPa = read_pressure_schedule(cav_cases[0]["case_path"])
+        if tH is None:
+            axp.text(0.5, 0.5, "No pressure_schedule.json found.",
+                     ha="center", va="center", transform=axp.transAxes)
+            axp.axis("off")
+        else:
+            axp.plot(tH / 24.0, pMPa, linewidth=2.0, color="#1f77b4")
+            axp.set_title("Pressure schedule")
+            axp.set_xlabel("Time (days)")
+            axp.set_ylabel("Pressure (MPa)")
+            axp.grid(True, alpha=0.3)
+
+        handles, labels = axes[0].get_legend_handles_labels()
+        uniq = {}
+        for h, l in zip(handles, labels):
+            if l not in uniq:
+                uniq[l] = h
+        fig.legend(uniq.values(), uniq.keys(), loc="upper center", bbox_to_anchor=(0.5, 0.96),
+                   ncol=min(5, len(uniq)), frameon=True, fontsize=9)
+
+        fig.suptitle(f"Stress State — {cav_label}", fontsize=12, fontweight="bold", y=0.99)
+        fig.tight_layout(rect=[0, 0, 1, 0.92])
+
+        safe_cav = cav_label.replace(" ", "_")
+        outname = f"pq_paths_{safe_cav}.png"
         outpath = os.path.join(OUT_DIR, outname)
         fig.savefig(outpath, dpi=DPI)
         print("[SAVED]", outpath)
@@ -1206,6 +1347,56 @@ def plot_fos_separate(cases):
         plt.close()
 
 
+def plot_fos_per_cavern(cases):
+    """One FOS figure per cavern, scenarios overlaid."""
+    groups = group_cases_by_cavern(cases)
+    for cav_label, cav_cases in groups.items():
+        plt.figure(figsize=(14, 7))
+
+        for c in cav_cases:
+            sc = c.get("scenario_preset")
+            col, ls = get_case_color_and_style(cav_label, sc)
+            label = f"{sc}" if sc is not None else c.get("case_name", "")
+
+            try:
+                d = _compute_fos_for_case(c)
+            except Exception as e:
+                print(f"[SKIP] {cav_label}/{sc}: {e}")
+                continue
+
+            t_days = d["t_days"]
+            plt.plot(t_days, d["fos_min_global"], lw=2.2, color=col, linestyle=ls, label=f"{label} — global min")
+            plt.plot(t_days, d["roof_stats"]["mean"],  lw=1.6, color=col, linestyle="--", alpha=0.7, label=f"{label} — roof mean")
+            plt.plot(t_days, d["mid_stats"]["mean"],   lw=1.6, color=col, linestyle="-.", alpha=0.7, label=f"{label} — mid mean")
+            plt.plot(t_days, d["floor_stats"]["mean"], lw=1.6, color=col, linestyle=":",  alpha=0.7, label=f"{label} — floor mean")
+
+        plt.axhline(1.0, color="k", lw=1.2, label="FoS = 1.0 (critical)")
+        plt.xlabel("Time (days)")
+        plt.ylabel("FoS (-)")
+        plt.grid(True, alpha=0.3)
+        plt.title(f"Factor of Safety — {cav_label}")
+
+        ax = plt.gca()
+        handles, labels = ax.get_legend_handles_labels()
+        uniq = {}
+        for h, l in zip(handles, labels):
+            if l not in uniq:
+                uniq[l] = h
+        ax.legend(uniq.values(), uniq.keys(), fontsize=8, frameon=True, loc="best")
+
+        plt.tight_layout()
+
+        safe_cav = cav_label.replace(" ", "_")
+        outname = f"fos_{safe_cav}.png"
+        outpath = os.path.join(OUT_DIR, outname)
+        plt.savefig(outpath, dpi=DPI)
+        print("[SAVED]", outpath)
+
+        if SHOW:
+            plt.show()
+        plt.close()
+
+
 # =============================================================================
 # 12. FIGURE 4 PLOTTING — Fracture propagation (always per-case)
 # =============================================================================
@@ -1316,6 +1507,8 @@ def main():
     if MPI.COMM_WORLD.rank != 0:
         return
 
+    mode = PLOT_MODE.lower().replace(" ", "_")
+
     print("=" * 70)
     print("COMBINED PLOT SCRIPT — plot_results.py")
     print("=" * 70)
@@ -1339,7 +1532,8 @@ def main():
                   m.get("pressure_scenario"), m.get("case_name"))
         raise RuntimeError(f"No cases matched SELECT={SELECT}")
 
-    if ONE_CASE_PER_SERIES:
+    # In compare_shapes mode, deduplicate so there is one case per series
+    if mode == "compare_shapes":
         cases = pick_one_case_per_series(cases)
 
     print(f"[INFO] {len(cases)} case(s) after filtering:")
@@ -1351,10 +1545,13 @@ def main():
         conv_cases = [c for c in cases if case_has_convergence_files(c["case_path"])]
         if conv_cases:
             print(f"\n[CONVERGENCE] {len(conv_cases)} case(s) with required files")
-            if PLOT_MODE.lower() == "combined":
+            if mode == "compare_shapes":
                 plot_convergence_combined(conv_cases)
+            elif mode == "compare_scenarios":
+                plot_convergence_per_cavern(conv_cases)
             else:
-                plot_convergence_separate(conv_cases)
+                print(f"[WARN] Unknown PLOT_MODE '{PLOT_MODE}', using compare_shapes")
+                plot_convergence_combined(conv_cases)
         else:
             print("[CONVERGENCE] No cases with required files (u.xdmf + geom.msh)")
 
@@ -1363,23 +1560,25 @@ def main():
         stress_cases = [c for c in cases if case_has_stress_files(c["case_path"])]
         if stress_cases:
             print(f"\n[STRESS STATE] {len(stress_cases)} case(s) with required files")
-            stress_by_series = {}
-            for m in stress_cases:
-                folder = m["case_path"]
-                try:
-                    wall_points = load_wall_points(folder)
-                    probes = auto_generate_probes_from_wall_points(wall_points)
-                    series_key = (m.get("cavern_label"), m.get("scenario_preset"))
-                    stress_by_series[series_key] = read_stress_paths(folder, probes)
-                except Exception as e:
-                    print(f"[WARN] Skipping stress state for {m.get('case_name')}: {e}")
-            if stress_by_series:
-                if PLOT_MODE.lower() == "combined":
+            if mode == "compare_shapes":
+                stress_by_series = {}
+                for m in stress_cases:
+                    folder = m["case_path"]
+                    try:
+                        wall_points = load_wall_points(folder)
+                        probes = auto_generate_probes_from_wall_points(wall_points)
+                        series_key = (m.get("cavern_label"), m.get("scenario_preset"))
+                        stress_by_series[series_key] = read_stress_paths(folder, probes)
+                    except Exception as e:
+                        print(f"[WARN] Skipping stress state for {m.get('case_name')}: {e}")
+                if stress_by_series:
                     plot_stress_combined(stress_cases, stress_by_series)
                 else:
-                    plot_stress_separate(stress_cases, stress_by_series)
+                    print("[STRESS STATE] No valid stress data could be loaded.")
+            elif mode == "compare_scenarios":
+                plot_stress_per_cavern(stress_cases)
             else:
-                print("[STRESS STATE] No valid stress data could be loaded.")
+                print(f"[WARN] Unknown PLOT_MODE '{PLOT_MODE}', skipping stress state")
         else:
             print("[STRESS STATE] No cases with required files (u.xdmf + geom.msh + p/q_elems)")
 
@@ -1388,10 +1587,13 @@ def main():
         fos_cases = [c for c in cases if case_has_fos_files(c["case_path"])]
         if fos_cases:
             print(f"\n[FOS] {len(fos_cases)} case(s) with required files")
-            if PLOT_MODE.lower() == "combined":
+            if mode == "compare_shapes":
                 plot_fos_combined(fos_cases)
+            elif mode == "compare_scenarios":
+                plot_fos_per_cavern(fos_cases)
             else:
-                plot_fos_separate(fos_cases)
+                print(f"[WARN] Unknown PLOT_MODE '{PLOT_MODE}', using compare_shapes")
+                plot_fos_combined(fos_cases)
         else:
             print("[FOS] No cases with required files (geom.msh + p/q_elems + sig.xdmf)")
 
