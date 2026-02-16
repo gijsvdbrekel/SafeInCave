@@ -73,6 +73,15 @@ def build_swing_colors(swing_bars):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SWING LINESTYLE HELPER  (NEW)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _swing_linestyle(bar):
+    """Make 30 bar/day dashed, others solid."""
+    return "--" if bar == 30 else "-"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CAVERN LABEL HELPER
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -472,14 +481,27 @@ def plot_fig_convergence(cavern_key, cavern_label, cases, swing_colors):
 
         try:
             t, conv = compute_convergence(cp, cavern_tag=CAVERN_PHYS_TAG)
-            ax_conv.plot(t, conv, linewidth=2, color=color, alpha=0.9, label=f"{bar} bar/day")
+            ax_conv.plot(
+                t, conv,
+                linewidth=2,
+                linestyle=_swing_linestyle(bar),   # NEW
+                color=color,
+                alpha=0.9,
+                label=f"{bar} bar/day"
+            )
             print(f"    [CONV] {bar} bar: {conv[-1]:.4f}% at t={t[-1]:.1f} d")
         except Exception as e:
             print(f"    [WARN] Convergence {bar} bar: {e}")
 
         t_d, p_mpa = read_pressure_schedule(cp)
         if t_d is not None:
-            ax_pres.plot(t_d, p_mpa, linewidth=1.2, color=color, alpha=0.7)
+            ax_pres.plot(
+                t_d, p_mpa,
+                linewidth=1.2,
+                linestyle=_swing_linestyle(bar),   # NEW
+                color=color,
+                alpha=0.7
+            )
 
     ax_conv.set_ylabel("Convergence (dV/V0) (%)")
     ax_conv.grid(True, alpha=0.3)
@@ -513,7 +535,6 @@ def plot_fig_stress_state(cavern_key, cavern_label, cases, swing_colors):
     fig, axes = plt.subplots(2, 3, figsize=(16, 9))
     axes = axes.flatten()
 
-    # Collect stress paths per swing
     stress_by_swing = {}
     for c in cases:
         bar = c["swing_bar"]
@@ -533,7 +554,6 @@ def plot_fig_stress_state(cavern_key, cavern_label, cases, swing_colors):
         print("  [SKIP] No stress data available")
         return
 
-    # Plot each probe
     for i, ptype in enumerate(PROBE_ORDER):
         ax = axes[i]
         plot_dilatancy_boundaries(ax, show_boundaries=SHOW_DILATANCY)
@@ -544,7 +564,13 @@ def plot_fig_stress_state(cavern_key, cavern_label, cases, swing_colors):
                 continue
             p, q = d[ptype]
             color = swing_colors[bar]
-            ax.plot(p, q, linewidth=2.0, color=color, label=f"{bar} bar/day")
+            ax.plot(
+                p, q,
+                linewidth=2.0,
+                linestyle=_swing_linestyle(bar),   # NEW
+                color=color,
+                label=f"{bar} bar/day"
+            )
             ax.scatter(p[-1], q[-1], s=30, edgecolors="black", linewidths=0.6,
                        color=color, zorder=5)
 
@@ -553,18 +579,23 @@ def plot_fig_stress_state(cavern_key, cavern_label, cases, swing_colors):
         ax.set_ylabel("Von Mises q (MPa)")
         ax.grid(True, alpha=0.3)
 
-    # Pressure schedule in last subplot
     axp = axes[5]
     for c in cases:
+        bar = c["swing_bar"]
         t_d, p_mpa = read_pressure_schedule(c["case_path"])
         if t_d is not None:
-            axp.plot(t_d, p_mpa, linewidth=1.2, color=swing_colors[c["swing_bar"]], alpha=0.7)
+            axp.plot(
+                t_d, p_mpa,
+                linewidth=1.2,
+                linestyle=_swing_linestyle(bar),   # NEW
+                color=swing_colors[bar],
+                alpha=0.7
+            )
     axp.set_title("Pressure schedule")
     axp.set_xlabel("Time (days)")
     axp.set_ylabel("Pressure (MPa)")
     axp.grid(True, alpha=0.3)
 
-    # Shared legend from first probe subplot
     handles, labels = axes[0].get_legend_handles_labels()
     uniq = {}
     for h, l in zip(handles, labels):
@@ -598,8 +629,7 @@ def plot_fig_fos(cavern_key, cavern_label, cases, swing_colors):
     fig, axes = plt.subplots(2, 3, figsize=(16, 9))
     axes = axes.flatten()
 
-    # Collect FOS per swing
-    fos_by_swing = {}  # bar -> (t_days, dict[probe] -> fos_array)
+    fos_by_swing = {}
     for c in cases:
         bar = c["swing_bar"]
         cp = c["case_path"]
@@ -620,7 +650,6 @@ def plot_fig_fos(cavern_key, cavern_label, cases, swing_colors):
         print("  [SKIP] No FOS data available")
         return
 
-    # Plot each probe
     for i, ptype in enumerate(PROBE_ORDER):
         ax = axes[i]
 
@@ -630,7 +659,13 @@ def plot_fig_fos(cavern_key, cavern_label, cases, swing_colors):
                 continue
             fos = fos_probes[ptype]
             color = swing_colors[bar]
-            ax.plot(t_days, fos, linewidth=1.8, color=color, label=f"{bar} bar/day")
+            ax.plot(
+                t_days, fos,
+                linewidth=1.8,
+                linestyle=_swing_linestyle(bar),   # NEW
+                color=color,
+                label=f"{bar} bar/day"
+            )
 
         ax.axhline(y=1.0, color='red', linestyle=':', linewidth=1.5, alpha=0.8)
         ax.set_title(f"FOS: {ptype}")
@@ -638,14 +673,19 @@ def plot_fig_fos(cavern_key, cavern_label, cases, swing_colors):
         ax.set_ylabel("Factor of Safety")
         ax.grid(True, alpha=0.3)
 
-    # Summary subplot: minimum FOS across all probes
     ax_sum = axes[5]
     for bar in sorted(fos_by_swing.keys()):
         t_days, fos_probes = fos_by_swing[bar]
         all_fos = np.array([fos_probes[p] for p in PROBE_ORDER if p in fos_probes])
         min_fos = np.min(all_fos, axis=0)
         color = swing_colors[bar]
-        ax_sum.plot(t_days, min_fos, linewidth=2, color=color, label=f"{bar} bar/day")
+        ax_sum.plot(
+            t_days, min_fos,
+            linewidth=2,
+            linestyle=_swing_linestyle(bar),   # NEW
+            color=color,
+            label=f"{bar} bar/day"
+        )
 
     ax_sum.axhline(y=1.0, color='red', linestyle=':', linewidth=1.5, alpha=0.8)
     ax_sum.set_title("Min FOS (all probes)")
@@ -653,7 +693,6 @@ def plot_fig_fos(cavern_key, cavern_label, cases, swing_colors):
     ax_sum.set_ylabel("Factor of Safety")
     ax_sum.grid(True, alpha=0.3)
 
-    # Shared legend
     handles, labels = axes[0].get_legend_handles_labels()
     uniq = {}
     for h, l in zip(handles, labels):
@@ -682,7 +721,6 @@ def plot_fig_fos(cavern_key, cavern_label, cases, swing_colors):
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # Discover cases
     all_swing = discover_swing_cases(ROOT)
 
     if CAVERN is not None:
@@ -699,7 +737,6 @@ def main():
             print(f"  (filtered for CAVERN = '{CAVERN}')")
         return
 
-    # Group by cavern shape
     cavern_groups = {}
     for c in all_swing:
         key = c["cavern_key"]
@@ -707,7 +744,6 @@ def main():
             cavern_groups[key] = []
         cavern_groups[key].append(c)
 
-    # Build color map across all swing values found
     all_bars = sorted(set(c["swing_bar"] for c in all_swing))
     swing_colors = build_swing_colors(all_bars)
 
@@ -721,7 +757,6 @@ def main():
     print(f"  Color map:  {all_bars} bar/day")
     print("=" * 70)
 
-    # Process each cavern group
     for ckey in sorted(cavern_groups):
         cases = cavern_groups[ckey]
         cavern_label = cases[0]["cavern_label"]
@@ -730,15 +765,12 @@ def main():
         print(f"  CAVERN: {cavern_label} ({ckey})")
         print(f"{'=' * 70}")
 
-        # Figure 1: Convergence
         print("\n  --- Figure 1: Convergence ---")
         plot_fig_convergence(ckey, cavern_label, cases, swing_colors)
 
-        # Figure 2: Stress state
         print("\n  --- Figure 2: Stress state ---")
         plot_fig_stress_state(ckey, cavern_label, cases, swing_colors)
 
-        # Figure 3: Factor of Safety
         print("\n  --- Figure 3: Factor of Safety ---")
         plot_fig_fos(ckey, cavern_label, cases, swing_colors)
 
