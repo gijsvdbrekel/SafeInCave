@@ -79,7 +79,7 @@ STEPPED_N_STEPS = 6
 
 # LEACHING_END_FRACTION: Fraction of lithostatic pressure for operational minimum
 #   When USE_LEACHING = True: Leaching ends at this fraction
-#   When USE_LEACHING = False: Equilibrium pressure for sinus/linear derived from this
+#   When USE_LEACHING = False: Equilibrium pressure for industry/transport derived from this
 LEACHING_END_FRACTION = 0.40
 
 # ── DEBRINING PHASE SETTINGS (only used when USE_LEACHING = True) ────────────
@@ -101,35 +101,42 @@ RAMP_UP_HOURS = 336 # 2 weeks
 
 # ── PRESSURE SCENARIO ──────────────────────────────────────────────────────────
 # PRESSURE_SCENARIO: Choose one of:
-#   "sinus"     - Sinusoidal pressure variation
-#   "linear"    - Piecewise linear pressure profile
-#   "irregular" - Irregular/spline-smoothed pressure profile
-#   "csv"       - Load pressure profile from CSV file
-PRESSURE_SCENARIO = "sinus"
+#   "industry"         - Sinusoidal supply variation (~12 cycles/year)
+#   "transport"        - Trapezoidal 2-day cycle (nighttime high → daytime low)
+#   "power_generation" - Abrupt withdrawal events with gradual re-pressurisation
+#   "csv"              - Load pressure profile from CSV file
+PRESSURE_SCENARIO = "industry"
 
-# ── SINUS SETTINGS (only used when PRESSURE_SCENARIO = "sinus") ────────────────
-# When USE_LEACHING = True: Operational pressure oscillates around p_leach_end + P_AMPLITUDE_MPA
-# When USE_LEACHING = False: Uses P_MEAN_MPA directly as center of oscillation
+# ── INDUSTRY SETTINGS (only used when PRESSURE_SCENARIO = "industry") ──────────
+# Sinusoidal schedule. With leaching: oscillates around p_leach_end + P_AMPLITUDE_MPA.
+# Without leaching: uses P_MEAN_MPA as centre.
 P_MEAN_MPA = 15.0          # Mean pressure (only used if USE_LEACHING = False)
-P_AMPLITUDE_MPA = 6.5      # Amplitude (half peak-to-peak range)
+P_AMPLITUDE_MPA = 3.5      # Half peak-to-peak amplitude (MPa)
 
-# ── LINEAR SETTINGS (only used when PRESSURE_SCENARIO = "linear") ──────────────
-P_MIN_MPA = 15.0           # Minimum pressure (only used if USE_LEACHING = False)
-P_MAX_MPA = 21.4           # Maximum pressure (only used if USE_LEACHING = False)
-PRESSURE_SWING_MPA = 10    # Swing from p_leach_end (only used if USE_LEACHING = True)
+# ── TRANSPORT SETTINGS (only used when PRESSURE_SCENARIO = "transport") ─────────
+# Two-day trapezoidal cycle: 8 h at high → ramp down → 16 h at low → ramp up → 8 h at high.
+# Pressures are offsets above p_leach_end (or absolute if USE_LEACHING = False).
+P_HIGH_OFFSET_MPA = 5.0    # High-pressure offset above p_leach_end (MPa)
+P_LOW_OFFSET_MPA  = 1.0    # Low-pressure offset above p_leach_end (MPa)
+
+# ── POWER GENERATION SETTINGS (only used when PRESSURE_SCENARIO = "power_generation") ──
+# N_EVENTS abrupt withdrawal events over the operation period, each with a sharp
+# 30-min drop, sustained low, and slow exponential re-pressurisation (tau = 4 h).
+N_EVENTS = 10              # Number of withdrawal events
+P_BASE_OFFSET_MPA = 7.0    # Resting pressure offset above p_leach_end (MPa)
 
 # ── SCHEDULE SETTINGS ──────────────────────────────────────────────────────────
-# SCHEDULE_MODE: How to distribute cycles:
+# SCHEDULE_MODE: How to distribute cycles (used by "industry" and "transport"):
 #   "stretch" - N_CYCLES spread evenly over OPERATION_DAYS
-#   "repeat"  - Daily pattern repeated each day
+#   "repeat"  - Cycle pattern repeated with its native period
 #   "direct"  - (CSV only) Use hourly CSV values directly
 SCHEDULE_MODE = "stretch"
 
 # OPERATION_DAYS: Total simulation duration in days (operation phase only)
 OPERATION_DAYS = 365
 
-# N_CYCLES: Number of pressure cycles (only used with "stretch" mode)
-N_CYCLES = 10
+# N_CYCLES: Number of pressure cycles (industry: sinusoidal; transport: 2-day cycles)
+N_CYCLES = 12
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
 dt_hours = 2
@@ -144,7 +151,8 @@ RESCALE_MAX_MPA = 20.0
 RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
-USE_DESAI = True
+USE_SCENARIO_B    = False    # False = Scenario A (CCC Zuidwending), True = Scenario B (calibrated)
+USE_MUNSON_DAWSON = False    # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
 USE_THERMAL = False
@@ -168,7 +176,7 @@ T_GAS_AMPLITUDE_C = 20.0
 VALID_SHAPES = ["regular", "tilted", "directcirculation", "asymmetric", "reversedcirculation", "fastleached", "tubefailure"]
 VALID_SPECIAL_CAVERNS = ["A5"]
 VALID_SIZES = [600, 1200]
-VALID_SCENARIOS = ["sinus", "linear", "irregular", "csv"]
+VALID_SCENARIOS = ["industry", "transport", "power_generation", "csv"]
 VALID_MODES_STANDARD = ["stretch", "repeat"]
 VALID_MODES_CSV = ["stretch", "repeat", "direct"]
 VALID_LEACHING_MODES = ["linear", "stepped"]
@@ -295,16 +303,15 @@ def validate_configuration():
         if EQUILIBRIUM_DT_HOURS <= 0:
             errors.append(f"EQUILIBRIUM_DT_HOURS must be positive, got {EQUILIBRIUM_DT_HOURS}")
 
-    if PRESSURE_SCENARIO == "sinus":
+    if PRESSURE_SCENARIO == "industry":
         if P_AMPLITUDE_MPA <= 0:
             errors.append(f"P_AMPLITUDE_MPA must be positive, got {P_AMPLITUDE_MPA}")
-    elif PRESSURE_SCENARIO == "linear":
-        if USE_LEACHING:
-            if PRESSURE_SWING_MPA <= 0:
-                errors.append(f"PRESSURE_SWING_MPA must be positive, got {PRESSURE_SWING_MPA}")
-        else:
-            if P_MIN_MPA >= P_MAX_MPA:
-                errors.append(f"P_MIN_MPA ({P_MIN_MPA}) must be < P_MAX_MPA ({P_MAX_MPA})")
+    elif PRESSURE_SCENARIO == "transport":
+        if P_HIGH_OFFSET_MPA <= P_LOW_OFFSET_MPA:
+            errors.append(f"P_HIGH_OFFSET_MPA ({P_HIGH_OFFSET_MPA}) must be > P_LOW_OFFSET_MPA ({P_LOW_OFFSET_MPA})")
+    elif PRESSURE_SCENARIO == "power_generation":
+        if N_EVENTS < 1:
+            errors.append(f"N_EVENTS must be >= 1, got {N_EVENTS}")
     elif PRESSURE_SCENARIO == "csv":
         if not os.path.isfile(CSV_FILE_PATH):
             errors.append(f"CSV_FILE_PATH not found: {CSV_FILE_PATH}")
@@ -892,6 +899,43 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
     )
 
 
+def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days, seed=42):
+    """
+    N_EVENTS abrupt withdrawal events spread over the operation period.
+    Each event: sharp 30-min drop → sustained low (2–5 h) → exponential recovery (tau=4 h).
+    Reproducible via seed.  Returns (t_vals_s, p_vals_Pa).
+    """
+    t_vals_s = _sample_at_dt(tc)
+    t_h = np.array(t_vals_s) / ut.hour
+    p_base_mpa = p_base_pa / ut.MPa
+    p_mpa = np.full(len(t_h), p_base_mpa)
+
+    rng = np.random.RandomState(seed)
+    event_centers_days = np.linspace(1.0, operation_days - 1.0, max(1, n_events))
+    event_centers_days = event_centers_days + rng.uniform(-0.8, 0.8, size=n_events)
+
+    for day_c in event_centers_days:
+        t_start_h = day_c * 24.0
+        duration = rng.uniform(2.0, 5.0)   # sustained low: 2–5 hours
+        depth    = rng.uniform(3.5, 6.5)   # pressure drop: 3.5–6.5 MPa
+        for i, t in enumerate(t_h):
+            if t < t_start_h:
+                continue
+            dt_ev = t - t_start_h
+            if dt_ev < 0.5:
+                drop = depth * (dt_ev / 0.5)
+            elif dt_ev < 0.5 + duration:
+                drop = depth
+            else:
+                drop = depth * math.exp(-(dt_ev - 0.5 - duration) / 4.0)
+                if drop < 0.05:
+                    break
+            p_mpa[i] = min(p_mpa[i], p_base_mpa - drop)
+
+    p_vals = (p_mpa * ut.MPa).tolist()
+    return t_vals_s, p_vals
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MOMENTUM EQUATION CLASSES
 # ══════════════════════════════════════════════════════════════════════════════
@@ -902,7 +946,7 @@ class LinearMomentumMod(sf.LinearMomentum):
         self.expect_vp_state = False
 
     def initialize(self) -> None:
-        self.C.x.array[:] = to.flatten(self.mat.C)
+        self.C.x.array[:] = to.flatten(self.mat.C).detach().cpu().numpy()
         self.Fvp = do.fem.Function(self.DG0_1)
         self.alpha = do.fem.Function(self.DG0_1)
         self.eps_vp = do.fem.Function(self.DG0_3x3)
@@ -917,19 +961,19 @@ class LinearMomentumMod(sf.LinearMomentum):
         st = elems[-1]
 
         if hasattr(st, "eps_ne_k"):
-            self.eps_vp.x.array[:] = to.flatten(st.eps_ne_k)
+            self.eps_vp.x.array[:] = to.flatten(st.eps_ne_k).detach().cpu().numpy()
 
         if self.expect_vp_state:
             if not (hasattr(st, "Fvp") and hasattr(st, "alpha")):
                 if MPI.COMM_WORLD.rank == 0:
                     print("[WARN] Expected Fvp/alpha but missing.")
                 return
-            self.Fvp.x.array[:] = st.Fvp
-            self.alpha.x.array[:] = st.alpha
+            self.Fvp.x.array[:] = to.as_tensor(st.Fvp).detach().cpu().numpy()
+            self.alpha.x.array[:] = to.as_tensor(st.alpha).detach().cpu().numpy()
         else:
             if hasattr(st, "Fvp") and hasattr(st, "alpha"):
-                self.Fvp.x.array[:] = st.Fvp
-                self.alpha.x.array[:] = st.alpha
+                self.Fvp.x.array[:] = to.as_tensor(st.Fvp).detach().cpu().numpy()
+                self.alpha.x.array[:] = to.as_tensor(st.alpha).detach().cpu().numpy()
 
 
 class SparseSaveFields(sf.SaveFields):
@@ -971,25 +1015,25 @@ def main():
         p_leach_end_mpa = LEACHING_END_FRACTION * p_lithostatic_mpa
         p_leach_end = p_leach_end_mpa * ut.MPa
 
-        if PRESSURE_SCENARIO == "sinus":
+        if PRESSURE_SCENARIO == "industry":
             p_op_min_mpa = p_leach_end_mpa
             p_op_mean_mpa = p_leach_end_mpa + P_AMPLITUDE_MPA
             p_op_max_mpa = p_leach_end_mpa + 2 * P_AMPLITUDE_MPA
-        elif PRESSURE_SCENARIO == "linear":
-            p_op_min_mpa = p_leach_end_mpa
-            p_op_max_mpa = p_leach_end_mpa + PRESSURE_SWING_MPA
+        elif PRESSURE_SCENARIO == "transport":
+            p_op_min_mpa = p_leach_end_mpa + P_LOW_OFFSET_MPA
+            p_op_max_mpa = p_leach_end_mpa + P_HIGH_OFFSET_MPA
         else:
             p_op_min_mpa = p_leach_end_mpa
     else:
         # Equilibrium mode: use direct pressure settings
-        if PRESSURE_SCENARIO == "sinus":
+        if PRESSURE_SCENARIO == "industry":
             p_gas_mpa = P_MEAN_MPA
-        elif PRESSURE_SCENARIO == "linear":
-            p_gas_mpa = P_MIN_MPA
+        elif PRESSURE_SCENARIO == "transport":
+            p_gas_mpa = P_MEAN_MPA
         elif PRESSURE_SCENARIO == "csv":
             p_gas_mpa = P_EQUILIBRIUM_MPA
         else:
-            p_gas_mpa = 15.0
+            p_gas_mpa = P_EQUILIBRIUM_MPA
         p_gas = p_gas_mpa * ut.MPa
 
     # Print configuration
@@ -1026,7 +1070,7 @@ def main():
         print(f"    Days:           {OPERATION_DAYS}")
         print(f"    Cycles:         {N_CYCLES}")
         print(f"    dt:             {dt_hours} hours")
-        print(f"    Desai:          {'enabled' if USE_DESAI else 'disabled'}")
+        print(f"    Material:       Scenario {'B' if USE_SCENARIO_B else 'A'} / {'Munson-Dawson' if USE_MUNSON_DAWSON else 'SafeInCave'}")
         print(f"    Thermal:        {'enabled' if USE_THERMAL else 'disabled'}")
         print("-" * 70)
         print(f"  Grid:             {config['grid_folder']}")
@@ -1040,15 +1084,17 @@ def main():
     p_ref = config["p_ref_mpa"] * ut.MPa
 
     # Output folder
+    _scen_tag  = "B" if USE_SCENARIO_B else "A"
+    _model_tag = "MD" if USE_MUNSON_DAWSON else "SIC"
     if USE_LEACHING:
         output_folder = os.path.join(
             "output",
-            f"case_leaching_{LEACHING_MODE}_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_{config['cavern_key']}"
+            f"case_leaching_{LEACHING_MODE}_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_S{_scen_tag}_{_model_tag}_{config['cavern_key']}"
         )
     else:
         output_folder = os.path.join(
             "output",
-            f"case_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_{config['cavern_key']}"
+            f"case_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_S{_scen_tag}_{_model_tag}_{config['cavern_key']}"
         )
 
     side_burden = p_ref
@@ -1068,30 +1114,86 @@ def main():
     rho = salt_density * to.ones(mom_eq.n_elems, dtype=to.float64)
     mat.set_density(rho)
 
+    sec_per_year = 365.25 * 24 * 3600
+
+    # -- Elastic spring (same for both scenarios) --
     E0 = 20.425 * ut.GPa * to.ones(mom_eq.n_elems)
     nu0 = 0.25 * to.ones(mom_eq.n_elems)
     spring_0 = sf.Spring(E0, nu0, "spring")
+    mat.add_to_elastic(spring_0)
 
-    eta = 105e11 * to.ones(mom_eq.n_elems)
-    E1 = 10 * ut.GPa * to.ones(mom_eq.n_elems)
-    nu1 = 0.25 * to.ones(mom_eq.n_elems)
-    kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
+    if not USE_SCENARIO_B:
+        # ── Scenario A: CCC Zuidwending ───────────────────────────────────────
+        if not USE_MUNSON_DAWSON:
+            # SafeInCave model: Kelvin + DislocationCreep
+            eta = 2.5e5 * to.ones(mom_eq.n_elems)
+            E1  = 42.0 * ut.GPa * to.ones(mom_eq.n_elems)
+            nu1 = 0.32 * to.ones(mom_eq.n_elems)
+            kelvin  = sf.Viscoelastic(eta, E1, nu1, "kelvin")
+            ndc = 4.6
+            A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+            Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
+            n_dc = ndc * to.ones(mom_eq.n_elems)
+            creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
+            mat.add_to_non_elastic(kelvin)
+            mat.add_to_non_elastic(creep_0)
+        else:
+            # Munson-Dawson model (contains its own steady-state disloc)
+            nmd   = 4.99
+            A_md  = (18.31 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems)
+            Q_md  = (6356.0 * 8.32) * to.ones(mom_eq.n_elems)
+            n_md  = nmd  * to.ones(mom_eq.n_elems)
+            K0_md = 7.0e-7 * to.ones(mom_eq.n_elems)
+            c_md  = 9.02e-3 * to.ones(mom_eq.n_elems)
+            m_md  = 3.0    * to.ones(mom_eq.n_elems)
+            aw_md = -13.2  * to.ones(mom_eq.n_elems)
+            bw_md = -7.738 * to.ones(mom_eq.n_elems)
+            d_md  = 0.58   * to.ones(mom_eq.n_elems)
+            mu_md = E0 / (2.0 * (1.0 + nu0))
+            md = sf.MunsonDawsonCreep(A=A_md, Q=Q_md, n=n_md,
+                                      K0=K0_md, c=c_md, m=m_md,
+                                      alpha_w=aw_md, beta_w=bw_md, delta=d_md,
+                                      mu=mu_md, name="munson_dawson")
+            mat.add_to_non_elastic(md)
+    else:
+        # ── Scenario B: calibrated against TCC-1 ──────────────────────────────
+        if not USE_MUNSON_DAWSON:
+            # SafeInCave model: Kelvin + DislocationCreep
+            eta = 5.0e12 * to.ones(mom_eq.n_elems)
+            E1  = 1.5 * ut.GPa * to.ones(mom_eq.n_elems)
+            nu1 = 0.25 * to.ones(mom_eq.n_elems)
+            kelvin  = sf.Viscoelastic(eta, E1, nu1, "kelvin")
+            ndc = 5.0
+            A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+            Q_dc = (6252.0 * 8.32) * to.ones(mom_eq.n_elems)
+            n_dc = ndc * to.ones(mom_eq.n_elems)
+            creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
+            mat.add_to_non_elastic(kelvin)
+            mat.add_to_non_elastic(creep_0)
+        else:
+            # Munson-Dawson model (shared A/n/Q with SIC Scenario B)
+            nmd   = 5.0
+            A_md  = (40.0 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems)
+            Q_md  = (6252.0 * 8.32) * to.ones(mom_eq.n_elems)
+            n_md  = nmd  * to.ones(mom_eq.n_elems)
+            K0_md = 0.60   * to.ones(mom_eq.n_elems)
+            c_md  = 9.02e-3 * to.ones(mom_eq.n_elems)
+            m_md  = 1.1    * to.ones(mom_eq.n_elems)
+            aw_md = -17.0  * to.ones(mom_eq.n_elems)
+            bw_md = -7.738 * to.ones(mom_eq.n_elems)
+            d_md  = 0.25   * to.ones(mom_eq.n_elems)
+            mu_md = E0 / (2.0 * (1.0 + nu0))
+            md = sf.MunsonDawsonCreep(A=A_md, Q=Q_md, n=n_md,
+                                      K0=K0_md, c=c_md, m=m_md,
+                                      alpha_w=aw_md, beta_w=bw_md, delta=d_md,
+                                      mu=mu_md, name="munson_dawson")
+            mat.add_to_non_elastic(md)
 
-    sec_per_year = 365.25 * 24 * 3600
-    ndc = 4.6
-    A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
-    Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
-    n_dc = ndc * to.ones(mom_eq.n_elems)
-    creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
-
+    # -- Pressure-solution creep (same for both scenarios) --
     A_ps = (14176.0 * 1e-9 / 1e6 / sec_per_year) * to.ones(mom_eq.n_elems)
     d_ps = 5.25e-3 * to.ones(mom_eq.n_elems)
     Q_ps = (3252.0 * 8.32) * to.ones(mom_eq.n_elems)
     creep_pressure = sf.PressureSolutionCreep(A_ps, d_ps, Q_ps, "creep_pressure")
-
-    mat.add_to_elastic(spring_0)
-    mat.add_to_non_elastic(kelvin)
-    mat.add_to_non_elastic(creep_0)
     mat.add_to_non_elastic(creep_pressure)
 
     if USE_THERMAL:
@@ -1196,19 +1298,31 @@ def main():
         print(f"[{init_phase_name.upper()}] Complete.")
 
     # ===== OPERATION PHASE =====
-    if USE_DESAI:
-        mu_1 = 5.3665857009859815e-11 * to.ones(mom_eq.n_elems)
-        N_1 = 3.1 * to.ones(mom_eq.n_elems)
-        n = 3.0 * to.ones(mom_eq.n_elems)
-        a_1 = 1.965018496922832e-05 * to.ones(mom_eq.n_elems)
-        eta_vp = 0.8275682807874163 * to.ones(mom_eq.n_elems)
-        beta_1 = 0.0048 * to.ones(mom_eq.n_elems)
-        beta = 0.995 * to.ones(mom_eq.n_elems)
-        m = -0.5 * to.ones(mom_eq.n_elems)
-        gamma = 0.095 * to.ones(mom_eq.n_elems)
-        alpha_0 = 0.0022 * to.ones(mom_eq.n_elems)
-        sigma_t = 5.0 * to.ones(mom_eq.n_elems)
-        desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n, beta_1, beta, m, gamma, sigma_t, alpha_0, "desai")
+    if not USE_MUNSON_DAWSON:
+        # SafeInCave model: add Desai viscoplastic element (scenario-dependent params)
+        if not USE_SCENARIO_B:
+            # Scenario A (CCC Zuidwending)
+            mu_1    = 6.89e-12 * to.ones(mom_eq.n_elems)
+            N_1     = 3.0 * to.ones(mom_eq.n_elems)
+            a_1     = 1.80e-5 * to.ones(mom_eq.n_elems)
+            eta_vp  = 0.82 * to.ones(mom_eq.n_elems)
+            alpha_0 = 2.0e-3 * to.ones(mom_eq.n_elems)
+        else:
+            # Scenario B (calibrated)
+            mu_1    = 1.0e-15 * to.ones(mom_eq.n_elems)
+            N_1     = 2.0 * to.ones(mom_eq.n_elems)
+            a_1     = 1.0e-3 * to.ones(mom_eq.n_elems)
+            eta_vp  = 1.2 * to.ones(mom_eq.n_elems)
+            alpha_0 = 5.0e-3 * to.ones(mom_eq.n_elems)
+        # Fixed Desai shape parameters (both scenarios)
+        n_desai  = 3.0 * to.ones(mom_eq.n_elems)
+        beta_1   = 0.0048 * to.ones(mom_eq.n_elems)
+        beta     = 0.995 * to.ones(mom_eq.n_elems)
+        m_desai  = -0.5 * to.ones(mom_eq.n_elems)
+        gamma    = 0.095 * to.ones(mom_eq.n_elems)
+        sigma_t  = 5.0 * to.ones(mom_eq.n_elems)
+        desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n_desai, beta_1, beta,
+                                     m_desai, gamma, sigma_t, alpha_0, "desai")
 
         stress_to = ut.numpy2torch(mom_eq.sig.x.array.reshape((mom_eq.n_elems, 3, 3)))
         desai.compute_initial_hardening(stress_to, Fvp_0=0.0)
@@ -1228,24 +1342,7 @@ def main():
     )
 
     # Build operation pressure schedule
-    if PRESSURE_SCENARIO == "linear":
-        if USE_LEACHING:
-            base_times_h = [0.0, 2.0, 14.0, 16.0, 24.0]
-            base_pressures_MPa = [p_op_min_mpa, p_op_max_mpa, p_op_max_mpa, p_op_min_mpa, p_op_min_mpa]
-        else:
-            base_times_h = [0.0, 2.0, 14.0, 16.0, 24.0]
-            base_pressures_MPa = [P_MIN_MPA, P_MAX_MPA, P_MAX_MPA, P_MIN_MPA, P_MIN_MPA]
-
-        t_pressure, p_pressure = build_linear_schedule_multi(
-            tc_cycling,
-            base_times_h, base_pressures_MPa,
-            days=OPERATION_DAYS,
-            mode=SCHEDULE_MODE,
-            resample_at_dt=True,
-            total_cycles=N_CYCLES,
-        )
-
-    elif PRESSURE_SCENARIO == "sinus":
+    if PRESSURE_SCENARIO == "industry":
         if USE_LEACHING:
             p_mean = p_op_mean_mpa * ut.MPa
         else:
@@ -1261,27 +1358,37 @@ def main():
             clamp_min=None, clamp_max=None
         )
 
-    elif PRESSURE_SCENARIO == "irregular":
-        base_waypoints_h = [0, 1.0, 2.0, 3.2, 4.0, 5.0, 6.4, 7.1, 9.0, 11.5,
-                           13.0, 16.0, 18.0, 21.0, 24.0]
-        base_pressures_orig = [15.0, 12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4,
-                               9.3, 10.7, 8.9, 11.6, 9.5, 10.2, 11.0]
-
+    elif PRESSURE_SCENARIO == "transport":
         if USE_LEACHING:
-            orig_min = min(base_pressures_orig)
-            shift = p_op_min_mpa - orig_min
-            base_pressures_MPa = [p + shift for p in base_pressures_orig]
+            p_high = p_leach_end_mpa + P_HIGH_OFFSET_MPA
+            p_low  = p_leach_end_mpa + P_LOW_OFFSET_MPA
         else:
-            base_pressures_MPa = base_pressures_orig
+            p_high = P_MEAN_MPA + P_HIGH_OFFSET_MPA
+            p_low  = P_MEAN_MPA + P_LOW_OFFSET_MPA
+        # Two-day trapezoidal cycle: 8 h high → ramp → 16 h low → ramp → 8 h high
+        base_times_h    = [0.0, 8.0, 12.0, 28.0, 32.0, 48.0]
+        base_pressures_MPa = [p_high, p_high, p_low, p_low, p_high, p_high]
 
-        t_pressure, p_pressure = build_irregular_schedule_multi(
+        t_pressure, p_pressure = build_linear_schedule_multi(
             tc_cycling,
-            base_waypoints_h=base_waypoints_h,
-            base_pressures_MPa=base_pressures_MPa,
-            days=OPERATION_DAYS, mode=SCHEDULE_MODE,
-            smooth=0.25, clamp_min=None, clamp_max=None,
+            base_times_h, base_pressures_MPa,
+            days=OPERATION_DAYS,
+            mode=SCHEDULE_MODE,
             resample_at_dt=True,
             total_cycles=N_CYCLES,
+        )
+
+    elif PRESSURE_SCENARIO == "power_generation":
+        if USE_LEACHING:
+            p_base_pa = (p_leach_end_mpa + P_BASE_OFFSET_MPA) * ut.MPa
+        else:
+            p_base_pa = (P_EQUILIBRIUM_MPA + P_BASE_OFFSET_MPA) * ut.MPa
+
+        t_pressure, p_pressure = build_power_generation_schedule(
+            tc_cycling,
+            p_base_pa=p_base_pa,
+            n_events=N_EVENTS,
+            operation_days=OPERATION_DAYS,
         )
 
     elif PRESSURE_SCENARIO == "csv":
@@ -1382,13 +1489,14 @@ def main():
         "cavern_label": config["cavern_label"],
         "use_leaching": USE_LEACHING,
         "debrining_days": DEBRINING_DAYS if USE_LEACHING else 0,
-        "ramp_up_hours": RAMP_UP_HOURS if USE_LEACHING else 0,
-        "scenario": PRESSURE_SCENARIO,
-        "mode": SCHEDULE_MODE,
+        "ramp_up_hours": RAMP_UP_HOURS,
+        "pressure_scenario": PRESSURE_SCENARIO,
+        "schedule_mode": SCHEDULE_MODE,
         "n_cycles": N_CYCLES,
         "operation_days": OPERATION_DAYS,
         "dt_hours": dt_hours,
-        "use_desai": USE_DESAI,
+        "material_scenario": "B" if USE_SCENARIO_B else "A",
+        "model": "munson_dawson" if USE_MUNSON_DAWSON else "safeincave",
         "p_lithostatic_mpa": p_lithostatic_mpa,
         "units": {"t_raw": "s", "p_raw": "Pa", "t": "hour", "p": "MPa"},
         "t_values_s": [float(t) for t in t_pressure],
@@ -1459,7 +1567,7 @@ def main():
         for i, t in enumerate(t_pressure):
             period_s = tc_operation.t_final / N_CYCLES if SCHEDULE_MODE == "stretch" else 24.0 * ut.hour
             phase = 2.0 * math.pi * t / period_s
-            if PRESSURE_SCENARIO == "sinus":
+            if PRESSURE_SCENARIO == "industry":
                 T_gas = T_cavern_init_K - T_GAS_AMPLITUDE_C * math.sin(phase)
             else:
                 T_gas = T_cavern_init_K + T_GAS_AMPLITUDE_C * math.sin(phase)

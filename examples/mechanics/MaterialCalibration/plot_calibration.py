@@ -191,10 +191,10 @@ def plot_single_test(data, fig_dir):
             "── Transient ──",
             f"K0      = {_fmt(p['K0'])}{_c(True)}",
             f"c       = {p['c']:.5f} 1/K",
-            f"m       = {p['m']:.1f}",
+            f"m       = {p['m']:.1f}{_c(True)}",
             f"alpha_w = {p['alpha_w']:.2f}{_c(True)}",
             f"beta_w  = {p.get('beta_w', -7.738):.3f}",
-            f"delta   = {p.get('delta', 0.58):.2f}",
+            f"delta   = {p.get('delta', 0.58):.2f}{_c(True)}",
         ]
         y = _box(ax_par, 0.02, y, "MUNSON-DAWSON", md_lines, "#f7dddd")
 

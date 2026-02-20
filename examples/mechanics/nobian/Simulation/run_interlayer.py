@@ -120,33 +120,39 @@ RAMP_UP_HOURS = 336 # 2 weeks
 
 # ── PRESSURE SCENARIO ──────────────────────────────────────────────────────────
 # PRESSURE_SCENARIO: Choose one of:
-#   "sinus"     - Sinusoidal pressure variation around p_leach_end + amplitude
-#   "linear"    - Piecewise linear pressure profile (ramp up, hold, ramp down)
-#   "irregular" - Irregular/spline-smoothed pressure profile (realistic fluctuations)
-#   "csv"       - Load pressure profile from CSV file (e.g., real operational data)
+#   "industry"        - Sinusoidal variation (~12 cycles/yr): industry H2 storage
+#   "transport"       - 48h trapezoidal cycle: transport sector demand
+#   "power_generation"- Irregular abrupt withdrawals with exponential recovery
+#   "csv"             - Load pressure profile from CSV file (e.g., real operational data)
 #
 # All scenarios start from p_leach_end (= LEACHING_END_FRACTION * lithostatic pressure)
 
 PRESSURE_SCENARIO = "csv"
 
-# ── SINUS SETTINGS (only used when PRESSURE_SCENARIO = "sinus") ────────────────
-# P_AMPLITUDE_MPA: Amplitude (MPa) - half the peak-to-peak range
-#   The operational pressure will oscillate around a mean that is derived from leaching:
-#   - P_MIN (operational) = p_leach_end (= LEACHING_END_FRACTION * p_lithostatic)
-#   - P_MEAN (operational) = p_leach_end + P_AMPLITUDE_MPA
-#   - P_MAX (operational) = p_leach_end + 2 * P_AMPLITUDE_MPA
-#   Example: If p_leach_end=8 MPa and amplitude=6.5 MPa → range [8, 21] MPa
+# ── INDUSTRY SETTINGS (only used when PRESSURE_SCENARIO = "industry") ──────────
+# P_AMPLITUDE_MPA: Amplitude (MPa) — half the peak-to-peak range.
+#   Pressure oscillates sinusoidally around p_leach_end + P_AMPLITUDE_MPA:
+#   - P_MIN = p_leach_end
+#   - P_MEAN = p_leach_end + P_AMPLITUDE_MPA
+#   - P_MAX  = p_leach_end + 2 * P_AMPLITUDE_MPA
 
-P_AMPLITUDE_MPA = 6.5
+P_AMPLITUDE_MPA = 3.5
 
-# ── LINEAR SETTINGS (only used when PRESSURE_SCENARIO = "linear") ──────────────
-# PRESSURE_SWING_MPA: Pressure swing (MPa) - difference between max and min
-#   The operational pressure will cycle between:
-#   - P_MIN (operational) = p_leach_end (= LEACHING_END_FRACTION * p_lithostatic)
-#   - P_MAX (operational) = p_leach_end + PRESSURE_SWING_MPA
-#   Example: If p_leach_end=8 MPa and swing=6.4 MPa → range [8, 14.4] MPa
+# ── TRANSPORT SETTINGS (only used when PRESSURE_SCENARIO = "transport") ────────
+# 48h trapezoidal cycle: ramp up at t=0–8h, hold high for 4h, ramp down at t=12–28h,
+# hold low for 4h, ramp back up at t=32–48h.
+#   - P_HIGH = p_leach_end + P_HIGH_OFFSET_MPA
+#   - P_LOW  = p_leach_end + P_LOW_OFFSET_MPA
 
-PRESSURE_SWING_MPA = 10
+P_HIGH_OFFSET_MPA = 5.0
+P_LOW_OFFSET_MPA  = 1.0
+
+# ── POWER GENERATION SETTINGS (only used when PRESSURE_SCENARIO = "power_generation") ─
+# N_EVENTS:        Number of abrupt withdrawal events per simulation
+# P_BASE_OFFSET_MPA: Operating pressure above p_leach_end between events
+
+N_EVENTS        = 10
+P_BASE_OFFSET_MPA = 7.0
 
 # ── SCHEDULE SETTINGS ──────────────────────────────────────────────────────────
 # SCHEDULE_MODE: How to distribute cycles over the simulation period:
@@ -241,7 +247,7 @@ VALID_CAVERN_TYPES = [
     "vertical_intrusion_600", "vertical_intrusion_1200",
     "A5", "A5_interlayer",
 ]
-VALID_SCENARIOS = ["sinus", "linear", "irregular", "csv"]
+VALID_SCENARIOS = ["industry", "transport", "power_generation", "csv"]
 VALID_MODES_STANDARD = ["stretch", "repeat"]
 VALID_MODES_CSV = ["stretch", "repeat", "direct"]
 VALID_LEACHING_MODES = ["linear", "stepped"]
@@ -365,12 +371,15 @@ def validate_configuration():
         if EQUILIBRIUM_DT_HOURS <= 0:
             errors.append(f"EQUILIBRIUM_DT_HOURS must be positive, got {EQUILIBRIUM_DT_HOURS}")
 
-    if PRESSURE_SCENARIO == "sinus":
+    if PRESSURE_SCENARIO == "industry":
         if P_AMPLITUDE_MPA <= 0:
             errors.append(f"P_AMPLITUDE_MPA must be positive, got {P_AMPLITUDE_MPA}")
-    elif PRESSURE_SCENARIO == "linear":
-        if PRESSURE_SWING_MPA <= 0:
-            errors.append(f"PRESSURE_SWING_MPA must be positive, got {PRESSURE_SWING_MPA}")
+    elif PRESSURE_SCENARIO == "transport":
+        if P_HIGH_OFFSET_MPA <= P_LOW_OFFSET_MPA:
+            errors.append(f"P_HIGH_OFFSET_MPA must exceed P_LOW_OFFSET_MPA")
+    elif PRESSURE_SCENARIO == "power_generation":
+        if N_EVENTS <= 0:
+            errors.append(f"N_EVENTS must be positive, got {N_EVENTS}")
     elif PRESSURE_SCENARIO == "csv":
         if not os.path.isfile(CSV_FILE_PATH):
             errors.append(f"CSV_FILE_PATH not found: {CSV_FILE_PATH}")
@@ -953,6 +962,43 @@ def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
     )
 
 
+def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days, seed=42):
+    """Irregular abrupt-withdrawal schedule for power-generation demand.
+
+    Returns t_vals_s (seconds) and p_vals (Pa).
+    """
+    t_vals_s = _sample_at_dt(tc)
+    t_h = [t / ut.hour for t in t_vals_s]
+    p_base_mpa = p_base_pa / ut.MPa
+    p_mpa = [p_base_mpa] * len(t_h)
+
+    rng = np.random.RandomState(seed)
+    n_ev = max(1, int(n_events))
+    event_centers_days = np.linspace(1.0, operation_days - 1.0, n_ev)
+    event_centers_days = event_centers_days + rng.uniform(-0.8, 0.8, size=n_ev)
+
+    for day_c in event_centers_days:
+        t_start_h = day_c * 24.0
+        duration = rng.uniform(2.0, 5.0)
+        depth    = rng.uniform(3.5, 6.5)
+        for i, t in enumerate(t_h):
+            if t < t_start_h:
+                continue
+            dt_ev = t - t_start_h
+            if dt_ev < 0.5:
+                drop = depth * (dt_ev / 0.5)
+            elif dt_ev < 0.5 + duration:
+                drop = depth
+            else:
+                drop = depth * math.exp(-(dt_ev - 0.5 - duration) / 4.0)
+                if drop < 0.05:
+                    break
+            p_mpa[i] = min(p_mpa[i], p_base_mpa - drop)
+
+    p_vals = [p * ut.MPa for p in p_mpa]
+    return t_vals_s, p_vals
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MOMENTUM EQUATION CLASSES
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1301,15 +1347,19 @@ def main():
     p_leach_end = p_leach_end_mpa * ut.MPa
 
     # Derive operational pressures
-    if PRESSURE_SCENARIO == "sinus":
-        p_op_min_mpa = p_leach_end_mpa
+    if PRESSURE_SCENARIO == "industry":
+        p_op_min_mpa  = p_leach_end_mpa
         p_op_mean_mpa = p_leach_end_mpa + P_AMPLITUDE_MPA
-        p_op_max_mpa = p_leach_end_mpa + 2 * P_AMPLITUDE_MPA
-    elif PRESSURE_SCENARIO == "linear":
-        p_op_min_mpa = p_leach_end_mpa
-        p_op_max_mpa = p_leach_end_mpa + PRESSURE_SWING_MPA
+        p_op_max_mpa  = p_leach_end_mpa + 2 * P_AMPLITUDE_MPA
+    elif PRESSURE_SCENARIO == "transport":
+        p_op_min_mpa  = p_leach_end_mpa
+        p_op_high_mpa = p_leach_end_mpa + P_HIGH_OFFSET_MPA
+        p_op_low_mpa  = p_leach_end_mpa + P_LOW_OFFSET_MPA
+    elif PRESSURE_SCENARIO == "power_generation":
+        p_op_min_mpa  = p_leach_end_mpa
+        p_op_base_mpa = p_leach_end_mpa + P_BASE_OFFSET_MPA
     else:
-        p_op_min_mpa = p_leach_end_mpa
+        p_op_min_mpa  = p_leach_end_mpa
 
     # Print configuration
     if MPI.COMM_WORLD.rank == 0:
@@ -1629,20 +1679,7 @@ def main():
         time_unit="hour"
     )
 
-    if PRESSURE_SCENARIO == "linear":
-        base_times_h = [0.0, 2.0, 14.0, 16.0, 24.0]
-        base_pressures_MPa = [p_op_min_mpa, p_op_max_mpa, p_op_max_mpa, p_op_min_mpa, p_op_min_mpa]
-
-        t_pressure, p_pressure = build_linear_schedule_multi(
-            tc_cycling,
-            base_times_h, base_pressures_MPa,
-            days=OPERATION_DAYS,
-            mode=SCHEDULE_MODE,
-            resample_at_dt=True,
-            total_cycles=N_CYCLES,
-        )
-
-    elif PRESSURE_SCENARIO == "sinus":
+    if PRESSURE_SCENARIO == "industry":
         p_mean = p_op_mean_mpa * ut.MPa
         p_ampl = P_AMPLITUDE_MPA * ut.MPa
         t_pressure, p_pressure = build_sinus_schedule_multi(
@@ -1654,26 +1691,28 @@ def main():
             clamp_min=None, clamp_max=None
         )
 
-    elif PRESSURE_SCENARIO == "irregular":
-        # Irregular cycle: shift base profile so minimum = p_leach_end
-        base_waypoints_h = [0, 1.0, 2.0, 3.2, 4.0, 5.0, 6.4, 7.1, 9.0, 11.5,
-                           13.0, 16.0, 18.0, 21.0, 24.0]
-        # Original base pressures (will be shifted)
-        base_pressures_orig = [15.0, 12.0, 8.5, 11.8, 7.6, 10.2, 8.8, 11.4,
-                               9.3, 10.7, 8.9, 11.6, 9.5, 10.2, 11.0]
-        # Shift so minimum equals p_leach_end
-        orig_min = min(base_pressures_orig)
-        shift = p_op_min_mpa - orig_min
-        base_pressures_MPa = [p + shift for p in base_pressures_orig]
+    elif PRESSURE_SCENARIO == "transport":
+        # 48h trapezoidal cycle: 8h ramp up, 4h high plateau, 16h ramp down, 4h low plateau
+        base_times_h       = [0.0, 8.0, 12.0, 28.0, 32.0, 48.0]
+        base_pressures_MPa = [p_op_high_mpa, p_op_high_mpa,
+                              p_op_low_mpa,  p_op_low_mpa,
+                              p_op_high_mpa, p_op_high_mpa]
 
-        t_pressure, p_pressure = build_irregular_schedule_multi(
+        t_pressure, p_pressure = build_linear_schedule_multi(
             tc_cycling,
-            base_waypoints_h=base_waypoints_h,
-            base_pressures_MPa=base_pressures_MPa,
-            days=OPERATION_DAYS, mode=SCHEDULE_MODE,
-            smooth=0.25, clamp_min=None, clamp_max=None,
+            base_times_h, base_pressures_MPa,
+            days=OPERATION_DAYS,
+            mode=SCHEDULE_MODE,
             resample_at_dt=True,
             total_cycles=N_CYCLES,
+        )
+
+    elif PRESSURE_SCENARIO == "power_generation":
+        t_pressure, p_pressure = build_power_generation_schedule(
+            tc_cycling,
+            p_base_pa=p_op_base_mpa * ut.MPa,
+            n_events=N_EVENTS,
+            operation_days=OPERATION_DAYS,
         )
 
     elif PRESSURE_SCENARIO == "csv":
@@ -1774,11 +1813,11 @@ def main():
     pressure_data = {
         "phase": "operation",
         "cavern_type": config["cavern_type"],
-        "scenario": PRESSURE_SCENARIO,
+        "pressure_scenario": PRESSURE_SCENARIO,
         "p_leach_end_mpa": p_leach_end_mpa,
         "debrining_days": DEBRINING_DAYS if USE_LEACHING else 0,
         "ramp_up_hours": RAMP_UP_HOURS if USE_LEACHING else 0,
-        "mode": SCHEDULE_MODE,
+        "schedule_mode": SCHEDULE_MODE,
         "n_cycles": N_CYCLES,
         "operation_days": OPERATION_DAYS,
         "use_desai": USE_DESAI,
@@ -1858,8 +1897,8 @@ def main():
         T_gas_values = []
         for i, t in enumerate(t_pressure):
             # Oscillate gas temperature with same period as pressure
-            if PRESSURE_SCENARIO == "sinus":
-                # Sync with sinus pressure: max pressure = min temp, min pressure = max temp
+            if PRESSURE_SCENARIO == "industry":
+                # Sync with industry (sinusoidal) pressure: max pressure = min temp, min pressure = max temp
                 period_s = tc_operation.t_final / N_CYCLES if SCHEDULE_MODE == "stretch" else 24.0 * ut.hour
                 phase = 2.0 * math.pi * t / period_s
                 T_gas = T_cavern_init_K - T_GAS_AMPLITUDE_C * math.sin(phase)

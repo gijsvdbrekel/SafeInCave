@@ -23,7 +23,7 @@ import numpy as np
 
 # ── SELECT WHICH LAB TESTS TO SIMULATE ────────────────────────────────────────
 # Use test names like "TCC1", "TCC7", etc. Set to None to run all 12.
-TESTS = ["TCC12"]
+TESTS = ["TCC1", "TCC2", "TCC6", "TCC7", "TCC11", "TCC12"]
 
 # ── SELECT WHICH MODEL(S) TO RUN ─────────────────────────────────────────────
 RUN_SAFEINCAVE = True
@@ -46,35 +46,39 @@ R_GAS = 8.314        # J/(mol·K) — standard value
 # ── SHARED: Dislocation creep (used by both models) ──────────────────────────
 #   ε̇_ss = A · σ^n · exp(-Q/(R·T))
 #   A is specified in [MPa^{-n} / yr] and converted to [Pa^{-n} / s]
-Q_OVER_R = 6450.0                        # [K]  — CALIBRATED (range 6252–6495)
+Q_OVER_R = 6252.0                        # [K]  — CALIBRATED (range 6252–6495)
 Q_DISLOC = Q_OVER_R * R_GAS              # [J/mol]
 
-# -- SHARED dislocation creep A, n (same for both models) --
+# -- Munson-Dawson dislocation creep (calibrated independently via search6) --
 _sec_per_year = 365.25 * 24 * 3600
-_A_MPA_YR = 55.0                                     # [MPa^{-n}/yr]  — CALIBRATED (range 15–60)
-N_DISLOC = 5.0                                       # [-]            — CALIBRATED (range 3–6)
-A_DISLOC = _A_MPA_YR * (1e-6) ** N_DISLOC / _sec_per_year  # [Pa^{-n}/s]
+_A_MD_MPA_YR  = 188.1      # [MPa^{-n}/yr]  — search_weighted: TCC1, 7-param (beta_w free)
+N_MD          = 4.4483     # [-]            — search_weighted
+A_MD          = _A_MD_MPA_YR * (1e-6) ** N_MD / _sec_per_year   # [Pa^{-n}/s]
 
-# Aliases (both models use the same values)
-A_SIC = A_DISLOC
-N_SIC = N_DISLOC
-A_MD  = A_DISLOC
-N_MD  = N_DISLOC
+# -- SafeInCave dislocation creep (independent calibration via search_sic) ---
+_A_SIC_MPA_YR = 712.68     # [MPa^{-n}/yr]  — search_weighted: TCC1, balanced weights
+N_SIC         = 4.0557     # [-]            — search_weighted
+A_SIC         = _A_SIC_MPA_YR * (1e-6) ** N_SIC / _sec_per_year # [Pa^{-n}/s]
+
+# Backward-compat aliases (used by integrate_munsondawson)
+N_DISLOC = N_MD
+A_DISLOC = A_MD
+_A_MPA_YR = _A_MD_MPA_YR
 
 # ── SafeInCave: Kelvin element (transient creep) ─────────────────────────────
 #   Kelvin dashpot viscosity η [Pa·s], spring E1 [Pa], Poisson ν1 [-]
-ETA_KELVIN = 5e12          # [Pa·s]   — CALIBRATED
-E1_KELVIN  = 0.5e9         # [Pa]     — CALIBRATED
+ETA_KELVIN = 3.3504e12     # [Pa·s]   — CALIBRATED (search_weighted: TCC1, τ=1.1h)
+E1_KELVIN  = 8.2841e8      # [Pa]     — CALIBRATED (search_weighted, eq@21MPa=2.53%)
 NU1_KELVIN = 0.25          # [-]      — CALIBRATED
 
 # ── SafeInCave: Desai viscoplastic ───────────────────────────────────────────
 #   Only the parameters that need calibration are listed here.
 #   The rest are fixed (same as in ScenarioTest.py).
-MU1_DESAI     = 5e-14                     # [1/s]  — CALIBRATED
+MU1_DESAI     = 1e-15                     # [1/s]  — CALIBRATED (search3)
 N1_DESAI      = 2.0                       # [-]    — CALIBRATED
-A1_DESAI      = 5e-04                     # [-]    — CALIBRATED
-ETA_DESAI     = 1.0                       # [-]    — CALIBRATED
-ALPHA0_DESAI  = 0.01                      # [-]    — CALIBRATED
+A1_DESAI      = 1e-03                     # [-]    — CALIBRATED
+ETA_DESAI     = 1.2                       # [-]    — CALIBRATED
+ALPHA0_DESAI  = 0.005                     # [-]    — CALIBRATED
 
 # Fixed Desai parameters
 N_DESAI_POWER = 3.0
@@ -85,14 +89,14 @@ GAMMA_DESAI   = 0.095
 SIGMA_T_DESAI = 5.0       # [Pa]
 
 # ── Munson-Dawson: Transient parameters ──────────────────────────────────────
-K0_MD      = 2e4         # [-]    — CALIBRATED
+K0_MD      = 0.0041      # [-]    — CALIBRATED (search_weighted: TCC1, 7-param)
 C_MD       = 0.00902     # [1/K]  — fixed
-M_MD       = 3.0         # [-]    — fixed
-ALPHA_W_MD = -16.0       # [-]    — CALIBRATED
+M_MD       = 0.2000      # [-]    — CALIBRATED (search_weighted)
+ALPHA_W_MD = -2.8951     # [-]    — CALIBRATED (search_weighted)
 
-# Fixed Munson-Dawson transient parameters
-BETA_W_MD  = -7.738      # [-]
-DELTA_MD   = 0.58        # [-]
+# Munson-Dawson transient parameters
+BETA_W_MD  = -4.7745     # [-]    — CALIBRATED (search_weighted, was fixed at -7.738)
+DELTA_MD   = 1.1312      # [-]    — CALIBRATED (search_weighted)
 
 # ── Elastic parameters (for shear modulus in Munson-Dawson) ──────────────────
 E_ELASTIC  = 20.425e9    # [Pa]
@@ -111,6 +115,55 @@ OUT_DIR  = os.path.join(os.path.dirname(__file__), "output")
 
 HOUR = 3600.0
 DAY = 24.0 * HOUR
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STRESS ARTEFACT CORRECTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def correct_stress_artefacts(time_h, sigma_diff,
+                              high_thresh=15.0,
+                              dip_thresh=5.0,
+                              max_dip_h=24.0):
+    """
+    Fill brief dips in differential stress that are measurement artefacts.
+
+    In some TCC tests (TCC7, TCC11, TCC12) the raw data shows brief drops
+    from a high-stress plateau (>15 MPa) to near-zero (<5 MPa) for <24 hours,
+    followed by a return to the same high plateau.  The real test protocol
+    only decreases stress; these dips are equipment artefacts and should be
+    replaced by the preceding plateau value before model integration.
+
+    Parameters
+    ----------
+    time_h : array  elapsed time [hours]
+    sigma_diff : array  differential stress [MPa]
+    high_thresh : float  minimum stress considered "high" [MPa]
+    dip_thresh : float  maximum stress during a dip [MPa]
+    max_dip_h : float  maximum duration of a valid artefact dip [hours]
+
+    Returns
+    -------
+    array  corrected differential stress [MPa]
+    """
+    sig = sigma_diff.copy()
+    n = len(time_h)
+    i = 0
+    while i < n - 1:
+        if sig[i] >= high_thresh and sig[i + 1] < dip_thresh:
+            dip_start = i + 1
+            plateau_val = sig[i]
+            j = dip_start
+            while j < n and sig[j] < dip_thresh:
+                j += 1
+            if j < n and sig[j] >= high_thresh:
+                dip_duration = time_h[j] - time_h[dip_start]
+                if dip_duration <= max_dip_h:
+                    sig[dip_start:j] = plateau_val
+                    i = j
+                    continue
+        i += 1
+    return sig
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -545,9 +598,12 @@ def main():
         print(f"  σ_diff range: {sigma_diff.min():.1f} – {sigma_diff.max():.1f} MPa")
         print(f"  σ_3 range:    {sigma3.min():.1f} – {sigma3.max():.1f} MPa")
 
+        # Apply artefact correction (fills brief dip-and-return events)
+        sigma_diff_corr = correct_stress_artefacts(time_h, sigma_diff)
+
         # Build stress schedule on fine grid
         t_s, sigma_fine_Pa, idx_start = build_stress_schedule(
-            time_h, sigma_diff, DT_HOURS
+            time_h, sigma_diff_corr, DT_HOURS
         )
         sigma3_Pa = float(sigma3[idx_start]) * 1e6  # constant confining pressure
 
@@ -557,7 +613,7 @@ def main():
         lab_strain_pct = strain_pct[idx_start:]
         # Subtract the initial elastic strain so lab starts at 0
         lab_strain_pct = lab_strain_pct - lab_strain_pct[0]
-        lab_sigma_diff = sigma_diff[idx_start:]
+        lab_sigma_diff = sigma_diff_corr[idx_start:]
 
         result = {
             "test_id": test_id,
@@ -581,7 +637,7 @@ def main():
             print("  Running SafeInCave model...")
             eps_tot, eps_dc, eps_kv, eps_desai = integrate_safeincave(
                 t_s, sigma_fine_Pa, sigma3_Pa
-            )
+            )  # uses corrected sigma schedule
             t_hours = t_s / HOUR
             result["safeincave"] = {
                 "time_hours": t_hours.tolist(),

@@ -36,8 +36,8 @@ ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/
 #
 # Available filters:
 #   "caverns"        - Cavern shapes to include: (e.g. "regular1200", "tilted1200","directcirculation600", "reversedcirculation1200")                                                   "fastleached1200", "tubefailure1200").
-#   "pressure"       - Pressure scenario: "sinus", "linear", "irregular", "csv_profile", or None
-#   "scenario"       - Material scenario(s): ["disloc_old_only", "full", ...] or None
+#   "pressure"       - Pressure scenario: "industry", "transport", "power_generation", "csv", or None
+#   "scenario"       - Material scenario(s): "A_SIC", "A_MD", "B_SIC", "B_MD" or None
 #   "n_cycles"       - Number of cycles (int) or None
 #   "operation_days" - Operation duration (int) or None
 #   "case_contains"  - Substring match in case name or None
@@ -121,6 +121,12 @@ CAVERN_COLORS = {
 }
 
 SCENARIO_COLORS = {
+    # Current: Scenario A/B × SafeInCave/Munson-Dawson
+    "A_SIC":            "#1f77b4",   # Scenario A, SafeInCave   (blue)
+    "A_MD":             "#ff7f0e",   # Scenario A, Munson-Dawson (orange)
+    "B_SIC":            "#2ca02c",   # Scenario B, SafeInCave   (green)
+    "B_MD":             "#d62728",   # Scenario B, Munson-Dawson (red)
+    # Legacy names (kept for backward compatibility)
     "disloc_old_only":  "#1f77b4",
     "disloc_new_only":  "#ff7f0e",
     "desai_only":       "#2ca02c",
@@ -136,6 +142,12 @@ SCENARIO_COLORS = {
 }
 
 SCENARIO_LINESTYLES = {
+    # Current
+    "A_SIC":            "-",
+    "A_MD":             "--",
+    "B_SIC":            "-",
+    "B_MD":             "--",
+    # Legacy
     "disloc_old_only":  "-",
     "disloc_new_only":  "--",
     "desai_only":       "-.",
@@ -163,6 +175,9 @@ CAVERN_ORDER = [
     "Tilt", "Fast-leached", "Tube-failure", "IrregularFine",
 ]
 SCENARIO_ORDER = [
+    # Current
+    "A_SIC", "A_MD", "B_SIC", "B_MD",
+    # Legacy
     "disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai",
     "full", "full_minus_ps", "md_only", "md_steady_only", "full_md",
     "interlayer", "nointerlayer", None,

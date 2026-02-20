@@ -7,8 +7,19 @@ import meshio
 DAY = 24.0 * 3600.0
 MPA = 1e6
 
-KNOWN_PRESSURES = {"sinus", "irregular", "csv_profile", "linear"}
-KNOWN_SCENARIOS = {"desai_only", "disloc_old_only", "disloc_new_only", "full", "full_minus_desai", "full_md", "full_minus_ps", "md_only", "md_steady_only"}
+KNOWN_PRESSURES = {
+    # current names
+    "industry", "transport", "power_generation", "csv",
+    # legacy names (kept for backward compatibility)
+    "sinus", "irregular", "csv_profile", "linear",
+}
+KNOWN_SCENARIOS = {
+    # current names: Scenario A/B × SafeInCave/Munson-Dawson
+    "A_SIC", "A_MD", "B_SIC", "B_MD",
+    # legacy names
+    "desai_only", "disloc_old_only", "disloc_new_only", "full",
+    "full_minus_desai", "full_md", "full_minus_ps", "md_only", "md_steady_only",
+}
 
 # matches regular600, irregular1200, tilted600, etc.
 _CAVERN_RE = re.compile(r"(regular|irregularfine|irregular|tilted|tilt|directcirculation|reversedcirculation|asymmetric|fastleached|tubefailure)(600|1200)", re.I)
@@ -81,13 +92,23 @@ def read_case_metadata(case_path: str) -> dict:
             v = data.get("pressure_scenario")
             meta["pressure_scenario"] = str(v).lower() if v is not None else None
 
-        v = data.get("scenario", None)
-        if v is not None:
-            vlow = str(v).lower()
-            if vlow in KNOWN_SCENARIOS:
-                meta["scenario_preset"] = vlow
-            elif vlow in KNOWN_PRESSURES and meta["pressure_scenario"] is None:
-                meta["pressure_scenario"] = vlow
+        # New-style: material_scenario (A/B) + model (safeincave/munson_dawson)
+        mat_sc = data.get("material_scenario", None)
+        model  = data.get("model", None)
+        if mat_sc is not None and model is not None:
+            sc = str(mat_sc).upper().strip()          # "A" or "B"
+            is_md = "munson" in str(model).lower()
+            meta["scenario_preset"] = f"{sc}_MD" if is_md else f"{sc}_SIC"
+
+        # Legacy: old "scenario" key
+        if meta["scenario_preset"] is None:
+            v = data.get("scenario", None)
+            if v is not None:
+                vlow = str(v).lower()
+                if vlow in KNOWN_SCENARIOS:
+                    meta["scenario_preset"] = vlow
+                elif vlow in KNOWN_PRESSURES and meta["pressure_scenario"] is None:
+                    meta["pressure_scenario"] = vlow
 
         meta["n_cycles"] = data.get("n_cycles", meta["n_cycles"])
         meta["operation_days"] = data.get("operation_days", meta["operation_days"])
@@ -96,13 +117,23 @@ def read_case_metadata(case_path: str) -> dict:
     name = case_name.lower()
 
     if meta["pressure_scenario"] is None:
-        for p in ("sinus", "irregular", "csv", "linear"):
+        # Check longest names first to avoid partial matches (e.g. "power_generation" before "csv")
+        for p in sorted(("industry", "transport", "power_generation", "csv",
+                         "sinus", "irregular", "linear"), key=len, reverse=True):
             if p in name:
-                meta["pressure_scenario"] = "csv_profile" if p == "csv" else p
+                meta["pressure_scenario"] = p
                 break
 
     if meta["scenario_preset"] is None:
-        # Sort by length descending to match longer names first (e.g., "full_md" before "full")
+        # New-style S{A/B}_{SIC/MD} tags in folder name, e.g. "sa_sic", "sb_md"
+        _SA_MAP = {"sa_sic": "A_SIC", "sa_md": "A_MD", "sb_sic": "B_SIC", "sb_md": "B_MD"}
+        for tag, preset in _SA_MAP.items():
+            if f"_{tag}_" in name or name.endswith(f"_{tag}"):
+                meta["scenario_preset"] = preset
+                break
+
+    if meta["scenario_preset"] is None:
+        # Legacy: sort by length descending to match longer names first (e.g., "full_md" before "full")
         for s in sorted(KNOWN_SCENARIOS, key=len, reverse=True):
             if f"_{s}_" in name or name.startswith(f"case_{s}_"):
                 meta["scenario_preset"] = s
