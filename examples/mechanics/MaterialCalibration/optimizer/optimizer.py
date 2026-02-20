@@ -70,7 +70,7 @@ def minimization_function_2(init:np.array, bounds, data:dict, model:str, maxiter
         print(f"objective: \n {objectives} \n")
         return res
         
-    result = minimize(objective_fct, init, method="Nelder-Mead", bounds=bounds, options={"maxiter":maxiter, "disp":True}) 
+    result = minimize(objective_fct, init, method="Nelder-Mead", bounds=bounds, options={"maxiter":maxiter, "disp":True})  # Try different methods.  
     
     return result
 
