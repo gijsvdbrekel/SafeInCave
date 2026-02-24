@@ -28,8 +28,8 @@ class LinearMomentumMod(sf.LinearMomentum):
 
 
 class LinearMomentumMixedMod(sf.LinearMomentumMixed):
-	def __init__(self, grid, theta, stab_method, stab_scaling):
-		super().__init__(grid, theta, stab_method, stab_scaling)
+	def __init__(self, grid, theta, stab_scaling):
+		super().__init__(grid, theta, stab_scaling)
 		self.Fvp = do.fem.Function(self.DG0_1)
 		self.alpha = do.fem.Function(self.DG0_1)
 		self.eps_vp = do.fem.Function(self.DG0_3x3)
@@ -57,11 +57,9 @@ def run(formulation):
 	if formulation == "P1":
 		mom_eq = LinearMomentumMod(grid, theta=theta)
 	elif formulation == "P1P1":
-		mom_eq = LinearMomentumMixedMod(grid, theta=theta, stab_method="stab_E", stab_scaling=0.0)
-	elif formulation == "P1P1_Stab_E":
-		mom_eq = LinearMomentumMixedMod(grid, theta=theta, stab_method="stab_E", stab_scaling=1.0)
-	elif formulation == "P1P1_Stab_E_Star":
-		mom_eq = LinearMomentumMixedMod(grid, theta=theta, stab_method="stab_E_star", stab_scaling=1.0)
+		mom_eq = LinearMomentumMixedMod(grid, theta=theta, stab_scaling=0.0)
+	elif formulation == "P1P1_Stab":
+		mom_eq = LinearMomentumMixedMod(grid, theta=theta, stab_scaling=1.0)
 
 	# Define solver
 	mom_solver = PETSc.KSP().create(grid.mesh.comm)
@@ -319,10 +317,9 @@ def run(formulation):
 
 
 def main():
-	# run("P1")
-	run("P1P1")
-	run("P1P1_Stab_E")
-	run("P1P1_Stab_E_Star")
+	run("P1")
+	# run("P1P1")
+	run("P1P1_Stab")
 
 if __name__ == '__main__':
 	main()

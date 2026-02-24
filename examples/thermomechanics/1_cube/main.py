@@ -73,11 +73,9 @@ def run(formulation):
 	if formulation == "P1":
 		mom_eq = sf.LinearMomentum(grid, theta=theta)
 	elif formulation == "P1P1":
-		mom_eq = sf.LinearMomentumMixed(grid, theta=theta, stab_method="stab_E", stab_scaling=0.0)
-	elif formulation == "P1P1_Stab_E":
-		mom_eq = sf.LinearMomentumMixed(grid, theta=theta, stab_method="stab_E", stab_scaling=1.0)
-	elif formulation == "P1P1_Stab_E_Star":
-		mom_eq = sf.LinearMomentumMixed(grid, theta=theta, stab_method="stab_E_star", stab_scaling=1.0)
+		mom_eq = sf.LinearMomentumMixed(grid, theta=theta, stab_scaling=0.0)
+	elif formulation == "P1P1_Stab":
+		mom_eq = sf.LinearMomentumMixed(grid, theta=theta, stab_scaling=1.0)
 
 	# Define solver
 	mom_solver = PETSc.KSP().create(grid.mesh.comm)
@@ -173,8 +171,7 @@ def run(formulation):
 def main():
 	run("P1")
 	run("P1P1")
-	run("P1P1_Stab_E")
-	run("P1P1_Stab_E_Star")
+	run("P1P1_Stab")
 
 
 
