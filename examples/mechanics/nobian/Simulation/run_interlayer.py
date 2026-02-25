@@ -150,9 +150,14 @@ P_LOW_OFFSET_MPA  = 1.0
 # ── POWER GENERATION SETTINGS (only used when PRESSURE_SCENARIO = "power_generation") ─
 # N_EVENTS:        Number of abrupt withdrawal events per simulation
 # P_BASE_OFFSET_MPA: Operating pressure above p_leach_end between events
+# RECOVERY_TAU_HOURS: Time constant for exponential re-pressurisation
+#   4 h  = fast recovery (~95% in 12 h)
+#  24 h  = gradual (~63% in 1 day, ~95% in 3 days)
+#  48 h  = slow   (~63% in 2 days, ~95% in 6 days)
 
-N_EVENTS        = 10
-P_BASE_OFFSET_MPA = 7.0
+N_EVENTS           = 10
+P_BASE_OFFSET_MPA  = 7.0
+RECOVERY_TAU_HOURS = 48.0
 
 # ── SCHEDULE SETTINGS ──────────────────────────────────────────────────────────
 # SCHEDULE_MODE: How to distribute cycles over the simulation period:
@@ -962,9 +967,12 @@ def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
     )
 
 
-def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days, seed=42):
+def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days,
+                                    recovery_tau_hours=48.0, seed=42):
     """Irregular abrupt-withdrawal schedule for power-generation demand.
 
+    Each event: sharp 30-min drop → sustained low (2–5 h) → exponential recovery.
+    recovery_tau_hours controls how gradually pressure returns to base.
     Returns t_vals_s (seconds) and p_vals (Pa).
     """
     t_vals_s = _sample_at_dt(tc)
@@ -976,6 +984,8 @@ def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days, 
     n_ev = max(1, int(n_events))
     event_centers_days = np.linspace(1.0, operation_days - 1.0, n_ev)
     event_centers_days = event_centers_days + rng.uniform(-0.8, 0.8, size=n_ev)
+
+    tau = max(0.1, float(recovery_tau_hours))
 
     for day_c in event_centers_days:
         t_start_h = day_c * 24.0
@@ -990,7 +1000,7 @@ def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days, 
             elif dt_ev < 0.5 + duration:
                 drop = depth
             else:
-                drop = depth * math.exp(-(dt_ev - 0.5 - duration) / 4.0)
+                drop = depth * math.exp(-(dt_ev - 0.5 - duration) / tau)
                 if drop < 0.05:
                     break
             p_mpa[i] = min(p_mpa[i], p_base_mpa - drop)
@@ -1713,6 +1723,7 @@ def main():
             p_base_pa=p_op_base_mpa * ut.MPa,
             n_events=N_EVENTS,
             operation_days=OPERATION_DAYS,
+            recovery_tau_hours=RECOVERY_TAU_HOURS,
         )
 
     elif PRESSURE_SCENARIO == "csv":

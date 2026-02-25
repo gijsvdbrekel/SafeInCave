@@ -1,12 +1,14 @@
 """
 Plot calibration results for new cyclic triaxial creep data.
 
-Reads JSON output from calibrate_newdata.py and creates comparison figures:
+Reads JSON output from optimize_newdata.py and creates comparison figures:
   - Top panel:    Stress schedule (sigma_1, sigma_3, sigma_diff)
-  - Middle panel: Axial strain vs time — lab + model predictions with components
-  - Bottom panel: Radial strain vs time — lab + model (validation check)
+  - Bottom panel: Axial strain vs time — lab + model predictions with components
   - Right column: Parameter boxes
   - Per-stage RMSE and MAPE annotations
+
+When run standalone, merges calibration_newdata_sic.json and
+calibration_newdata_md.json (if both exist) into a single combined plot.
 """
 
 import os
@@ -118,7 +120,7 @@ def detect_stages_from_stress(time_h, sigma_diff):
 
 
 def plot_newdata(data, fig_dir):
-    """Create a 3-panel figure for the cyclic creep test."""
+    """Create a 2-panel figure (stress + axial strain) for the cyclic creep test."""
     test_id = data["test_id"]
     T_C = data["temperature_C"]
     s3_mean = data.get("sigma3_MPa_mean", 12.0)
@@ -126,7 +128,6 @@ def plot_newdata(data, fig_dir):
     lab = data["lab"]
     t_lab = np.array(lab["time_hours"])
     e_ax_lab = np.array(lab["strain_axial_pct"])
-    e_rad_lab = np.array(lab["strain_radial_pct"])
     sig_diff_lab = np.array(lab["sigma_diff_MPa"])
     sig1_lab = np.array(lab.get("sigma1_MPa", sig_diff_lab + s3_mean))
     sig3_lab = np.array(lab.get("sigma3_MPa", np.full_like(sig_diff_lab, s3_mean)))
@@ -137,15 +138,14 @@ def plot_newdata(data, fig_dir):
     # Detect stages for metrics
     stages = detect_stages_from_stress(t_lab, sig_diff_lab)
 
-    # ── Figure layout ────────────────────────────────────────────────────────
-    fig = plt.figure(figsize=(20, 12))
-    gs = fig.add_gridspec(3, 2, width_ratios=[3, 1],
-                          height_ratios=[1, 2.5, 2],
+    # ── Figure layout: 2 rows (stress + axial strain) + parameter column ──
+    fig = plt.figure(figsize=(20, 10))
+    gs = fig.add_gridspec(2, 2, width_ratios=[3, 1],
+                          height_ratios=[1, 3],
                           hspace=0.08, wspace=0.2)
 
     ax_sig = fig.add_subplot(gs[0, 0])
     ax_ax = fig.add_subplot(gs[1, 0], sharex=ax_sig)
-    ax_rad = fig.add_subplot(gs[2, 0], sharex=ax_sig)
     ax_par = fig.add_subplot(gs[:, 1])
     ax_par.axis("off")
 
@@ -162,7 +162,7 @@ def plot_newdata(data, fig_dir):
     ax_sig.legend(loc="upper right", fontsize=9)
     plt.setp(ax_sig.get_xticklabels(), visible=False)
 
-    # ── Middle panel: axial strain ───────────────────────────────────────────
+    # ── Bottom panel: axial strain ───────────────────────────────────────────
     ax_ax.plot(t_days, e_ax_lab, "ko", markersize=1.5, alpha=0.5,
                label="Lab data", zorder=5)
 
@@ -179,8 +179,6 @@ def plot_newdata(data, fig_dir):
             eps_dc = np.array(sic["strain_disloc_pct"])
             eps_kv = np.array(sic["strain_kelvin_pct"])
             eps_de = np.array(sic["strain_desai_pct"])
-            # Elastic
-            eps_el = eps_sic - eps_dc - eps_kv - eps_de
             ax_ax.plot(t_sic / 24, eps_dc, "--", color="#1f77b4", linewidth=1,
                        alpha=0.5, label="  dislocation")
             ax_ax.plot(t_sic / 24, eps_kv, "-.", color="#1f77b4", linewidth=1,
@@ -189,14 +187,15 @@ def plot_newdata(data, fig_dir):
                 ax_ax.plot(t_sic / 24, eps_de, ":", color="#1f77b4",
                            linewidth=1, alpha=0.5, label="  Desai")
 
-        # Per-stage metrics
+        # Per-stage metrics for SIC
         stg_metrics = compute_stage_metrics(
             t_lab, e_ax_lab, t_sic, eps_sic, stages
         )
+        metrics_text.append("SIC:")
         for k, (stg, m) in enumerate(zip(stages, stg_metrics)):
             if m and stg['type'] == 'loading':
                 metrics_text.append(
-                    f"S{k} ({stg['sigma_mpa']:.0f}MPa): "
+                    f"  S{k} ({stg['sigma_mpa']:.0f}MPa): "
                     f"RMSE={m['rmse']:.3f}% MAPE={m['mape']:.0f}%"
                 )
 
@@ -210,16 +209,27 @@ def plot_newdata(data, fig_dir):
         if SHOW_COMPONENTS:
             eps_ss = np.array(md["strain_steady_pct"])
             eps_tr = np.array(md["strain_transient_pct"])
-            eps_el_md = eps_md - eps_ss - eps_tr
             ax_ax.plot(t_md / 24, eps_ss, "--", color="#d62728", linewidth=1,
                        alpha=0.5, label="  steady-state")
             ax_ax.plot(t_md / 24, eps_tr, ":", color="#d62728", linewidth=1,
                        alpha=0.5, label="  transient")
 
+        # Per-stage metrics for MD
+        stg_metrics_md = compute_stage_metrics(
+            t_lab, e_ax_lab, t_md, eps_md, stages
+        )
+        metrics_text.append("MD:")
+        for k, (stg, m) in enumerate(zip(stages, stg_metrics_md)):
+            if m and stg['type'] == 'loading':
+                metrics_text.append(
+                    f"  S{k} ({stg['sigma_mpa']:.0f}MPa): "
+                    f"RMSE={m['rmse']:.3f}% MAPE={m['mape']:.0f}%"
+                )
+
+    ax_ax.set_xlabel("Time (days)")
     ax_ax.set_ylabel("Axial strain (%)")
     ax_ax.grid(True, alpha=0.3)
     ax_ax.legend(loc="upper left", fontsize=8, ncol=2)
-    plt.setp(ax_ax.get_xticklabels(), visible=False)
 
     # Add metrics annotation
     if metrics_text:
@@ -229,29 +239,6 @@ def plot_newdata(data, fig_dir):
                        family="monospace",
                        bbox=dict(boxstyle="round,pad=0.3", fc="white",
                                  alpha=0.8, ec="0.7"))
-
-    # ── Bottom panel: radial strain ──────────────────────────────────────────
-    ax_rad.plot(t_days, e_rad_lab, "ko", markersize=1.5, alpha=0.5,
-                label="Lab data", zorder=5)
-
-    if has_sic:
-        sic = data["safeincave"]
-        eps_rad_sic = np.array(sic.get("strain_radial_pct", []))
-        if len(eps_rad_sic) > 0:
-            ax_rad.plot(t_sic / 24, eps_rad_sic, "-", color="#1f77b4",
-                        linewidth=2, label="SafeInCave")
-
-    if has_md:
-        md = data["munsondawson"]
-        eps_rad_md = np.array(md.get("strain_radial_pct", []))
-        if len(eps_rad_md) > 0:
-            ax_rad.plot(t_md / 24, eps_rad_md, "-", color="#d62728",
-                        linewidth=2, label="Munson-Dawson")
-
-    ax_rad.set_xlabel("Time (days)")
-    ax_rad.set_ylabel("Radial strain (%)")
-    ax_rad.grid(True, alpha=0.3)
-    ax_rad.legend(loc="lower left", fontsize=8)
 
     # ── Right column: parameter boxes ────────────────────────────────────────
     y = 0.98
@@ -280,6 +267,7 @@ def plot_newdata(data, fig_dir):
 
     # SafeInCave parameters
     if has_sic:
+        sic = data["safeincave"]
         p = sic.get("params", {})
         sic_lines = [
             f"A   = {_fmt(p.get('A_mpa_yr', 0))} MPa^-n/yr",
@@ -299,6 +287,7 @@ def plot_newdata(data, fig_dir):
 
     # Munson-Dawson parameters
     if has_md:
+        md = data["munsondawson"]
         p = md.get("params", {})
         md_lines = [
             f"A   = {_fmt(p.get('A_mpa_yr', 0))} MPa^-n/yr",
@@ -308,13 +297,13 @@ def plot_newdata(data, fig_dir):
             f"K0  = {_fmt(p.get('K0', 0))}",
             f"c   = {p.get('c', 0):.5f} 1/K",
             f"m   = {p.get('m', 0):.4f}",
-            f"a_w = {p.get('alpha_w', 0):.4f}",
-            f"b_w = {p.get('beta_w', 0):.4f}",
-            f"d   = {p.get('delta', 0):.4f}",
+            f"a_w = {_fmt(p.get('alpha_w', 0))}",
+            f"b_w = {_fmt(p.get('beta_w', 0))}",
+            f"d   = {_fmt(p.get('delta', 0))}",
         ]
         y = _box(ax_par, 0.02, y, "MUNSON-DAWSON", md_lines, "#f7dddd")
 
-    fig.subplots_adjust(left=0.06, right=0.97, top=0.95, bottom=0.06)
+    fig.subplots_adjust(left=0.06, right=0.97, top=0.95, bottom=0.07)
 
     outpath = os.path.join(fig_dir, f"calibration_{test_id}.png")
     fig.savefig(outpath, dpi=DPI)
@@ -325,19 +314,56 @@ def plot_newdata(data, fig_dir):
     plt.close(fig)
 
 
+def load_and_merge():
+    """Load SIC and MD JSON files and merge into a single dict."""
+    sic_path = os.path.join(DATA_DIR, "calibration_newdata_sic.json")
+    md_path = os.path.join(DATA_DIR, "calibration_newdata_md.json")
+
+    data = None
+
+    if os.path.exists(sic_path):
+        with open(sic_path, "r") as f:
+            data = json.load(f)
+        print(f"  Loaded SIC: {sic_path}")
+
+    if os.path.exists(md_path):
+        with open(md_path, "r") as f:
+            md_data = json.load(f)
+        if data is None:
+            data = md_data
+        else:
+            # Merge MD model into SIC data
+            if "munsondawson" in md_data:
+                data["munsondawson"] = md_data["munsondawson"]
+        print(f"  Loaded MD:  {md_path}")
+
+    if data is None:
+        # Fallback: try old combined file
+        old_path = os.path.join(DATA_DIR, "calibration_newdata.json")
+        if os.path.exists(old_path):
+            with open(old_path, "r") as f:
+                data = json.load(f)
+            print(f"  Loaded: {old_path}")
+
+    return data
+
+
 def main():
     os.makedirs(FIG_DIR, exist_ok=True)
 
-    json_path = os.path.join(DATA_DIR, "calibration_newdata.json")
-    if not os.path.exists(json_path):
-        print(f"[ERROR] {json_path} not found")
-        print("        Run calibrate_newdata.py first.")
+    data = load_and_merge()
+    if data is None:
+        print("[ERROR] No calibration JSON files found in output/")
+        print("        Run optimize_newdata.py first.")
         return
 
-    with open(json_path, "r") as f:
-        data = json.load(f)
+    models = []
+    if "safeincave" in data:
+        models.append("SIC")
+    if "munsondawson" in data:
+        models.append("MD")
+    print(f"Plotting {data['test_id']} ({' + '.join(models)}) ...")
 
-    print(f"Plotting {data['test_id']}...")
     plot_newdata(data, FIG_DIR)
     print("\n[DONE]")
 

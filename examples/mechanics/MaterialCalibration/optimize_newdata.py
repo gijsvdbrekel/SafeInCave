@@ -16,15 +16,16 @@ Usage:
 
 import os
 import sys
+import math
 import time as _time
 import numpy as np
+import numba
 from scipy.optimize import differential_evolution
 from scipy.stats import linregress
 
 sys.path.insert(0, os.path.dirname(__file__))
 from calibrate_newdata import (
     read_excel_data, build_stress_schedule,
-    disloc_rate, kelvin_rate, desai_rate, _update_alpha, munsondawson_rate,
     R_GAS, E_ELASTIC, NU_ELASTIC, MU_SHEAR,
     C_MD, HOUR,
     N_DESAI_POWER, BETA1_DESAI, BETA_DESAI, M_DESAI, GAMMA_DESAI, SIGMA_T_DESAI,
@@ -37,7 +38,7 @@ from calibrate_newdata import (
 # ║                          CONFIGURATION                                     ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
-MODEL = os.environ.get("MODEL", "sic").lower()  # "sic" or "md"
+MODEL = os.environ.get("MODEL", "md").lower()  # "sic" or "md"
 SKIP_PHASE1 = os.environ.get("SKIP_PHASE1", "0") == "1"
 
 # Temperature
@@ -50,10 +51,10 @@ DT_HOURS = 0.5   # coarser than calibrate_newdata for speed during optimization
 # Resampling
 N_PER_STAGE = 40  # uniform points per detected stage
 
-# Zone weights for cyclic loading
-W_LOADING_TRANSIENT  = 3.0   # first ~24h after stress increase
-W_LOADING_STEADY     = 2.0   # rest of loading hold
-W_UNLOADING_TRANSIENT = 2.0  # first ~12h after unloading
+# Zone weights for cyclic loading — emphasize transient "bends"
+W_LOADING_TRANSIENT  = 5.0   # first ~24h after stress increase — highest priority
+W_LOADING_STEADY     = 1.5   # rest of loading hold
+W_UNLOADING_TRANSIENT = 3.0  # first ~12h after unloading — capture recovery bends
 W_UNLOADING_STEADY   = 0.5   # isostatic hold
 
 # Transition duration cutoffs [hours from stage start]
@@ -62,8 +63,8 @@ T_UNLOADING_TRANS = 12.0   # unloading transient zone end
 
 # Phase 1: dislocation creep constraints
 QR_GRID = [6252.0, 6313.0, 6374.0, 6434.0, 6495.0]  # K
-A_BOUNDS = (0.01, 100000.0)  # MPa^-n/yr — wide for room-temp data
-N_BOUNDS = (2.5, 7.0)       # [-]
+A_BOUNDS = (15.0, 60.0)      # MPa^-n/yr — literature-constrained
+N_BOUNDS = (3.0, 6.0)        # [-]
 STEADY_STATE_TAIL_FRAC = 0.3  # use last 30% of each loading hold for slope
 
 # Precomputed constants
@@ -255,92 +256,70 @@ def extract_steady_state_rates(time_h, strain_pct, sigma_diff, stages,
 
 def fit_dislocation_params(stress_mpa, rates_per_s, T, QR_values):
     """
-    Fit A and n from log(rate) = log(A) + n*log(sigma_Pa) - Q/(R*T)
-    for each Q/R value in the grid.
+    Fit A and n from steady-state creep rates using constrained grid search.
 
-    Returns the best (A_mpa_yr, n, Q_over_R) within literature bounds.
+    Searches over A in A_BOUNDS, n in N_BOUNDS, Q/R in QR_values to find the
+    combination minimizing sum of squared log-residuals. This ensures parameters
+    stay within literature bounds (A in [15, 60], n in [3, 6]).
+
+    Returns (A_mpa_yr, n, Q_over_R), best_residual.
     """
     sigma_Pa = stress_mpa * 1e6
-    log_sigma = np.log(sigma_Pa)
     log_rate = np.log(rates_per_s)
 
     best_residual = np.inf
     best_params = None
 
+    # Grid: 50 points in log(A), 30 points in n, 5 Q/R values
+    logA_grid = np.linspace(np.log10(A_BOUNDS[0]), np.log10(A_BOUNDS[1]), 50)
+    n_grid = np.linspace(N_BOUNDS[0], N_BOUNDS[1], 30)
+
     for QR in QR_values:
-        # log(rate) = log(A_Pa_s) + n * log(sigma_Pa) - Q/(R*T)
-        # => log(rate) + Q/(R*T) = log(A_Pa_s) + n * log(sigma_Pa)
-        # => y = c + n * x   where y = log(rate) + QR/T, x = log(sigma_Pa)
-        y = log_rate + QR / T
-        slope_n, intercept, _, _, _ = linregress(log_sigma, y)
-        A_Pa_s = np.exp(intercept)
-
-        # Convert A to MPa^-n/yr
-        A_mpa_yr = A_Pa_s * (1e6 ** slope_n) * _SEC_PER_YR
-
-        # Check bounds
-        if not (A_BOUNDS[0] <= A_mpa_yr <= A_BOUNDS[1]):
-            continue
-        if not (N_BOUNDS[0] <= slope_n <= N_BOUNDS[1]):
-            continue
-
-        # Compute residual
-        predicted = np.log(A_Pa_s) + slope_n * log_sigma - QR / T
-        residual = np.sum((log_rate - predicted) ** 2)
-
-        if residual < best_residual:
-            best_residual = residual
-            best_params = (A_mpa_yr, slope_n, QR)
-
-    # If fit is poor (R² < 0.9), try leaving out each point one at a time
-    if best_params is None or best_residual > 0.5:
-        best_loo = np.inf
-        best_loo_params = None
-        for drop_idx in range(len(stress_mpa)):
-            if len(stress_mpa) - 1 < 3:
-                continue
-            mask = np.ones(len(stress_mpa), dtype=bool)
-            mask[drop_idx] = False
-            sp_sub = sigma_Pa[mask]
-            ls_sub = np.log(sp_sub)
-            lr_sub = log_rate[mask]
-
-            for QR in QR_values:
-                y = lr_sub + QR / T
-                slope_n, intercept, _, _, _ = linregress(ls_sub, y)
-                A_Pa_s = np.exp(intercept)
-                A_mpa_yr = A_Pa_s * (1e6 ** slope_n) * _SEC_PER_YR
-
-                if not (A_BOUNDS[0] <= A_mpa_yr <= A_BOUNDS[1]):
+        exp_QRT = np.exp(-QR / T)
+        for n_val in n_grid:
+            sigma_n = sigma_Pa ** n_val
+            for logA in logA_grid:
+                A_mpa = 10.0 ** logA
+                A_Pa_s = A_mpa * (1e-6) ** n_val / _SEC_PER_YR
+                predicted = A_Pa_s * sigma_n * exp_QRT
+                if np.any(predicted <= 0):
                     continue
-                if not (N_BOUNDS[0] <= slope_n <= N_BOUNDS[1]):
-                    continue
-
-                predicted = np.log(A_Pa_s) + slope_n * ls_sub - QR / T
-                residual = np.sum((lr_sub - predicted) ** 2)
-
-                if residual < best_loo:
-                    best_loo = residual
-                    best_loo_params = (A_mpa_yr, slope_n, QR)
-
-        if best_loo_params is not None and (best_params is None or best_loo < best_residual * 0.5):
-            best_params = best_loo_params
-            best_residual = best_loo
+                residual = np.sum((log_rate - np.log(predicted)) ** 2)
+                if residual < best_residual:
+                    best_residual = residual
+                    best_params = (A_mpa, n_val, QR)
 
     return best_params, best_residual
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║                    PHASE 2: MODEL INTEGRATION (FAST)                       ║
+# ║                    PHASE 2: MODEL INTEGRATION (NUMBA JIT)                  ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
+# Compile-time constants for numba
+_E_EL = E_ELASTIC
+_MU_SH = MU_SHEAR
+_R = R_GAS
+_N_D_POW = N_DESAI_POWER
+_BETA1_D = BETA1_DESAI
+_BETA_D = BETA_DESAI
+_M_D = M_DESAI
+_GAMMA_D = GAMMA_DESAI
+_SIGMA_T_D = SIGMA_T_DESAI
+_MAX_DEPS = _DESAI_MAX_DEPS
+_MAX_DZETA = _MD_MAX_DZETA
+_MAX_SUBSTEPS = 2000
+
+
+@numba.njit(cache=True)
 def integrate_sic_fast(t_s, sigma_diff_Pa, A_pa_s, n, Q, T, eta, E1,
                        mu1, N1, a1, eta_vp, alpha0):
     """
-    Fast SIC integration for optimizer: dislocation + Kelvin (exact) + Desai.
+    Numba-JIT SIC integration: dislocation + Kelvin (exact) + Desai.
+    All rate computations inlined for numba compatibility.
     Returns axial strain [%] at each time step.
     """
-    _EXP_QRT = np.exp(-Q / (R_GAS * T))
+    exp_QRT = math.exp(-Q / (_R * T))
     n_pts = len(t_s)
     eps_k = 0.0
     eps_d = 0.0
@@ -348,97 +327,144 @@ def integrate_sic_fast(t_s, sigma_diff_Pa, A_pa_s, n, Q, T, eta, E1,
     alpha = alpha0
     zeta_desai = 0.0
     eps = np.zeros(n_pts)
+    MPA = 1e6
+    sigma3_approx = 12.0e6
 
     for i in range(n_pts):
         sigma = sigma_diff_Pa[i]
         dt = (t_s[i] - t_s[i - 1]) if i > 0 else 0.0
-        e_el = sigma / E_ELASTIC
+        e_el = sigma / _E_EL
 
-        if dt > 0:
+        if dt > 0.0:
             # Dislocation creep
-            rate_dc = A_pa_s * (abs(sigma) ** n) * _EXP_QRT
+            rate_dc = A_pa_s * (abs(sigma) ** n) * exp_QRT
             eps_d += rate_dc * dt
 
             # Kelvin — exact update
-            eps_k_eq = sigma / E1 if E1 > 0 else 0.0
-            decay = np.exp(-E1 * dt / eta) if (eta > 0 and E1 > 0) else 0.0
-            eps_k = eps_k_eq + (eps_k - eps_k_eq) * decay
+            if E1 > 0.0 and eta > 0.0:
+                eps_k_eq = sigma / E1
+                decay = math.exp(-E1 * dt / eta)
+                eps_k = eps_k_eq + (eps_k - eps_k_eq) * decay
 
-            # Desai — adaptive sub-stepping
-            if mu1 > 0:
-                dt_remaining = dt
-                while dt_remaining > 1e-10:
-                    # Compute sigma3 from sigma_diff (approximate: sigma3 ~ 12 MPa)
-                    sigma3_approx = 12.0e6
-                    rate_desai = desai_rate(
-                        sigma, sigma3_approx, alpha,
-                        mu1, N1, a1, eta_vp,
-                        N_DESAI_POWER, BETA1_DESAI, BETA_DESAI, M_DESAI,
-                        GAMMA_DESAI, SIGMA_T_DESAI
-                    )
+            # Desai — adaptive sub-stepping (inlined)
+            if mu1 > 0.0:
+                dt_rem = dt
+                n_sub = 0
+                while dt_rem > 1e-10 and n_sub < _MAX_SUBSTEPS:
+                    n_sub += 1
+                    # Inline desai_rate
+                    s1 = (sigma3_approx + sigma) / MPA
+                    s2 = sigma3_approx / MPA
+                    s3v = sigma3_approx / MPA
+                    I1 = s1 + s2 + s3v
+                    I2 = s1 * s2 + s2 * s3v + s1 * s3v
+                    I3 = s1 * s2 * s3v
+                    J2 = (1.0 / 3.0) * I1 * I1 - I2
+                    J3 = (2.0 / 27.0) * I1 * I1 * I1 - (1.0 / 3.0) * I1 * I2 + I3
+                    if J2 < 1e-30:
+                        break
+                    sqJ2 = math.sqrt(J2)
+                    arg_sr = -(J3 * math.sqrt(27.0)) / (2.0 * sqJ2 * sqJ2 * sqJ2)
+                    if arg_sr < -1.0:
+                        arg_sr = -1.0
+                    if arg_sr > 1.0:
+                        arg_sr = 1.0
+                    Sr = arg_sr
+                    I1_star = I1 + _SIGMA_T_D
+                    F1 = alpha * I1_star ** _N_D_POW - _GAMMA_D * I1_star * I1_star
+                    F2_base = math.exp(_BETA1_D * I1_star) - _BETA_D * Sr
+                    if F2_base <= 0.0:
+                        F_vp = J2
+                    else:
+                        F_vp = J2 + F1 * F2_base ** _M_D
+                    if F_vp <= 0.0:
+                        break
+                    lam = mu1 * (F_vp ** N1)
+                    p = I1 / 3.0
+                    dev1 = s1 - p
+                    rate_desai = lam * abs(dev1)
                     if rate_desai < 1e-30:
                         break
-                    dt_sub = min(dt_remaining, _DESAI_MAX_DEPS / rate_desai)
-                    dt_sub = max(dt_sub, 1e-6)
+                    dt_sub = min(dt_rem, _MAX_DEPS / rate_desai)
+                    if dt_sub < 1e-6:
+                        dt_sub = 1e-6
                     eps_vp += rate_desai * dt_sub
                     zeta_desai += rate_desai * dt_sub
-                    alpha = _update_alpha(zeta_desai, a1, alpha0, eta_vp)
-                    dt_remaining -= dt_sub
+                    # Inline _update_alpha
+                    base = (a1 / alpha0) ** (1.0 / eta_vp) + zeta_desai
+                    if base > 0.0:
+                        alpha = a1 / (base ** eta_vp)
+                        if alpha < 1e-30:
+                            alpha = 1e-30
+                    else:
+                        alpha = alpha0
+                    dt_rem -= dt_sub
 
         eps[i] = (e_el + eps_d + eps_k + eps_vp) * 100.0
 
     return eps
 
 
+@numba.njit(cache=True)
 def integrate_md_fast(t_s, sigma_diff_Pa, A_pa_s, n, Q, T,
                       K0, c, m_md, alpha_w, beta_w, delta):
     """
-    Fast MD integration for optimizer with adaptive sub-stepping.
+    Numba-JIT MD integration with adaptive sub-stepping.
     Returns axial strain [%] at each time step.
     """
-    _EXP_QRT = np.exp(-Q / (R_GAS * T))
-    _EXP_CT = np.exp(c * T)
+    exp_QRT = math.exp(-Q / (_R * T))
+    exp_CT = math.exp(c * T)
     n_pts = len(t_s)
     eps_c = 0.0
     zeta = 0.0
     eps = np.zeros(n_pts)
+    log10_e = 1.0 / math.log(10.0)
 
     for i in range(n_pts):
         sigma = sigma_diff_Pa[i]
         dt = (t_s[i] - t_s[i - 1]) if i > 0 else 0.0
-        e_el = sigma / E_ELASTIC
+        e_el = sigma / _E_EL
 
-        if dt > 0:
-            rate_ss = A_pa_s * (abs(sigma) ** n) * _EXP_QRT
+        if dt > 0.0:
+            rate_ss = A_pa_s * (abs(sigma) ** n) * exp_QRT
             if rate_ss < 1e-60:
                 eps[i] = (e_el + eps_c) * 100.0
                 continue
 
             dt_rem = dt
-            while dt_rem > 1e-10:
-                som = abs(sigma) / MU_SHEAR if MU_SHEAR > 0 else 0.0
-                eps_t_star = K0 * _EXP_CT * (max(som, 1e-60) ** m_md)
+            n_sub = 0
+            while dt_rem > 1e-10 and n_sub < _MAX_SUBSTEPS:
+                n_sub += 1
+                som = abs(sigma) / _MU_SH if _MU_SH > 0.0 else 0.0
+                if som < 1e-60:
+                    som = 1e-60
+                eps_t_star = K0 * exp_CT * (som ** m_md)
                 if eps_t_star < 1e-50:
                     eps_c += rate_ss * dt_rem
                     break
-                Delta = alpha_w + beta_w * np.log10(max(som, 1e-30))
+                # log10(som) via natural log
+                log10_som = math.log(max(som, 1e-30)) * log10_e
+                Delta = alpha_w + beta_w * log10_som
                 ratio = zeta / eps_t_star
                 if ratio <= 1.0:
-                    F = np.exp(Delta * (1.0 - ratio) ** 2)
+                    F = math.exp(Delta * (1.0 - ratio) * (1.0 - ratio))
                 else:
-                    F = np.exp(-delta * (1.0 - ratio) ** 2)
+                    F = math.exp(-delta * (1.0 - ratio) * (1.0 - ratio))
 
                 zeta_rate = abs(F - 1.0) * rate_ss
                 if zeta_rate > 1e-30:
-                    dt_sub = min(dt_rem, _MD_MAX_DZETA / zeta_rate)
+                    dt_sub = min(dt_rem, _MAX_DZETA / zeta_rate)
                 else:
                     dt_sub = dt_rem
-                dt_sub = max(dt_sub, 10.0)
-                dt_sub = min(dt_sub, dt_rem)
+                if dt_sub < 10.0:
+                    dt_sub = 10.0
+                if dt_sub > dt_rem:
+                    dt_sub = dt_rem
 
                 eps_c += F * rate_ss * dt_sub
                 zeta += (F - 1.0) * rate_ss * dt_sub
-                zeta = max(zeta, 0.0)
+                if zeta < 0.0:
+                    zeta = 0.0
                 dt_rem -= dt_sub
 
         eps[i] = (e_el + eps_c) * 100.0
@@ -477,6 +503,16 @@ def main():
         dur = stg['t_end'] - stg['t_start']
         print(f"    Stage {k}: {stg['t_start']:.0f}-{stg['t_end']:.0f} h, "
               f"sigma={stg['sigma_mpa']:.1f} MPa, type={stg['type']}, dur={dur:.0f} h")
+
+    # Warm up numba JIT compilation
+    print("  Warming up numba JIT ...", end="", flush=True)
+    _t_warm = np.linspace(0, 3600.0, 10)
+    _s_warm = np.full(10, 10e6)
+    _ = integrate_sic_fast(_t_warm, _s_warm, 1e-40, 4.0, 50000.0, 294.15,
+                           1e12, 5e8, 1e-15, 2.0, 1e-3, 1.2, 0.005)
+    _ = integrate_md_fast(_t_warm, _s_warm, 1e-40, 4.0, 50000.0, 294.15,
+                          1.0, 0.009, 2.0, 5.0, -2.0, 1.0)
+    print(" done", flush=True)
 
     # Resample and label
     t_resamp, e_resamp, s_resamp, weights, stage_ids = \
@@ -618,16 +654,17 @@ def main():
         _maxiter = 200
     else:
         BOUNDS = [
-            (-6.0, 1.0),      # log10(K0)
-            (0.1, 5.0),       # m_md
-            (-50.0, 50.0),    # alpha_w
-            (-15.0, 0.0),     # beta_w
-            (0.001, 5.0),     # delta
+            (-6.0, 8.0),      # log10(K0) — wide range for transient duration
+            (0.1, 6.0),       # m_md
+            (-10.0, 200.0),   # alpha_w — controls F magnitude (exp(Δ))
+            (-30.0, 60.0),    # beta_w — stress-dependence of Δ
+            (0.001, 300.0),   # delta — recovery branch strength
         ]
-        _SEED_ROW = np.array([-2.0, 1.0, -5.0, -7.0, 1.0])
+        # Seed near previous best
+        _SEED_ROW = np.array([3.39, 2.47, 93.3, 30.0, 99.4])
         _n_params = 5
-        _popsize = 15
-        _maxiter = 200
+        _popsize = 20
+        _maxiter = 300
 
     # Build initial population with seed
     _n_pop = _popsize * _n_params
@@ -777,6 +814,124 @@ def main():
         print(f"  ALPHA_W_MD    = {alpha_w:.4f}")
         print(f"  BETA_W_MD     = {beta_w:.4f}")
         print(f"  DELTA_MD      = {delta:.6f}")
+
+    # ── AUTO-SAVE: run full integration and save JSON ─────────────────────
+    print(f"\n{'='*70}")
+    print("AUTO-SAVE: Running full integration with optimized parameters ...")
+    print(f"{'='*70}")
+
+    import calibrate_newdata as cn
+    import json
+
+    # Re-read data via calibrate_newdata (finer dt for final output)
+    time_h_raw_full, sigma1_raw_full, sigma3_raw_full, eps1_raw, eps3_raw = \
+        cn.read_excel_data(XLSX_PATH)
+    t_s_full, sig1_full, sig3_full, idx0 = cn.build_stress_schedule(
+        time_h_raw_full, sigma1_raw_full, sigma3_raw_full, cn.DT_HOURS
+    )
+
+    t0_h_full = time_h_raw_full[idx0]
+    lab_time = time_h_raw_full[idx0:] - t0_h_full
+    lab_eps1 = eps1_raw[idx0:] - eps1_raw[idx0]
+    lab_eps3 = eps3_raw[idx0:] - eps3_raw[idx0]
+    lab_sdiff = (sigma1_raw_full - sigma3_raw_full)[idx0:]
+    lab_sig1 = sigma1_raw_full[idx0:]
+    lab_sig3 = sigma3_raw_full[idx0:]
+
+    result_json = {
+        "test_id": "newdata_cyclic",
+        "temperature_C": T_CELSIUS,
+        "sigma3_MPa_mean": float(np.mean(sigma3_raw_full[idx0:])),
+        "lab": {
+            "time_hours": lab_time.tolist(),
+            "strain_axial_pct": lab_eps1.tolist(),
+            "strain_radial_pct": lab_eps3.tolist(),
+            "sigma_diff_MPa": lab_sdiff.tolist(),
+            "sigma1_MPa": lab_sig1.tolist(),
+            "sigma3_MPa": lab_sig3.tolist(),
+        },
+        "params": {
+            "Q_over_R": QR_DISLOC,
+            "E_elastic": E_ELASTIC,
+            "nu_elastic": NU_ELASTIC,
+        },
+    }
+
+    t_hours_full = t_s_full / HOUR
+
+    if MODEL == "sic":
+        A_pa_s_full = A_DISLOC_MPA_YR * (1e-6) ** N_DISLOC / _SEC_PER_YR
+        eps_ax, eps_dc, eps_kv, eps_de, eps_rad = cn.integrate_safeincave(
+            t_s_full, sig1_full, sig3_full,
+            A=A_pa_s_full, n=N_DISLOC, Q=Q_DISLOC_val, T=T_KELVIN,
+            eta=eta, E1=E1, mu1=mu1, N1=N1, a1=a1, eta_vp=eta_vp, alpha0=alpha0,
+        )
+        result_json["safeincave"] = {
+            "time_hours": t_hours_full.tolist(),
+            "strain_axial_pct": (eps_ax * 100).tolist(),
+            "strain_radial_pct": (eps_rad * 100).tolist(),
+            "strain_disloc_pct": (eps_dc * 100).tolist(),
+            "strain_kelvin_pct": (eps_kv * 100).tolist(),
+            "strain_desai_pct": (eps_de * 100).tolist(),
+            "params": {
+                "A_mpa_yr": A_DISLOC_MPA_YR, "n": N_DISLOC,
+                "eta_kelvin": eta, "E1_kelvin": E1,
+                "mu1_desai": mu1, "N1_desai": N1,
+                "a1_desai": a1, "eta_desai": eta_vp,
+                "alpha0_desai": alpha0,
+            },
+        }
+        print(f"  SIC final axial strain:  {eps_ax[-1] * 100:.4f}%")
+    else:
+        A_pa_s_full = A_DISLOC_MPA_YR * (1e-6) ** N_DISLOC / _SEC_PER_YR
+        eps_ax, eps_ss_arr, eps_tr_arr, eps_rad = cn.integrate_munsondawson(
+            t_s_full, sig1_full, sig3_full,
+            A=A_pa_s_full, n=N_DISLOC, Q=Q_DISLOC_val, T=T_KELVIN,
+            K0=K0, c=C_MD, m_md=m_md,
+            alpha_w=alpha_w, beta_w=beta_w, delta=delta,
+        )
+        result_json["munsondawson"] = {
+            "time_hours": t_hours_full.tolist(),
+            "strain_axial_pct": (eps_ax * 100).tolist(),
+            "strain_radial_pct": (eps_rad * 100).tolist(),
+            "strain_steady_pct": (eps_ss_arr * 100).tolist(),
+            "strain_transient_pct": (eps_tr_arr * 100).tolist(),
+            "params": {
+                "A_mpa_yr": A_DISLOC_MPA_YR, "n": N_DISLOC,
+                "K0": K0, "c": C_MD, "m": m_md,
+                "alpha_w": alpha_w, "beta_w": beta_w, "delta": delta,
+            },
+        }
+        print(f"  MD final axial strain:   {eps_ax[-1] * 100:.4f}%")
+
+    out_dir = os.path.join(os.path.dirname(__file__), "output")
+    os.makedirs(out_dir, exist_ok=True)
+    json_path = os.path.join(out_dir, f"calibration_newdata_{MODEL}.json")
+    with open(json_path, "w") as f:
+        json.dump(result_json, f, indent=2)
+    print(f"  [SAVED] {json_path}")
+
+    # ── AUTO-PLOT: merge both models if available ─────────────────────────
+    print("\nGenerating combined plot ...")
+    fig_dir = os.path.join(os.path.dirname(__file__), "figures")
+    os.makedirs(fig_dir, exist_ok=True)
+
+    # Try to load the other model's results and merge
+    other = "sic" if MODEL == "md" else "md"
+    other_path = os.path.join(out_dir, f"calibration_newdata_{other}.json")
+    if os.path.exists(other_path):
+        with open(other_path, "r") as f:
+            other_data = json.load(f)
+        # Merge: keep current model's lab data, add both model sections
+        for key in ("safeincave", "munsondawson"):
+            if key in other_data and key not in result_json:
+                result_json[key] = other_data[key]
+        print(f"  Merged with {other_path}")
+
+    from plot_newdata import plot_newdata
+    plot_newdata(result_json, fig_dir)
+
+    print("\n[ALL DONE]")
 
 
 if __name__ == "__main__":

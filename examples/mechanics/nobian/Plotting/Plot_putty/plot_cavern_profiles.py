@@ -10,7 +10,8 @@ import meshio
 # ║  Plot 2x3 overview of cavern wall profiles with probe points.                 ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
-GRIDS_ROOT = r"/data/home/gbrekel/SafeInCave_new/grids"
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+GRIDS_ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "..", "..", "..", "grids"))
 
 CAVERNS = [
     ("Regular",             "cavern_regular_1200_3D"),

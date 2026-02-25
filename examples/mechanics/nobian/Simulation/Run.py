@@ -60,13 +60,13 @@ CAVERN_TYPE = "regular"
 # CAVERN_SIZE: Volume in thousands of m³ (ignored for A5)
 #   600  - 600,000 m³ volume
 #   1200 - 1,200,000 m³ volume
-CAVERN_SIZE = 600
+CAVERN_SIZE = 1200
 
 # ── LEACHING PHASE SETTINGS ──────────────────────────────────────────────────────
 # LEACHING_MODE: How pressure decreases during leaching:
 #   "linear"  - Linear decrease from lithostatic to operational pressure
 #   "stepped" - Stepped decrease with plateaus (more realistic)
-LEACHING_MODE = "stepped"
+LEACHING_MODE = "linear"
 
 # LEACHING_DAYS: Duration of leaching phase in days
 LEACHING_DAYS = 91
@@ -105,25 +105,37 @@ RAMP_UP_HOURS = 336 # 2 weeks
 #   "transport"        - Trapezoidal 2-day cycle (nighttime high → daytime low)
 #   "power_generation" - Abrupt withdrawal events with gradual re-pressurisation
 #   "csv"              - Load pressure profile from CSV file
-PRESSURE_SCENARIO = "industry"
+PRESSURE_SCENARIO = "power_generation"
 
 # ── INDUSTRY SETTINGS (only used when PRESSURE_SCENARIO = "industry") ──────────
 # Sinusoidal schedule. With leaching: oscillates around p_leach_end + P_AMPLITUDE_MPA.
 # Without leaching: uses P_MEAN_MPA as centre.
 P_MEAN_MPA = 15.0          # Mean pressure (only used if USE_LEACHING = False)
-P_AMPLITUDE_MPA = 3.5      # Half peak-to-peak amplitude (MPa)
+P_AMPLITUDE_MPA = 5      # Half peak-to-peak amplitude (MPa)
 
 # ── TRANSPORT SETTINGS (only used when PRESSURE_SCENARIO = "transport") ─────────
 # Two-day trapezoidal cycle: 8 h at high → ramp down → 16 h at low → ramp up → 8 h at high.
 # Pressures are offsets above p_leach_end (or absolute if USE_LEACHING = False).
 P_HIGH_OFFSET_MPA = 5.0    # High-pressure offset above p_leach_end (MPa)
-P_LOW_OFFSET_MPA  = 1.0    # Low-pressure offset above p_leach_end (MPa)
+P_LOW_OFFSET_MPA  = 1.5    # Low-pressure offset above p_leach_end (MPa)
 
 # ── POWER GENERATION SETTINGS (only used when PRESSURE_SCENARIO = "power_generation") ──
 # N_EVENTS abrupt withdrawal events over the operation period, each with a sharp
-# 30-min drop, sustained low, and slow exponential re-pressurisation (tau = 4 h).
-N_EVENTS = 10              # Number of withdrawal events
-P_BASE_OFFSET_MPA = 7.0    # Resting pressure offset above p_leach_end (MPa)
+# 30-min drop, sustained low, and exponential re-pressurisation.
+N_EVENTS = 20              # Number of withdrawal events
+P_BASE_OFFSET_MPA = 10.0    # Resting pressure offset above p_leach_end (MPa)
+RECOVERY_TAU_HOURS = 48.0   # Time constant for exponential re-pressurisation (hours)
+                            #   4 h  = fast recovery (~95% in 12 h)
+                            #  24 h  = gradual (~63% in 1 day, ~95% in 3 days)
+                            #  48 h  = slow   (~63% in 2 days, ~95% in 6 days)
+
+# ── VARIABLE TIME-STEPPING (only used when PRESSURE_SCENARIO = "power_generation") ──
+# Adaptive dt: small steps during sharp pressure drops, coarse steps elsewhere.
+# MAX_DP_MPA controls refinement: steps are halved until |Δp| ≤ MAX_DP_MPA per step.
+USE_VARIABLE_DT = True             # True = adaptive dt for power_generation
+DT_FINE_HOURS   = 0.2              # Minimum dt (12 min) during sharp events
+DT_COARSE_HOURS = 2.0              # Maximum dt away from events (same as dt_hours)
+MAX_DP_MPA      = 0.2              # Max pressure change per step (MPa)
 
 # ── SCHEDULE SETTINGS ──────────────────────────────────────────────────────────
 # SCHEDULE_MODE: How to distribute cycles (used by "industry" and "transport"):
@@ -136,7 +148,7 @@ SCHEDULE_MODE = "stretch"
 OPERATION_DAYS = 365
 
 # N_CYCLES: Number of pressure cycles (industry: sinusoidal; transport: 2-day cycles)
-N_CYCLES = 12
+N_CYCLES = 180
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
 dt_hours = 2
@@ -151,7 +163,7 @@ RESCALE_MAX_MPA = 20.0
 RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
-USE_SCENARIO_B    = False    # False = Scenario A (CCC Zuidwending), True = Scenario B (calibrated)
+USE_SCENARIO_B    = False    # False = Scenario A (CCC Zuidwending + Herminio calibration), True = Scenario B (calibrated)
 USE_MUNSON_DAWSON = False    # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
@@ -645,6 +657,72 @@ def _sample_at_dt(tc, t_end=None):
     return t_vals
 
 
+# ── Variable-dt time controller (for power_generation) ────────────────────────
+
+class TimeControllerFromList:
+    """
+    Time controller that steps through a pre-computed list of times.
+    Compatible with sf.Simulator_M (exposes t, dt, t_final, time_unit,
+    time_conversion, step_counter, keep_looping, advance_time).
+    """
+    def __init__(self, time_list_seconds):
+        self.time_list = np.asarray(time_list_seconds, dtype=float)
+        if self.time_list.ndim != 1 or self.time_list.size < 2:
+            raise ValueError("time_list_seconds must have at least 2 entries.")
+        if not np.all(np.diff(self.time_list) > 0):
+            raise ValueError("time_list_seconds must be strictly increasing.")
+
+        self.t_initial = float(self.time_list[0])
+        self.t_final = float(self.time_list[-1])
+        self.t = float(self.time_list[0])
+        self.step_counter = 0
+        self.dt = float(self.time_list[1] - self.time_list[0])
+        # Required by Simulator_M / ScreenPrinter
+        self.time_unit = "hour"
+        self.time_conversion = ut.hour
+
+    def keep_looping(self):
+        return self.step_counter < (self.time_list.size - 1)
+
+    def advance_time(self):
+        self.step_counter += 1
+        t_prev = self.t
+        self.t = float(self.time_list[self.step_counter])
+        self.dt = self.t - t_prev
+
+
+def build_time_list_by_dp_limit(t_final_s, p_of_t, *, dt_min_s, dt_max_s, dp_max_pa):
+    """
+    Build a variable time grid so that |p(t+dt) - p(t)| <= dp_max_pa,
+    with dt clamped in [dt_min_s, dt_max_s]. All arguments in seconds/Pascals.
+    """
+    t = 0.0
+    times = [0.0]
+    p_prev = float(p_of_t(0.0))
+
+    max_steps = int(np.ceil(t_final_s / dt_min_s)) + 50
+    for _ in range(max_steps):
+        if t >= t_final_s - 1e-12:
+            break
+
+        dt = dt_max_s
+        while True:
+            t_try = min(t + dt, t_final_s)
+            p_try = float(p_of_t(t_try))
+            if abs(p_try - p_prev) <= dp_max_pa or dt <= dt_min_s + 1e-12:
+                t = t_try
+                p_prev = p_try
+                times.append(t)
+                break
+            dt *= 0.5
+            if dt < dt_min_s:
+                dt = dt_min_s
+
+    if abs(times[-1] - t_final_s) > 1e-9:
+        times.append(t_final_s)
+    return times
+
+
 def build_sinus_pressure_schedule(tc, *, p_mean, p_ampl, period_hours, phase_hours=0.0,
                                   clamp_min=None, clamp_max=None):
     period = period_hours * ut.hour
@@ -899,10 +977,12 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
     )
 
 
-def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days, seed=42):
+def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days,
+                                    recovery_tau_hours=48.0, seed=42):
     """
     N_EVENTS abrupt withdrawal events spread over the operation period.
-    Each event: sharp 30-min drop → sustained low (2–5 h) → exponential recovery (tau=4 h).
+    Each event: sharp 30-min drop → sustained low (2–5 h) → exponential recovery.
+    recovery_tau_hours controls how gradually pressure returns to base.
     Reproducible via seed.  Returns (t_vals_s, p_vals_Pa).
     """
     t_vals_s = _sample_at_dt(tc)
@@ -914,10 +994,12 @@ def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days, 
     event_centers_days = np.linspace(1.0, operation_days - 1.0, max(1, n_events))
     event_centers_days = event_centers_days + rng.uniform(-0.8, 0.8, size=n_events)
 
+    tau = max(0.1, float(recovery_tau_hours))
+
     for day_c in event_centers_days:
         t_start_h = day_c * 24.0
         duration = rng.uniform(2.0, 5.0)   # sustained low: 2–5 hours
-        depth    = rng.uniform(3.5, 6.5)   # pressure drop: 3.5–6.5 MPa
+        depth    = rng.uniform(6.5, 12.5)   # pressure drop: 6.5–12.5 MPa
         for i, t in enumerate(t_h):
             if t < t_start_h:
                 continue
@@ -927,7 +1009,7 @@ def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days, 
             elif dt_ev < 0.5 + duration:
                 drop = depth
             else:
-                drop = depth * math.exp(-(dt_ev - 0.5 - duration) / 4.0)
+                drop = depth * math.exp(-(dt_ev - 0.5 - duration) / tau)
                 if drop < 0.05:
                     break
             p_mpa[i] = min(p_mpa[i], p_base_mpa - drop)
@@ -946,7 +1028,7 @@ class LinearMomentumMod(sf.LinearMomentum):
         self.expect_vp_state = False
 
     def initialize(self) -> None:
-        self.C.x.array[:] = to.flatten(self.mat.C).detach().cpu().numpy()
+        self.C.x.array[:] = to.flatten(self.mat.C)
         self.Fvp = do.fem.Function(self.DG0_1)
         self.alpha = do.fem.Function(self.DG0_1)
         self.eps_vp = do.fem.Function(self.DG0_3x3)
@@ -961,19 +1043,19 @@ class LinearMomentumMod(sf.LinearMomentum):
         st = elems[-1]
 
         if hasattr(st, "eps_ne_k"):
-            self.eps_vp.x.array[:] = to.flatten(st.eps_ne_k).detach().cpu().numpy()
+            self.eps_vp.x.array[:] = to.flatten(st.eps_ne_k)
 
         if self.expect_vp_state:
             if not (hasattr(st, "Fvp") and hasattr(st, "alpha")):
                 if MPI.COMM_WORLD.rank == 0:
                     print("[WARN] Expected Fvp/alpha but missing.")
                 return
-            self.Fvp.x.array[:] = to.as_tensor(st.Fvp).detach().cpu().numpy()
-            self.alpha.x.array[:] = to.as_tensor(st.alpha).detach().cpu().numpy()
+            self.Fvp.x.array[:] = st.Fvp
+            self.alpha.x.array[:] = st.alpha
         else:
             if hasattr(st, "Fvp") and hasattr(st, "alpha"):
-                self.Fvp.x.array[:] = to.as_tensor(st.Fvp).detach().cpu().numpy()
-                self.alpha.x.array[:] = to.as_tensor(st.alpha).detach().cpu().numpy()
+                self.Fvp.x.array[:] = st.Fvp
+                self.alpha.x.array[:] = st.alpha
 
 
 class SparseSaveFields(sf.SaveFields):
@@ -1389,6 +1471,7 @@ def main():
             p_base_pa=p_base_pa,
             n_events=N_EVENTS,
             operation_days=OPERATION_DAYS,
+            recovery_tau_hours=RECOVERY_TAU_HOURS,
         )
 
     elif PRESSURE_SCENARIO == "csv":
@@ -1449,12 +1532,34 @@ def main():
 
     # Create tc_operation with full duration (including debrining)
     total_operation_hours = OPERATION_DAYS * 24.0 + extra_hours
-    tc_operation = sf.TimeController(
-        dt=dt_hours,
-        initial_time=0.0,
-        final_time=total_operation_hours,
-        time_unit="hour"
-    )
+
+    if PRESSURE_SCENARIO == "power_generation" and USE_VARIABLE_DT:
+        # Adaptive time-stepping: fine dt during sharp events, coarse elsewhere
+        t_arr = np.array(t_pressure, dtype=float)
+        p_arr = np.array(p_pressure, dtype=float)
+        p_of_t = lambda t: float(np.interp(t, t_arr, p_arr))
+
+        time_list = build_time_list_by_dp_limit(
+            total_operation_hours * ut.hour,
+            p_of_t,
+            dt_min_s=DT_FINE_HOURS * ut.hour,
+            dt_max_s=DT_COARSE_HOURS * ut.hour,
+            dp_max_pa=MAX_DP_MPA * ut.MPa,
+        )
+        tc_operation = TimeControllerFromList(time_list)
+        if MPI.COMM_WORLD.rank == 0:
+            n_steps = len(time_list) - 1
+            n_coarse = int(total_operation_hours / DT_COARSE_HOURS)
+            print(f"[VARIABLE DT] {n_steps} steps (vs {n_coarse} at fixed dt={DT_COARSE_HOURS}h)")
+            dts = np.diff(time_list) / ut.hour
+            print(f"[VARIABLE DT] dt range: {dts.min():.3f} – {dts.max():.3f} hours")
+    else:
+        tc_operation = sf.TimeController(
+            dt=dt_hours,
+            initial_time=0.0,
+            final_time=total_operation_hours,
+            time_unit="hour"
+        )
 
     # Operation BCs
     bc_west = momBC.DirichletBC("West", 0, [0.0, 0.0], [0.0, tc_operation.t_final])
@@ -1489,13 +1594,13 @@ def main():
         "cavern_label": config["cavern_label"],
         "use_leaching": USE_LEACHING,
         "debrining_days": DEBRINING_DAYS if USE_LEACHING else 0,
-        "ramp_up_hours": RAMP_UP_HOURS,
-        "pressure_scenario": PRESSURE_SCENARIO,
-        "schedule_mode": SCHEDULE_MODE,
+        "ramp_up_hours": RAMP_UP_HOURS if USE_LEACHING else 0,
+        "scenario": PRESSURE_SCENARIO,
+        "mode": SCHEDULE_MODE,
         "n_cycles": N_CYCLES,
         "operation_days": OPERATION_DAYS,
         "dt_hours": dt_hours,
-        "material_scenario": "B" if USE_SCENARIO_B else "A",
+        "scenario": "B" if USE_SCENARIO_B else "A",
         "model": "munson_dawson" if USE_MUNSON_DAWSON else "safeincave",
         "p_lithostatic_mpa": p_lithostatic_mpa,
         "units": {"t_raw": "s", "p_raw": "Pa", "t": "hour", "p": "MPa"},

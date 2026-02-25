@@ -23,7 +23,7 @@ import numpy as np
 
 # ── SELECT WHICH LAB TESTS TO SIMULATE ────────────────────────────────────────
 # Use test names like "TCC1", "TCC7", etc. Set to None to run all 12.
-TESTS = ["TCC1", "TCC2", "TCC6", "TCC7", "TCC11", "TCC12"]
+TESTS = ["TCC1"]
 
 # ── SELECT WHICH MODEL(S) TO RUN ─────────────────────────────────────────────
 RUN_SAFEINCAVE = True
@@ -49,15 +49,14 @@ R_GAS = 8.314        # J/(mol·K) — standard value
 Q_OVER_R = 6252.0                        # [K]  — CALIBRATED (range 6252–6495)
 Q_DISLOC = Q_OVER_R * R_GAS              # [J/mol]
 
-# -- Munson-Dawson dislocation creep (calibrated independently via search6) --
+# -- Dislocation creep: Scenario B (shared A/n for both models) --
 _sec_per_year = 365.25 * 24 * 3600
-_A_MD_MPA_YR  = 188.1      # [MPa^{-n}/yr]  — search_weighted: TCC1, 7-param (beta_w free)
-N_MD          = 4.4483     # [-]            — search_weighted
+_A_MD_MPA_YR  = 40.0       # [MPa^{-n}/yr]  — Scenario B (Run.py)
+N_MD          = 5.0        # [-]            — Scenario B
 A_MD          = _A_MD_MPA_YR * (1e-6) ** N_MD / _sec_per_year   # [Pa^{-n}/s]
 
-# -- SafeInCave dislocation creep (independent calibration via search_sic) ---
-_A_SIC_MPA_YR = 712.68     # [MPa^{-n}/yr]  — search_weighted: TCC1, balanced weights
-N_SIC         = 4.0557     # [-]            — search_weighted
+_A_SIC_MPA_YR = 40.0       # [MPa^{-n}/yr]  — Scenario B (same as MD)
+N_SIC         = 5.0        # [-]            — Scenario B
 A_SIC         = _A_SIC_MPA_YR * (1e-6) ** N_SIC / _sec_per_year # [Pa^{-n}/s]
 
 # Backward-compat aliases (used by integrate_munsondawson)
@@ -67,9 +66,9 @@ _A_MPA_YR = _A_MD_MPA_YR
 
 # ── SafeInCave: Kelvin element (transient creep) ─────────────────────────────
 #   Kelvin dashpot viscosity η [Pa·s], spring E1 [Pa], Poisson ν1 [-]
-ETA_KELVIN = 3.3504e12     # [Pa·s]   — CALIBRATED (search_weighted: TCC1, τ=1.1h)
-E1_KELVIN  = 8.2841e8      # [Pa]     — CALIBRATED (search_weighted, eq@21MPa=2.53%)
-NU1_KELVIN = 0.25          # [-]      — CALIBRATED
+ETA_KELVIN = 5.0e12        # [Pa·s]   — Scenario B (Run.py)
+E1_KELVIN  = 1.5e9         # [Pa]     — Scenario B (1.5 GPa)
+NU1_KELVIN = 0.25          # [-]      — Scenario B
 
 # ── SafeInCave: Desai viscoplastic ───────────────────────────────────────────
 #   Only the parameters that need calibration are listed here.
@@ -89,14 +88,14 @@ GAMMA_DESAI   = 0.095
 SIGMA_T_DESAI = 5.0       # [Pa]
 
 # ── Munson-Dawson: Transient parameters ──────────────────────────────────────
-K0_MD      = 0.0041      # [-]    — CALIBRATED (search_weighted: TCC1, 7-param)
+K0_MD      = 0.60        # [-]    — Scenario B (Run.py)
 C_MD       = 0.00902     # [1/K]  — fixed
-M_MD       = 0.2000      # [-]    — CALIBRATED (search_weighted)
-ALPHA_W_MD = -2.8951     # [-]    — CALIBRATED (search_weighted)
+M_MD       = 1.1         # [-]    — Scenario B
+ALPHA_W_MD = -17.0       # [-]    — Scenario B
 
 # Munson-Dawson transient parameters
-BETA_W_MD  = -4.7745     # [-]    — CALIBRATED (search_weighted, was fixed at -7.738)
-DELTA_MD   = 1.1312      # [-]    — CALIBRATED (search_weighted)
+BETA_W_MD  = -7.738      # [-]    — Scenario B (Run.py)
+DELTA_MD   = 0.25        # [-]    — Scenario B
 
 # ── Elastic parameters (for shear modulus in Munson-Dawson) ──────────────────
 E_ELASTIC  = 20.425e9    # [Pa]

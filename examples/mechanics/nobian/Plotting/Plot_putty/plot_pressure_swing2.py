@@ -28,7 +28,8 @@ import safeincave.PostProcessingTools as post
 # ║                           USER CONFIGURATION                                  ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
-ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/output"
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "output"))
 
 # CAVERN: Filter for a specific cavern shape, or None to auto-detect all.
 #   Use the key as it appears in the folder name (e.g. "regular1200", "tilted1200",

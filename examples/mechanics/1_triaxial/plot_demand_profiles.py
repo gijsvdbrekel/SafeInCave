@@ -114,7 +114,7 @@ def build_industry(operation_days):
 
 
 def build_power_generation(operation_days):
-    """10 abrupt withdrawal events with gradual re-pressurisation."""
+    """10 abrupt withdrawal events with gradual re-pressurisation (tau = 48 h)."""
     total_h = operation_days * 24.0
     t_h = np.arange(0, total_h + DT_HOURS, DT_HOURS)
     n = len(t_h)
@@ -125,6 +125,7 @@ def build_power_generation(operation_days):
     # 10 withdrawal events spread over 30 days, semi-random timing
     rng = np.random.RandomState(42)
     n_events = 10
+    recovery_tau = 48.0            # gradual re-pressurisation (hours)
     # Space events roughly evenly, then jitter
     event_centers_days = np.linspace(1.0, operation_days - 1.0, n_events)
     event_centers_days += rng.uniform(-0.8, 0.8, size=n_events)
@@ -146,9 +147,9 @@ def build_power_generation(operation_days):
                 # Sustained low
                 drop = depth
             else:
-                # Slow exponential recovery (tau = 4 hours)
+                # Gradual exponential recovery (tau = 48 hours)
                 t_since = dt_event - (0.5 + duration)
-                drop = depth * np.exp(-t_since / 4.0)
+                drop = depth * np.exp(-t_since / recovery_tau)
                 if drop < 0.05:
                     break
 

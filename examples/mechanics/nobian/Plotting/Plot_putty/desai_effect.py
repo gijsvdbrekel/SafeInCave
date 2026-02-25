@@ -39,7 +39,8 @@ SCENARIO_COLORS = {
 # =============================================================================
 # DEFAULT CONFIG (can be overridden via command line)
 # =============================================================================
-DEFAULT_ROOT = r"/data/home/gbrekel/SafeInCave_new/examples/mechanics/nobian/Simulation/output"
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "output"))
 
 DEFAULT_SELECT_BASE = {
     "caverns": ["Regular"],
