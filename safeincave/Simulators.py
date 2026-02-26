@@ -369,7 +369,10 @@ class Simulator_M(Simulator):
 		self.eq_mom.compute_q_elems()
 		self.eq_mom.compute_p_nodes()
 		self.eq_mom.compute_q_nodes()
-		output.save_fields(0)
+
+		# Save initial fields
+		for output in self.outputs:
+			output.save_fields(0)
 
 		# Time loop
 		while self.t_control.keep_looping():
