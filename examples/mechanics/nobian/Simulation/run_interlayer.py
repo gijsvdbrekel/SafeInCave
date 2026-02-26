@@ -156,8 +156,9 @@ P_LOW_OFFSET_MPA  = 1.0
 #  48 h  = slow   (~63% in 2 days, ~95% in 6 days)
 
 N_EVENTS           = 10
-P_BASE_OFFSET_MPA  = 7.0
+P_BASE_OFFSET_MPA  = 10.0
 RECOVERY_TAU_HOURS = 48.0
+P_MIN_MPA          = 10.0    # Absolute minimum cavern pressure (MPa)
 
 # ── SCHEDULE SETTINGS ──────────────────────────────────────────────────────────
 # SCHEDULE_MODE: How to distribute cycles over the simulation period:
@@ -968,17 +969,20 @@ def build_irregular_schedule_multi(tc, *, base_waypoints_h, base_pressures_MPa,
 
 
 def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days,
-                                    recovery_tau_hours=48.0, seed=42):
+                                    recovery_tau_hours=48.0, p_min_pa=None, seed=42):
     """Irregular abrupt-withdrawal schedule for power-generation demand.
 
     Each event: sharp 30-min drop → sustained low (2–5 h) → exponential recovery.
     recovery_tau_hours controls how gradually pressure returns to base.
+    p_min_pa: minimum allowed pressure (Pa) — prevents event stacking from
+              driving pressure unrealistically low.
     Returns t_vals_s (seconds) and p_vals (Pa).
     """
     t_vals_s = _sample_at_dt(tc)
     t_h = [t / ut.hour for t in t_vals_s]
     p_base_mpa = p_base_pa / ut.MPa
-    p_mpa = [p_base_mpa] * len(t_h)
+    p_min_mpa = p_min_pa / ut.MPa if p_min_pa is not None else None
+    p_mpa = np.full(len(t_h), p_base_mpa)
 
     rng = np.random.RandomState(seed)
     n_ev = max(1, int(n_events))
@@ -1005,7 +1009,11 @@ def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days,
                     break
             p_mpa[i] = min(p_mpa[i], p_base_mpa - drop)
 
-    p_vals = [p * ut.MPa for p in p_mpa]
+    # Clamp to minimum pressure to prevent event stacking from going too low
+    if p_min_mpa is not None:
+        p_mpa = np.maximum(p_mpa, p_min_mpa)
+
+    p_vals = (p_mpa * ut.MPa).tolist()
     return t_vals_s, p_vals
 
 
@@ -1724,6 +1732,7 @@ def main():
             n_events=N_EVENTS,
             operation_days=OPERATION_DAYS,
             recovery_tau_hours=RECOVERY_TAU_HOURS,
+            p_min_pa=P_MIN_MPA * ut.MPa,
         )
 
     elif PRESSURE_SCENARIO == "csv":

@@ -23,7 +23,7 @@ CAVERNS = [
 ]
 
 OUT_DIR = os.path.join(GRIDS_ROOT, "..", "examples", "mechanics", "nobian", "Simulation", "output", "_figures")
-SHOW = False
+SHOW = True
 DPI = 180
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗

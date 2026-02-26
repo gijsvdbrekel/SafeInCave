@@ -45,7 +45,7 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 
 SELECT = {
     "caverns": ["regular1200"],
-    "pressure": ["industry", "power_generation"],
+    "pressure": ["industry", "power_generation", "csv", "transport"],
     "scenario": None,
     "n_cycles": None,
     "operation_days": None,
@@ -74,9 +74,9 @@ SELECT = {
 PLOT_MODE = "compare_pressures"    # "compare_shapes", "compare_scenarios", or "compare_pressures"
 
 FIGURES = {
-    "convergence": False,         # Figure 1: volume convergence
-    "stress_state": False,        # Figure 2: p-q stress paths
-    "fos": False,                 # Figure 3: FOS over time
+    "convergence": True,         # Figure 1: volume convergence
+    "stress_state": True,        # Figure 2: p-q stress paths
+    "fos": True,                 # Figure 3: FOS over time
     "fracture_propagation": True,# Figure 4: dilatancy zone analysis
 }
 

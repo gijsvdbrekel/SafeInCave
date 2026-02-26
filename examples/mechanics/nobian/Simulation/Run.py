@@ -128,6 +128,8 @@ RECOVERY_TAU_HOURS = 48.0   # Time constant for exponential re-pressurisation (h
                             #   4 h  = fast recovery (~95% in 12 h)
                             #  24 h  = gradual (~63% in 1 day, ~95% in 3 days)
                             #  48 h  = slow   (~63% in 2 days, ~95% in 6 days)
+P_MIN_MPA = 10.0            # Absolute minimum cavern pressure (MPa)
+                            # Prevents event stacking from driving pressure too low
 
 # ── VARIABLE TIME-STEPPING (only used when PRESSURE_SCENARIO = "power_generation") ──
 # Adaptive dt: small steps during sharp pressure drops, coarse steps elsewhere.
@@ -157,7 +159,7 @@ dt_hours = 2
 CSV_FILE_PATH = "drukprofiel_zoutcaverne_2035_8760u.csv"
 CSV_SHIFT_TO_LEACH_END = True  # Shift CSV so minimum = p_leach_end
 P_EQUILIBRIUM_MPA = 15.0       # Equilibrium pressure (only used if USE_LEACHING = False)
-RESCALE_PRESSURE = False
+RESCALE_PRESSURE = False          # Rescale CSV pressures to fit within a specific range 
 RESCALE_MIN_MPA = 6.0
 RESCALE_MAX_MPA = 20.0
 RAMP_HOURS = 24.0
@@ -978,16 +980,19 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
 
 
 def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days,
-                                    recovery_tau_hours=48.0, seed=42):
+                                    recovery_tau_hours=48.0, p_min_pa=None, seed=42):
     """
     N_EVENTS abrupt withdrawal events spread over the operation period.
     Each event: sharp 30-min drop → sustained low (2–5 h) → exponential recovery.
     recovery_tau_hours controls how gradually pressure returns to base.
+    p_min_pa: minimum allowed pressure (Pa) — prevents event stacking from
+              driving pressure unrealistically low.
     Reproducible via seed.  Returns (t_vals_s, p_vals_Pa).
     """
     t_vals_s = _sample_at_dt(tc)
     t_h = np.array(t_vals_s) / ut.hour
     p_base_mpa = p_base_pa / ut.MPa
+    p_min_mpa = p_min_pa / ut.MPa if p_min_pa is not None else None
     p_mpa = np.full(len(t_h), p_base_mpa)
 
     rng = np.random.RandomState(seed)
@@ -1013,6 +1018,10 @@ def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days,
                 if drop < 0.05:
                     break
             p_mpa[i] = min(p_mpa[i], p_base_mpa - drop)
+
+    # Clamp to minimum pressure to prevent event stacking from going too low
+    if p_min_mpa is not None:
+        p_mpa = np.maximum(p_mpa, p_min_mpa)
 
     p_vals = (p_mpa * ut.MPa).tolist()
     return t_vals_s, p_vals
@@ -1472,6 +1481,7 @@ def main():
             n_events=N_EVENTS,
             operation_days=OPERATION_DAYS,
             recovery_tau_hours=RECOVERY_TAU_HOURS,
+            p_min_pa=P_MIN_MPA * ut.MPa,
         )
 
     elif PRESSURE_SCENARIO == "csv":

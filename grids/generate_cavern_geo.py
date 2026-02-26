@@ -499,16 +499,26 @@ def generate_geo(name, description, levels, filename):
 FL_BASE = [
     (190, 0),      # bottom tip
     (198, 22),     # small bottom
+    (208, 38),     # smooth transition
     (218, 52),     # bulge out
-    (238, 36),     # neck in
-    (258, 56),     # bulge out
-    (278, 38),     # neck in
-    (298, 54),     # bulge out
-    (318, 40),     # neck in
+    (228, 48),     # smooth transition
+    (238, 40),     # neck in
+    (248, 49),     # smooth transition
+    (258, 55),     # bulge out
+    (268, 50),     # smooth transition
+    (278, 42),     # neck in
+    (288, 49),     # smooth transition
+    (298, 53),     # bulge out
+    (308, 49),     # smooth transition
+    (318, 43),     # neck in
+    (328, 47),     # smooth transition
     (338, 50),     # bulge out
-    (358, 34),     # neck in
+    (348, 45),     # smooth transition
+    (358, 38),     # neck in
+    (366, 43),     # smooth transition
     (375, 46),     # bulge out
-    (388, 10),     # narrow top
+    (382, 30),     # smooth taper
+    (388, 12),     # narrow top
     (398, 0),      # top tip
 ]
 
