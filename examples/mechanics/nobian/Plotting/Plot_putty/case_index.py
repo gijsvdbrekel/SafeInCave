@@ -11,7 +11,9 @@ KNOWN_PRESSURES = {
     # current names
     "industry", "transport", "power_generation", "csv",
     # legacy names (kept for backward compatibility)
-    "sinus", "irregular", "csv_profile", "linear",
+    # NOTE: "linear" removed — it's a leaching mode, not a pressure scenario,
+    # and causes false matches in folder names like "case_leaching_linear_csv(...)"
+    "sinus", "irregular", "csv_profile",
 }
 KNOWN_SCENARIOS = {
     # current names: Scenario A/B × SafeInCave/Munson-Dawson
@@ -95,6 +97,15 @@ def read_case_metadata(case_path: str) -> dict:
         # New-style: material_scenario (A/B) + model (safeincave/munson_dawson)
         mat_sc = data.get("material_scenario", None)
         model  = data.get("model", None)
+
+        # Handle broken Run.py JSONs where duplicate "scenario" key overwrote
+        # pressure_scenario with material letter ("A"/"B").  Detect this when
+        # "scenario" is a single letter A/B and "model" is present.
+        if mat_sc is None and model is not None:
+            old_sc = str(data.get("scenario", "")).strip().upper()
+            if old_sc in ("A", "B"):
+                mat_sc = old_sc
+
         if mat_sc is not None and model is not None:
             sc = str(mat_sc).upper().strip()          # "A" or "B"
             is_md = "munson" in str(model).lower()
