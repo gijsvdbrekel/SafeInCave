@@ -129,8 +129,7 @@ def read_case_metadata(case_path: str) -> dict:
 
     if meta["pressure_scenario"] is None:
         # Check longest names first to avoid partial matches (e.g. "power_generation" before "csv")
-        for p in sorted(("industry", "transport", "power_generation", "csv",
-                         "sinus", "irregular", "linear"), key=len, reverse=True):
+        for p in sorted(KNOWN_PRESSURES, key=len, reverse=True):
             if p in name:
                 meta["pressure_scenario"] = p
                 break
