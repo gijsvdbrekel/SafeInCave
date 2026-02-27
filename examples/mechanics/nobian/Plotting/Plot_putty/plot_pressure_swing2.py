@@ -391,7 +391,7 @@ def compute_psi_from_sigma(sig_voigt):
           + s13 * (s12 * s23 - dev22 * s13))
     sqrtJ2 = np.sqrt(J2)
     arg = np.clip((3.0 * np.sqrt(3.0) / 2.0) * J3 / (sqrtJ2**3), -1.0, 1.0)
-    return (1.0 / 3.0) * np.arcsin(arg)
+    return -(1.0 / 3.0) * np.arcsin(arg)
 
 
 def q_dil_devries(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):

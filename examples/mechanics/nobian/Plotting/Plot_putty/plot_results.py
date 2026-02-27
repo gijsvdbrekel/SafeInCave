@@ -74,15 +74,21 @@ SELECT = {
 PLOT_MODE = "compare_pressures"    # "compare_shapes", "compare_scenarios", or "compare_pressures"
 
 FIGURES = {
-    "convergence": True,         # Figure 1: volume convergence
-    "stress_state": True,        # Figure 2: p-q stress paths
+    "convergence": False,         # Figure 1: volume convergence
+    "stress_state": False,        # Figure 2: p-q stress paths
     "fos": True,                 # Figure 3: FOS over time
-    "fracture_propagation": True,# Figure 4: dilatancy zone analysis
+    "fracture_propagation": False,# Figure 4: dilatancy zone analysis
 }
 
 # Stress state options
 # Available: "ratigan_027", "ratigan_018", "spiers", "devries_comp", "devries_ext"
 SHOW_DILATANCY = ["ratigan_027", "spiers", "devries_comp", "devries_ext"]
+
+# FOS plot tuning (rolling quantile bands)
+FOS_MAX_POINTS = 1200       # downsample for cleaner plots
+FOS_BAND_WINDOW = 31        # rolling window size (odd)
+FOS_SHOW_BAND = True        # show P10-P90 band + median
+PROBE_ORDER = ["top", "quarter", "mid", "threequarter", "bottom"]
 
 # Fracture propagation options
 RADIAL_DISTANCES = [0.0, 0.5, 1.0, 2.0, 5.0, 10.0]
@@ -641,6 +647,93 @@ def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=40.0, 
     if "devries_ext" in show_boundaries:
         ax.plot(p, devries_q(I1, psi_ext), label="De Vries 2005 (ext)",
                 **boundary_styles["devries_ext"])
+
+
+# =============================================================================
+# 6b. FOS PLOT HELPERS (rolling bands, downsampling)
+# =============================================================================
+
+def _downsample_xy(x, y, max_points=1200):
+    """Thin x, y arrays to at most max_points evenly-spaced samples."""
+    n = len(x)
+    if n <= max_points:
+        return np.asarray(x), np.asarray(y)
+    idx = np.linspace(0, n - 1, max_points).astype(int)
+    idx[0] = 0
+    idx[-1] = n - 1
+    return np.asarray(x)[idx], np.asarray(y)[idx]
+
+
+def _rolling_quantile_band(y, window=31, qlo=0.1, qhi=0.9):
+    """Rolling quantile band + median for oscillatory series."""
+    y = np.asarray(y)
+    n = len(y)
+    lo = np.empty(n)
+    hi = np.empty(n)
+    med = np.empty(n)
+    half = window // 2
+    for i in range(n):
+        a = max(0, i - half)
+        b = min(n, i + half + 1)
+        w = y[a:b]
+        lo[i] = np.quantile(w, qlo)
+        hi[i] = np.quantile(w, qhi)
+        med[i] = np.quantile(w, 0.5)
+    return lo, med, hi
+
+
+def _compute_fos_probes_for_case(c):
+    """Compute FOS time series at 5 wall probes + global field minimum.
+
+    Returns (t_days, dict[probe_name -> FOS_array]).
+    The dict includes a special key "global_min" with the per-timestep
+    minimum FOS across ALL cells in the mesh.
+    """
+    folder = c["case_path"]
+    p_path = path_p_xdmf(folder)
+    q_path = path_q_xdmf(folder)
+    sig_path = path_sig_xdmf(folder)
+
+    centroids_p, time_list_p, p_elems = post.read_cell_scalar(p_path)
+    _, time_list_q, q_elems = post.read_cell_scalar(q_path)
+    centroids_sig, time_list_sig, sig33 = post.read_cell_tensor(sig_path)
+
+    n_times = min(len(time_list_p), len(time_list_q), len(time_list_sig))
+    time_days = np.array(time_list_p[:n_times]) / DAY
+    p_elems = p_elems[:n_times]
+    q_elems = q_elems[:n_times]
+    sig33 = sig33[:n_times]
+
+    p_MPa = -p_elems / MPA
+    q_MPa = q_elems / MPA
+    sig33_MPa = -sig33 / MPA
+
+    # --- Global field FOS (all cells) ---
+    FOS_field = compute_FOS_field(p_elems, q_elems, sig33, compression_positive=True, q_tol_MPa=1e-3)
+    fos_global_min = np.nanmin(np.where(np.isfinite(FOS_field), FOS_field, np.nan), axis=1)
+
+    # --- Probe-based FOS ---
+    wall_points = load_wall_points(folder)
+    probes = auto_generate_probes_from_wall_points(wall_points)
+
+    fos_by_probe = {}
+    for probe_name, probe_xyz in probes.items():
+        idx_p = post.find_closest_point(probe_xyz, centroids_p)
+        idx_sig = post.find_closest_point(probe_xyz, centroids_sig)
+
+        p_t = p_MPa[:, idx_p]
+        q_t = q_MPa[:, idx_p]
+        sig_point6 = tensor33_to_voigt6(sig33_MPa[:, idx_sig, :, :])
+        psi_t = _psi_from_voigt6(sig_point6)
+
+        q_boundary = q_dil_devries(p_t, psi_t)
+        q_safe = np.where(q_t < 1e-3, 1e-3, q_t)
+        fos = np.where(q_t < 1e-3, 100.0, q_boundary / q_safe)
+        fos_by_probe[probe_name] = fos
+
+    fos_by_probe["global_min"] = fos_global_min
+
+    return time_days, fos_by_probe
 
 
 # =============================================================================
@@ -1396,9 +1489,65 @@ def _compute_fos_for_case(c):
     }
 
 
-def plot_fos_combined(cases):
-    plt.figure(figsize=(14, 7))
+def _plot_fos_on_axes(axes, fos_by_case, title_prefix=""):
+    """
+    Plot FOS on a 2x3 grid: 5 probe subplots + 1 min-FOS summary.
 
+    fos_by_case: list of (label, color, linestyle, t_days, fos_by_probe)
+    """
+    for i, ptype in enumerate(PROBE_ORDER):
+        ax = axes[i]
+        for label, col, ls, t_days, fos_probes in fos_by_case:
+            if ptype not in fos_probes:
+                continue
+            fos = np.asarray(fos_probes[ptype])
+            tx, fy = _downsample_xy(t_days, fos, max_points=FOS_MAX_POINTS)
+
+            if FOS_SHOW_BAND:
+                lo, med, hi = _rolling_quantile_band(fy, window=FOS_BAND_WINDOW)
+                ax.fill_between(tx, lo, hi, color=col, alpha=0.12, linewidth=0)
+                ax.plot(tx, med, linewidth=1.8, linestyle=ls, color=col, label=label)
+            else:
+                ax.plot(tx, fy, linewidth=1.6, linestyle=ls, color=col, alpha=0.9, label=label)
+
+        ax.axhline(y=1.0, color='red', linestyle=':', linewidth=1.5, alpha=0.8)
+        ax.set_title(f"FOS: {ptype}")
+        ax.set_xlabel("Time (days)")
+        ax.set_ylabel("Factor of Safety")
+        ax.grid(True, alpha=0.3)
+
+    # --- Summary subplot: global field minimum FOS ---
+    ax_sum = axes[5]
+    for label, col, ls, t_days, fos_probes in fos_by_case:
+        if "global_min" in fos_probes:
+            min_fos = fos_probes["global_min"]
+        else:
+            # Fallback: min across probes
+            all_fos = np.array([fos_probes[p] for p in PROBE_ORDER if p in fos_probes])
+            min_fos = np.min(all_fos, axis=0)
+        tx, my = _downsample_xy(t_days, min_fos, max_points=FOS_MAX_POINTS)
+
+        if FOS_SHOW_BAND:
+            lo, med, hi = _rolling_quantile_band(my, window=FOS_BAND_WINDOW)
+            ax_sum.fill_between(tx, lo, hi, color=col, alpha=0.12, linewidth=0)
+            ax_sum.plot(tx, med, linewidth=2.0, linestyle=ls, color=col, label=label)
+        else:
+            ax_sum.plot(tx, my, linewidth=2.0, linestyle=ls, color=col, label=label)
+
+    ax_sum.axhline(y=1.0, color='red', linestyle=':', linewidth=1.5, alpha=0.8)
+    ax_sum.set_title("Min FOS (global field)")
+    ax_sum.set_xlabel("Time (days)")
+    ax_sum.set_ylabel("Factor of Safety")
+    ax_sum.grid(True, alpha=0.3)
+    ax_sum.legend(fontsize=8, frameon=True, loc="best")
+
+
+def plot_fos_combined(cases):
+    """Single 2x3 figure with all cases overlaid (compare_shapes mode)."""
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+    axes = axes.flatten()
+
+    fos_by_case = []
     for c in cases:
         cav = c.get("cavern_label")
         sc = c.get("scenario_preset")
@@ -1407,44 +1556,34 @@ def plot_fos_combined(cases):
         label = get_case_label(c)
 
         try:
-            d = _compute_fos_for_case(c)
+            t_days, fos_probes = _compute_fos_probes_for_case(c)
+            min_val = min(np.min(v) for v in fos_probes.values())
+            print(f"    [FOS] {label}: min FOS = {min_val:.3f}")
+            fos_by_case.append((label, col, ls, t_days, fos_probes))
         except Exception as e:
             print(f"[SKIP] {cav}/{sc}: {e}")
             continue
 
-        t_days = d["t_days"]
-        plt.plot(t_days, d["fos_min_global"], lw=2.2, color=col, linestyle=ls, label=f"{label} — global min")
-        plt.plot(t_days, d["roof_stats"]["mean"],  lw=1.6, color=col, linestyle="--", alpha=0.7, label=f"{label} — roof mean")
-        plt.plot(t_days, d["mid_stats"]["mean"],   lw=1.6, color=col, linestyle="-.", alpha=0.7, label=f"{label} — mid mean")
-        plt.plot(t_days, d["floor_stats"]["mean"], lw=1.6, color=col, linestyle=":",  alpha=0.7, label=f"{label} — floor mean")
+    if not fos_by_case:
+        plt.close(fig)
+        return
 
-    plt.axhline(1.0, color="k", lw=1.2, label="FoS = 1.0 (critical)")
-    plt.xlabel("Time (days)")
-    plt.ylabel("FoS (-)")
-    plt.grid(True, alpha=0.3)
-    plt.title(f"Factor of Safety over time | pressure={SELECT.get('pressure')}")
-
-    ax = plt.gca()
-    handles, labels = ax.get_legend_handles_labels()
-    uniq = {}
-    for h, l in zip(handles, labels):
-        if l not in uniq:
-            uniq[l] = h
-    ax.legend(uniq.values(), uniq.keys(), fontsize=8, frameon=True, loc="best")
-
-    plt.tight_layout()
+    _plot_fos_on_axes(axes, fos_by_case)
+    fig.suptitle(f"Factor of Safety | pressure={SELECT.get('pressure')}", fontsize=12, fontweight='bold')
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
 
     outname = f"fos_combined_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
     outpath = os.path.join(OUT_DIR, outname.replace(" ", ""))
-    plt.savefig(outpath, dpi=DPI)
+    fig.savefig(outpath, dpi=DPI)
     print("[SAVED]", outpath)
 
     if SHOW:
         plt.show()
-    plt.close()
+    plt.close(fig)
 
 
 def plot_fos_separate(cases):
+    """One 2x3 figure per case."""
     for c in cases:
         cav = c.get("cavern_label")
         sc = c.get("scenario_preset")
@@ -1453,44 +1592,36 @@ def plot_fos_separate(cases):
         label = get_case_label(c)
 
         try:
-            d = _compute_fos_for_case(c)
+            t_days, fos_probes = _compute_fos_probes_for_case(c)
         except Exception as e:
             print(f"[SKIP] {cav}/{sc}: {e}")
             continue
 
-        t_days = d["t_days"]
-
-        plt.figure(figsize=(12, 6))
-        plt.plot(t_days, d["fos_min_global"], lw=2.2, color=col, label="Global min")
-        plt.plot(t_days, d["roof_stats"]["mean"],  lw=1.6, color=col, linestyle="--", alpha=0.7, label="Roof mean")
-        plt.plot(t_days, d["mid_stats"]["mean"],   lw=1.6, color=col, linestyle="-.", alpha=0.7, label="Mid mean")
-        plt.plot(t_days, d["floor_stats"]["mean"], lw=1.6, color=col, linestyle=":",  alpha=0.7, label="Floor mean")
-
-        plt.axhline(1.0, color="k", lw=1.2, label="FoS = 1.0 (critical)")
-        plt.xlabel("Time (days)")
-        plt.ylabel("FoS (-)")
-        plt.grid(True, alpha=0.3)
-        plt.title(f"Factor of Safety: {label}")
-        plt.legend(fontsize=8, frameon=True, loc="best")
-        plt.tight_layout()
+        fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+        axes = axes.flatten()
+        _plot_fos_on_axes(axes, [(label, col, "-", t_days, fos_probes)])
+        fig.suptitle(f"Factor of Safety: {label}", fontsize=12, fontweight='bold')
+        fig.tight_layout(rect=[0, 0, 1, 0.95])
 
         safe_name = c.get("case_name", "unknown").replace(" ", "_")
         outname = f"fos_{safe_name}.png"
         outpath = os.path.join(OUT_DIR, outname)
-        plt.savefig(outpath, dpi=DPI)
+        fig.savefig(outpath, dpi=DPI)
         print("[SAVED]", outpath)
 
         if SHOW:
             plt.show()
-        plt.close()
+        plt.close(fig)
 
 
 def plot_fos_per_cavern(cases):
-    """One FOS figure per cavern, scenarios/pressures overlaid."""
+    """One 2x3 FOS figure per cavern, scenarios/pressures overlaid."""
     groups = group_cases_by_cavern(cases)
     for cav_label, cav_cases in groups.items():
-        plt.figure(figsize=(14, 7))
+        fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+        axes = axes.flatten()
 
+        fos_by_case = []
         for c in cav_cases:
             sc = c.get("scenario_preset")
             ps = c.get("pressure_scenario")
@@ -1498,42 +1629,31 @@ def plot_fos_per_cavern(cases):
             label = get_case_label(c)
 
             try:
-                d = _compute_fos_for_case(c)
+                t_days, fos_probes = _compute_fos_probes_for_case(c)
+                min_val = min(np.min(v) for v in fos_probes.values())
+                print(f"    [FOS] {label}: min FOS = {min_val:.3f}")
+                fos_by_case.append((label, col, ls, t_days, fos_probes))
             except Exception as e:
                 print(f"[SKIP] {cav_label}/{sc}: {e}")
                 continue
 
-            t_days = d["t_days"]
-            plt.plot(t_days, d["fos_min_global"], lw=2.2, color=col, linestyle=ls, label=f"{label} — global min")
-            plt.plot(t_days, d["roof_stats"]["mean"],  lw=1.6, color=col, linestyle="--", alpha=0.7, label=f"{label} — roof mean")
-            plt.plot(t_days, d["mid_stats"]["mean"],   lw=1.6, color=col, linestyle="-.", alpha=0.7, label=f"{label} — mid mean")
-            plt.plot(t_days, d["floor_stats"]["mean"], lw=1.6, color=col, linestyle=":",  alpha=0.7, label=f"{label} — floor mean")
+        if not fos_by_case:
+            plt.close(fig)
+            continue
 
-        plt.axhline(1.0, color="k", lw=1.2, label="FoS = 1.0 (critical)")
-        plt.xlabel("Time (days)")
-        plt.ylabel("FoS (-)")
-        plt.grid(True, alpha=0.3)
-        plt.title(f"Factor of Safety — {cav_label}")
-
-        ax = plt.gca()
-        handles, labels = ax.get_legend_handles_labels()
-        uniq = {}
-        for h, l in zip(handles, labels):
-            if l not in uniq:
-                uniq[l] = h
-        ax.legend(uniq.values(), uniq.keys(), fontsize=8, frameon=True, loc="best")
-
-        plt.tight_layout()
+        _plot_fos_on_axes(axes, fos_by_case)
+        fig.suptitle(f"Factor of Safety — {cav_label}", fontsize=12, fontweight='bold')
+        fig.tight_layout(rect=[0, 0, 1, 0.95])
 
         safe_cav = cav_label.replace(" ", "_")
         outname = f"fos_{safe_cav}.png"
         outpath = os.path.join(OUT_DIR, outname)
-        plt.savefig(outpath, dpi=DPI)
+        fig.savefig(outpath, dpi=DPI)
         print("[SAVED]", outpath)
 
         if SHOW:
             plt.show()
-        plt.close()
+        plt.close(fig)
 
 
 # =============================================================================

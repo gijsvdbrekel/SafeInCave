@@ -80,7 +80,7 @@ STEPPED_N_STEPS = 6
 # LEACHING_END_FRACTION: Fraction of lithostatic pressure for operational minimum
 #   When USE_LEACHING = True: Leaching ends at this fraction
 #   When USE_LEACHING = False: Equilibrium pressure for industry/transport derived from this
-LEACHING_END_FRACTION = 0.40
+LEACHING_END_FRACTION = 0.30
 
 # ── DEBRINING PHASE SETTINGS (only used when USE_LEACHING = True) ────────────
 # After leaching, the cavern undergoes debrining where brine is displaced.
@@ -105,7 +105,7 @@ RAMP_UP_HOURS = 336 # 2 weeks
 #   "transport"        - Trapezoidal 2-day cycle (nighttime high → daytime low)
 #   "power_generation" - Abrupt withdrawal events with gradual re-pressurisation
 #   "csv"              - Load pressure profile from CSV file
-PRESSURE_SCENARIO = "power_generation"
+PRESSURE_SCENARIO = "csv"
 
 # ── INDUSTRY SETTINGS (only used when PRESSURE_SCENARIO = "industry") ──────────
 # Sinusoidal schedule. With leaching: oscillates around p_leach_end + P_AMPLITUDE_MPA.
@@ -144,20 +144,20 @@ MAX_DP_MPA      = 0.2              # Max pressure change per step (MPa)
 #   "stretch" - N_CYCLES spread evenly over OPERATION_DAYS
 #   "repeat"  - Cycle pattern repeated with its native period
 #   "direct"  - (CSV only) Use hourly CSV values directly
-SCHEDULE_MODE = "stretch"
+SCHEDULE_MODE = "direct"
 
 # OPERATION_DAYS: Total simulation duration in days (operation phase only)
 OPERATION_DAYS = 365
 
 # N_CYCLES: Number of pressure cycles (industry: sinusoidal; transport: 2-day cycles)
-N_CYCLES = 180
+N_CYCLES = 181
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
 dt_hours = 2
 
 # ── CSV SETTINGS (only used when PRESSURE_SCENARIO = "csv") ────────────────────
 CSV_FILE_PATH = "drukprofiel_zoutcaverne_2035_8760u.csv"
-CSV_SHIFT_TO_LEACH_END = True  # Shift CSV so minimum = p_leach_end
+CSV_SHIFT_TO_LEACH_END = False  # Shift CSV so minimum = p_leach_end
 P_EQUILIBRIUM_MPA = 15.0       # Equilibrium pressure (only used if USE_LEACHING = False)
 RESCALE_PRESSURE = False          # Rescale CSV pressures to fit within a specific range 
 RESCALE_MIN_MPA = 6.0
