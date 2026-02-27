@@ -865,7 +865,7 @@ def _psi_from_voigt6(sig_voigt):
     sqrtJ2 = np.sqrt(J2)
     arg = (3.0 * np.sqrt(3.0) / 2.0) * J3 / (sqrtJ2**3)
     arg = np.clip(arg, -1.0, 1.0)
-    psi = (1.0 / 3.0) * np.arcsin(arg)
+    psi = -(1.0 / 3.0) * np.arcsin(arg)
     return psi
 
 
