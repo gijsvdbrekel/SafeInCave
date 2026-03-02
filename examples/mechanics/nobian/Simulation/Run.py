@@ -124,7 +124,7 @@ P_LOW_OFFSET_MPA  = 1.5    # Low-pressure offset above p_leach_end (MPa)
 # 30-min drop, sustained low, and exponential re-pressurisation.
 N_EVENTS = 8              # Number of withdrawal events
 P_BASE_OFFSET_MPA = 10.0    # Resting pressure offset above p_leach_end (MPa)
-RECOVERY_TAU_HOURS = 48.0   # Time constant for exponential re-pressurisation (hours)
+RECOVERY_TAU_HOURS = 500.0   # Time constant for exponential re-pressurisation (hours)
                             #   4 h  = fast recovery (~95% in 12 h)
                             #  24 h  = gradual (~63% in 1 day, ~95% in 3 days)
                             #  48 h  = slow   (~63% in 2 days, ~95% in 6 days)
@@ -979,76 +979,49 @@ def build_sinus_schedule_multi(tc, *, p_mean, p_ampl, days, mode,
     )
 
 
-def build_power_generation_schedule(
-    tc, *,
-    p_base_pa,
-    n_events,
-    operation_days,
-    p_target_min_pa,
-    recovery_hours=72.0,
-    recovery_shape=2.9,     # >1 = slow start, faster later
-    seed=42
-):
+def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days,
+                                    recovery_tau_hours=48.0, p_min_pa=None, seed=42):
     """
-    Each event:
-      - 30 min linear drop to p_target_min
-      - hold low (2–5 h)
-      - smooth ramp back to base over recovery_hours with shape exponent
-
-    p_target_min_pa is the minimum reached by each event (not just a clamp).
+    N_EVENTS abrupt withdrawal events spread over the operation period.
+    Each event: sharp 30-min drop → sustained low (2–5 h) → exponential recovery.
+    recovery_tau_hours controls how gradually pressure returns to base.
+    p_min_pa: minimum allowed pressure (Pa) — prevents event stacking from
+              driving pressure unrealistically low.
+    Reproducible via seed.  Returns (t_vals_s, p_vals_Pa).
     """
     t_vals_s = _sample_at_dt(tc)
     t_h = np.array(t_vals_s) / ut.hour
-
     p_base_mpa = p_base_pa / ut.MPa
-    p_min_mpa  = p_target_min_pa / ut.MPa
-
-    if p_min_mpa >= p_base_mpa:
-        raise ValueError(f"p_target_min must be < p_base. Got {p_min_mpa:.2f} >= {p_base_mpa:.2f} MPa")
-
+    p_min_mpa = p_min_pa / ut.MPa if p_min_pa is not None else None
     p_mpa = np.full(len(t_h), p_base_mpa)
 
     rng = np.random.RandomState(seed)
     event_centers_days = np.linspace(1.0, operation_days - 1.0, max(1, n_events))
     event_centers_days = event_centers_days + rng.uniform(-0.8, 0.8, size=n_events)
 
-    drop_depth = p_base_mpa - p_min_mpa  # force min pressure
-
-    t_drop = 0.5  # hours (30 min)
-    t_rec  = max(0.1, float(recovery_hours))
-    kshape = max(1.0, float(recovery_shape))
+    tau = max(0.1, float(recovery_tau_hours))
 
     for day_c in event_centers_days:
-        t0 = day_c * 24.0
-        hold = rng.uniform(2.0, 5.0)
-
+        t_start_h = day_c * 24.0
+        duration = rng.uniform(2.0, 5.0)   # sustained low: 2–5 hours
+        depth    = rng.uniform(6.5, 12.5)   # pressure drop: 6.5–12.5 MPa
         for i, t in enumerate(t_h):
-            if t < t0:
+            if t < t_start_h:
                 continue
-
-            dt_ev = t - t0
-
-            # phase 1: drop
-            if dt_ev < t_drop:
-                p_event = p_base_mpa - drop_depth * (dt_ev / t_drop)
-
-            # phase 2: hold low
-            elif dt_ev < t_drop + hold:
-                p_event = p_min_mpa
-
-            # phase 3: ramp recovery (slow initially, faster later)
+            dt_ev = t - t_start_h
+            if dt_ev < 0.5:
+                drop = depth * (dt_ev / 0.5)
+            elif dt_ev < 0.5 + duration:
+                drop = depth
             else:
-                u = (dt_ev - t_drop - hold) / t_rec  # 0 -> 1
-                if u >= 1.0:
-                    p_event = p_base_mpa
-                    # after event fully recovered, no need to keep evaluating far ahead
-                    # but we can't break because later events may still lower it
-                else:
-                    s = u ** kshape
-                    p_event = p_min_mpa + (p_base_mpa - p_min_mpa) * s
+                drop = depth * math.exp(-(dt_ev - 0.5 - duration) / tau)
+                if drop < 0.05:
+                    break
+            p_mpa[i] = min(p_mpa[i], p_base_mpa - drop)
 
-            # combine events: take the lowest pressure at each time
-            p_mpa[i] = min(p_mpa[i], p_event)
+    # Clamp to minimum pressure to prevent event stacking from going too low
+    if p_min_mpa is not None:
+        p_mpa = np.maximum(p_mpa, p_min_mpa)
 
     p_vals = (p_mpa * ut.MPa).tolist()
     return t_vals_s, p_vals
@@ -1507,9 +1480,8 @@ def main():
             p_base_pa=p_base_pa,
             n_events=N_EVENTS,
             operation_days=OPERATION_DAYS,
-            p_target_min_pa=P_MIN_MPA * ut.MPa,
-            recovery_hours=500.0,      # pick what "gradual" means (e.g. 3–6 days)
-            recovery_shape=2.5,       # >1 removes the early steep rise
+            recovery_tau_hours=RECOVERY_TAU_HOURS,
+            p_min_pa=P_MIN_MPA * ut.MPa,
         )
 
     elif PRESSURE_SCENARIO == "csv":
