@@ -114,26 +114,26 @@ def build_industry(operation_days):
 
 
 def build_power_generation(operation_days):
-    """10 abrupt withdrawal events with gradual re-pressurisation (tau = 48 h)."""
+    """Match the run script's current power_generation schedule logic."""
     total_h = operation_days * 24.0
     t_h = np.arange(0, total_h + DT_HOURS, DT_HOURS)
     n = len(t_h)
 
-    p_base = P_LEACH_END + 7.0   # 17.4 MPa resting pressure
+    p_base = P_LEACH_END + 10.0   # (NOTE: your run script uses P_BASE_OFFSET_MPA=10 by default)
     p = np.full(n, p_base)
 
-    # 10 withdrawal events spread over 30 days, semi-random timing
     rng = np.random.RandomState(42)
     n_events = 10
-    recovery_tau = 48.0            # gradual re-pressurisation (hours)
-    # Space events roughly evenly, then jitter
+    recovery_tau = 48.0
+    p_min_mpa = 10.0   # must match P_MIN_MPA in the run script if you want same behavior
+
     event_centers_days = np.linspace(1.0, operation_days - 1.0, n_events)
     event_centers_days += rng.uniform(-0.8, 0.8, size=n_events)
 
     for day_c in event_centers_days:
         t_start = day_c * 24.0
-        duration = rng.uniform(2.0, 5.0)      # sustained low: 2-5 hours
-        depth = rng.uniform(3.5, 6.5)          # drop: 3.5-6.5 MPa
+        duration = rng.uniform(2.0, 5.0)
+        depth = rng.uniform(6.5, 12.5)   # <-- MATCH run script
 
         for i, t in enumerate(t_h):
             if t < t_start:
@@ -141,19 +141,19 @@ def build_power_generation(operation_days):
             dt_event = t - t_start
 
             if dt_event < 0.5:
-                # Sharp drop (30 min)
                 drop = depth * (dt_event / 0.5)
             elif dt_event < 0.5 + duration:
-                # Sustained low
                 drop = depth
             else:
-                # Gradual exponential recovery (tau = 48 hours)
                 t_since = dt_event - (0.5 + duration)
                 drop = depth * np.exp(-t_since / recovery_tau)
                 if drop < 0.05:
                     break
 
             p[i] = min(p[i], p_base - drop)
+
+    # <-- MATCH run script clamp
+    p = np.maximum(p, p_min_mpa)
 
     apply_fade_in(t_h, p, p_start_mpa=P_LEACH_END, fade_in_hours=min(RAMP_UP_HOURS, total_h * 0.3))
     return t_h, p

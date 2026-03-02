@@ -74,10 +74,11 @@ SELECT = {
 PLOT_MODE = "compare_pressures"    # "compare_shapes", "compare_scenarios", or "compare_pressures"
 
 FIGURES = {
-    "convergence": False,         # Figure 1: volume convergence
-    "stress_state": False,        # Figure 2: p-q stress paths
+    "convergence": True,         # Figure 1: volume convergence
+    "stress_state": True,        # Figure 2: p-q stress paths
     "fos": True,                 # Figure 3: FOS over time
-    "fracture_propagation": False,# Figure 4: dilatancy zone analysis
+    "fracture_propagation": True,# Figure 4: dilatancy zone analysis
+    "fos_summary": True,         # Figure 5: global min FOS + 4 pressure profiles
 }
 
 # Stress state options
@@ -105,7 +106,7 @@ XDMF_SUBDIR = os.path.join("operation", "_fos_outputs")
 XDMF_FILENAME = "fos.xdmf"
 
 OUT_DIR = os.path.join(ROOT, "_figures")
-SHOW = True
+SHOW = False
 DPI = 180
 CAVERN_PHYS_TAG = 29
 
@@ -1657,6 +1658,118 @@ def plot_fos_per_cavern(cases):
 
 
 # =============================================================================
+# 11b. FIGURE 5 — Global min FOS + pressure profiles side-by-side
+# =============================================================================
+
+# Order in which pressure scenarios appear (top to bottom) in the summary figure
+PRESSURE_ORDER = ["industry", "transport", "power_generation", "csv"]
+
+
+def plot_fos_summary(cases):
+    """Global min FOS (left) next to stacked pressure profiles (right).
+
+    Left panel:  one subplot with global field-minimum FOS for every case.
+    Right panel: one subplot per distinct pressure scenario, stacked vertically.
+    """
+    import matplotlib.gridspec as gridspec
+
+    # --- Collect FOS data ---
+    fos_by_case = []
+    for c in cases:
+        cav = c.get("cavern_label")
+        sc = c.get("scenario_preset")
+        ps = c.get("pressure_scenario")
+        col, ls = get_case_color_and_style(cav, sc, ps)
+        label = get_case_label(c)
+
+        try:
+            t_days, fos_probes = _compute_fos_probes_for_case(c)
+            fos_by_case.append((label, col, ls, t_days, fos_probes, c))
+        except Exception as e:
+            print(f"[SKIP] {cav}/{sc}: {e}")
+            continue
+
+    if not fos_by_case:
+        print("[FOS SUMMARY] No valid cases.")
+        return
+
+    # --- Identify distinct pressure scenarios present ---
+    seen_pressures = []
+    for _, _, _, _, _, c in fos_by_case:
+        ps = c.get("pressure_scenario")
+        if ps not in seen_pressures:
+            seen_pressures.append(ps)
+    # Sort by PRESSURE_ORDER, then any remaining at the end
+    ordered = [p for p in PRESSURE_ORDER if p in seen_pressures]
+    ordered += [p for p in seen_pressures if p not in ordered]
+    n_pressures = max(len(ordered), 1)
+
+    # --- Create figure with gridspec ---
+    fig = plt.figure(figsize=(16, max(6, 2.2 * n_pressures)))
+    gs = gridspec.GridSpec(n_pressures, 2, width_ratios=[3, 2],
+                           hspace=0.40, wspace=0.30)
+
+    # Left: global min FOS spanning all rows
+    ax_fos = fig.add_subplot(gs[:, 0])
+
+    for label, col, ls, t_days, fos_probes, _ in fos_by_case:
+        if "global_min" in fos_probes:
+            min_fos = fos_probes["global_min"]
+        else:
+            all_fos = np.array([fos_probes[p] for p in PROBE_ORDER if p in fos_probes])
+            min_fos = np.min(all_fos, axis=0)
+
+        tx, my = _downsample_xy(t_days, min_fos, max_points=FOS_MAX_POINTS)
+
+        if FOS_SHOW_BAND:
+            lo, med, hi = _rolling_quantile_band(my, window=FOS_BAND_WINDOW)
+            ax_fos.fill_between(tx, lo, hi, color=col, alpha=0.12, linewidth=0)
+            ax_fos.plot(tx, med, linewidth=2.0, linestyle=ls, color=col, label=label)
+        else:
+            ax_fos.plot(tx, my, linewidth=2.0, linestyle=ls, color=col, label=label)
+
+    ax_fos.axhline(y=1.0, color='red', linestyle=':', linewidth=1.5, alpha=0.8)
+    ax_fos.set_title("Global min FOS (all cells)", fontsize=11, fontweight='bold')
+    ax_fos.set_xlabel("Time (days)")
+    ax_fos.set_ylabel("Factor of Safety")
+    ax_fos.grid(True, alpha=0.3)
+    ax_fos.legend(fontsize=8, frameon=True, loc="best")
+
+    # Right: one pressure subplot per scenario
+    _pressure_plotted = set()
+    for row, ps_key in enumerate(ordered):
+        ax_p = fig.add_subplot(gs[row, 1])
+
+        # Pick the first case that has this pressure scenario
+        for _, _, _, _, _, c in fos_by_case:
+            if c.get("pressure_scenario") == ps_key and ps_key not in _pressure_plotted:
+                tH, pMPa = read_pressure_schedule(c["case_path"])
+                if tH is not None:
+                    pcol = PRESSURE_COLORS.get(ps_key, "#333333")
+                    ax_p.plot(tH / 24.0, pMPa, linewidth=1.5, color=pcol)
+                _pressure_plotted.add(ps_key)
+                break
+
+        ax_p.set_title(PRESSURE_LABELS.get(ps_key, ps_key), fontsize=10)
+        ax_p.set_ylabel("Pressure (MPa)")
+        ax_p.grid(True, alpha=0.3)
+        if row == len(ordered) - 1:
+            ax_p.set_xlabel("Time (days)")
+
+    fig.suptitle("FOS Summary & Pressure Profiles", fontsize=12, fontweight='bold')
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    outname = f"fos_summary_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
+    outpath = os.path.join(OUT_DIR, outname.replace(" ", ""))
+    fig.savefig(outpath, dpi=DPI)
+    print("[SAVED]", outpath)
+
+    if SHOW:
+        plt.show()
+    plt.close(fig)
+
+
+# =============================================================================
 # 12. FIGURE 4 PLOTTING — Fracture propagation (always per-case)
 # =============================================================================
 
@@ -1857,6 +1970,15 @@ def main():
                 plot_fos_combined(fos_cases)
         else:
             print("[FOS] No cases with required files (geom.msh + p/q_elems + sig.xdmf)")
+
+    # --- Figure 5: FOS summary + pressure profiles ---
+    if FIGURES.get("fos_summary"):
+        fos_sum_cases = [c for c in cases if case_has_fos_files(c["case_path"])]
+        if fos_sum_cases:
+            print(f"\n[FOS SUMMARY] {len(fos_sum_cases)} case(s) with required files")
+            plot_fos_summary(fos_sum_cases)
+        else:
+            print("[FOS SUMMARY] No cases with required files (geom.msh + p/q_elems + sig.xdmf)")
 
     # --- Figure 4: Fracture propagation (always per-case) ---
     if FIGURES.get("fracture_propagation"):

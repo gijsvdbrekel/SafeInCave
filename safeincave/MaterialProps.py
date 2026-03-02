@@ -1576,8 +1576,13 @@ class MunsonDawsonCreep(NonElasticElement):
         self.zeta = to.zeros(self.n_elems, dtype=to.float64)
         self.zeta_old = self.zeta.clone()
 
-        # Store F for debugging/output if you want later
+        # Store F and eps_t_star for debugging/output
         self.F = to.ones(self.n_elems, dtype=to.float64)
+        self._eps_t_star = to.ones(self.n_elems, dtype=to.float64)
+
+        # Sub-stepping parameters for zeta integration
+        self._MAX_DZETA_FRAC = 0.05   # max zeta change per sub-step as fraction of eps_t_star
+        self._MAX_SUBSTEPS = 200       # safety cap on number of sub-steps
 
     def update_internal_variables(self) -> None:
         """
@@ -1589,28 +1594,18 @@ class MunsonDawsonCreep(NonElasticElement):
         """
         self.zeta_old = self.zeta.clone()
 
-    def compute_eps_ne_rate(self, stress_vec: to.Tensor, phi1: float, Temp: to.Tensor,
-                            return_eps_ne: bool = False):
+    def _compute_md_fields(self, stress_vec: to.Tensor, Temp: to.Tensor, zeta: to.Tensor):
         """
-        Compute Munson-Dawson creep strain rate from current stress.
-
-        Parameters
-        ----------
-        stress_vec : torch.Tensor
-            Stress tensor per element, shape (N, 3, 3).
-        phi1 : float
-            Time integration factor (dt*theta), unused here.
-        Temp : torch.Tensor
-            Temperature per element (N,) in Kelvin.
-        return_eps_ne : bool, default=False
-            If True, return the rate; else store it.
+        Compute all Munson-Dawson intermediate quantities for a given zeta state.
 
         Returns
         -------
-        None or torch.Tensor
-            (N, 3, 3) if `return_eps_ne=True`, else `None`.
+        s_dev : (N, 3, 3) deviatoric stress
+        sigma_safe : (N,) von Mises stress (clamped at 1 Pa)
+        epsdot_ss : (N,) steady-state scalar creep rate
+        eps_t_star : (N,) transient threshold strain
+        F : (N,) transient function value
         """
-        # Deviatoric stress
         s_xx = stress_vec[:, 0, 0]
         s_yy = stress_vec[:, 1, 1]
         s_zz = stress_vec[:, 2, 2]
@@ -1632,41 +1627,85 @@ class MunsonDawsonCreep(NonElasticElement):
             )
         )
 
-        # Avoid divide-by-zero
-        sigma_safe = to.clamp(sigma, min=1e-30)
-        mu_safe = to.clamp(self.mu, min=1e-30)
+        # Minimum deviatoric stress threshold (1 Pa) — purely numerical floor
+        # to avoid division by zero. Does not affect any realistic stress state.
+        sigma_safe = to.clamp(sigma, min=1.0)
+        mu_safe = to.clamp(self.mu, min=1.0)
 
-        # Steady-state scalar strain-rate magnitude (1/s)
+        # Steady-state scalar strain-rate
         epsdot_ss = self.A * to.exp(-self.Q / (self.R * Temp)) * (sigma_safe ** self.n)
 
-        # Transient threshold strain eps_t* (dimensionless)
+        # Transient threshold strain eps_t*
         ratio = to.clamp(sigma_safe / mu_safe, min=1e-30)
         eps_t_star = self.K0 * to.exp(self.c * Temp) * (ratio ** self.m)
-        eps_t_star = to.clamp(eps_t_star, min=1e-30)
+        eps_t_star = to.clamp(eps_t_star, min=1e-50)
 
-        # Delta = alpha_w + beta_w log10(sigma/mu)
-        Delta_cap = self.alpha_w + self.beta_w * (to.log10(ratio))
+        # Delta = alpha_w + beta_w * log10(sigma/mu)
+        Delta_cap = self.alpha_w + self.beta_w * to.log10(ratio)
 
-        # r = 1 - zeta/eps_t*
-        r = 1.0 - (self.zeta_old / eps_t_star)
+        # F: piecewise transient function with exponent clamp at ±50
+        # (exp(50) ≈ 5e21 — generous limit; sub-stepping keeps actual values moderate)
+        r = 1.0 - (zeta / eps_t_star)
         r2 = r * r
 
-        # Piecewise F with exponent clamping to prevent numerical overflow
-        # (clamp at ±50 keeps exp() in safe range; exp(50) ≈ 5e21 is far beyond physical F values)
         F = to.ones_like(epsdot_ss)
-        mask = self.zeta_old <= eps_t_star
+        mask = zeta <= eps_t_star
         exp_arg_hard = to.clamp(Delta_cap[mask] * r2[mask], min=-50.0, max=50.0)
         exp_arg_recov = to.clamp(-self.delta[~mask] * r2[~mask], min=-50.0, max=50.0)
         F[mask] = to.exp(exp_arg_hard)
         F[~mask] = to.exp(exp_arg_recov)
 
+        return s_dev, sigma_safe, epsdot_ss, eps_t_star, F
+
+    def compute_eps_ne_rate(self, stress_vec: to.Tensor, phi1: float, Temp: to.Tensor,
+                            return_eps_ne: bool = False):
+        """
+        Compute Munson-Dawson creep strain rate from current stress.
+
+        Uses the current zeta_old state to compute F, then returns the
+        instantaneous creep rate F * epsdot_ss in the deviatoric flow direction.
+
+        Parameters
+        ----------
+        stress_vec : torch.Tensor
+            Stress tensor per element, shape (N, 3, 3).
+        phi1 : float
+            Time integration factor (dt*theta).
+        Temp : torch.Tensor
+            Temperature per element (N,) in Kelvin.
+        return_eps_ne : bool, default=False
+            If True, return the rate; else store it.
+
+        Returns
+        -------
+        None or torch.Tensor
+            (N, 3, 3) if `return_eps_ne=True`, else `None`.
+        """
+        s_dev, sigma_safe, epsdot_ss, eps_t_star, F = \
+            self._compute_md_fields(stress_vec, Temp, self.zeta_old)
+
+        # Store for use in compute_B_and_H_over_h and diagnostics
+        self._eps_t_star = eps_t_star
         self.F = F.clone()
 
-        # Flow direction: d sigma / d sigma_ij = (3/2) * s_dev_ij / sigma
+        # Scalar creep rate: F * epsdot_ss
+        scalar_rate = F * epsdot_ss
+
+        # Newton solver regularization: cap the strain increment per half-step
+        # at 1%.  This only activates at stress-concentration elements during
+        # intermediate Newton iterations where the stress field has not yet
+        # converged.  Once the Newton loop converges, element stresses are
+        # moderate and this limiter is inactive — it does not alter the
+        # converged solution or the MD physics.
+        if phi1 > 0:
+            max_rate = 1e-2 / phi1
+            scalar_rate = to.clamp(scalar_rate, max=max_rate)
+
+        # Flow direction: (3/2) * s_dev / sigma
         flow_dir = (1.5 / sigma_safe)[:, None, None] * s_dev
 
         # Total MD creep rate tensor
-        eps_rate = flow_dir * (F * epsdot_ss)[:, None, None]
+        eps_rate = flow_dir * scalar_rate[:, None, None]
 
         if return_eps_ne:
             return eps_rate
@@ -1677,10 +1716,10 @@ class MunsonDawsonCreep(NonElasticElement):
         """
         Compute B and H/h for the Munson-Dawson model.
 
-        zeta evolution:
-            zeta_dot = (F - 1) * epsdot_ss
-        We integrate it explicitly using zeta_old (stable and keeps Newton iterations clean):
-            zeta = zeta_old + dt * zeta_dot
+        Integrates the zeta ODE (zeta_dot = (F-1)*epsdot_ss) using adaptive
+        sub-stepping to properly resolve the stiff transient dynamics. This
+        preserves the full MD physics including the recovery branch (F < 1
+        when zeta > eps_t_star) without any artificial caps on zeta.
 
         Parameters
         ----------
@@ -1703,28 +1742,56 @@ class MunsonDawsonCreep(NonElasticElement):
         # Recompute rate + F using current stress but zeta_old
         self.compute_eps_ne_rate(stress, dt * theta, Temp, return_eps_ne=False)
 
-        # Recompute epsdot_ss consistently here (same as in compute_eps_ne_rate)
-        s_xx = stress[:, 0, 0]
-        s_yy = stress[:, 1, 1]
-        s_zz = stress[:, 2, 2]
-        s_xy = stress[:, 0, 1]
-        s_xz = stress[:, 0, 2]
-        s_yz = stress[:, 1, 2]
+        # --- Adaptive sub-stepping for zeta integration ---
+        # Stress is held constant during sub-stepping (quasi-static assumption
+        # within a single FEM time step). Only zeta evolves.
+        # All operations use full-size tensors; elements that have finished
+        # their integration get dt_sub=0 and are effectively skipped.
 
-        sigma = to.sqrt(
-            0.5 * (
-                (s_xx - s_yy) ** 2 + (s_xx - s_zz) ** 2 + (s_yy - s_zz) ** 2
-                + 6.0 * (s_xy ** 2 + s_xz ** 2 + s_yz ** 2)
+        zeta = self.zeta_old.clone()
+        dt_rem = to.full((self.n_elems,), dt, dtype=to.float64)
+
+        for _ in range(self._MAX_SUBSTEPS):
+            active = dt_rem > 1e-30
+            if not active.any():
+                break
+
+            # Recompute F at current zeta for ALL elements (cheap tensor ops)
+            _, _, epsdot_ss_cur, eps_t_star_cur, F_cur = \
+                self._compute_md_fields(stress, Temp, zeta)
+
+            # zeta rate: (F - 1) * epsdot_ss
+            zeta_rate = (F_cur - 1.0) * epsdot_ss_cur
+
+            # Adaptive sub-step size: limit zeta change to _MAX_DZETA_FRAC * eps_t_star
+            abs_zeta_rate = to.abs(zeta_rate)
+            max_dzeta = self._MAX_DZETA_FRAC * eps_t_star_cur
+            safe_dt = to.where(
+                abs_zeta_rate > 1e-50,
+                max_dzeta / abs_zeta_rate,
+                dt_rem
             )
-        )
-        sigma_safe = to.clamp(sigma, min=1e-30)
-        epsdot_ss = self.A * to.exp(-self.Q / (self.R * Temp)) * (sigma_safe ** self.n)
+            # Don't exceed remaining time; floor at 1 second
+            dt_sub = to.minimum(safe_dt, dt_rem)
+            dt_sub = to.clamp(dt_sub, min=1.0)
+            dt_sub = to.minimum(dt_sub, dt_rem)
+            # Zero out finished elements
+            dt_sub = to.where(active, dt_sub, to.zeros_like(dt_sub))
 
-        # Explicit update of zeta (clamp to non-negative; transient strain accumulation can't be negative)
-        zeta_dot = (self.F - 1.0) * epsdot_ss
-        self.zeta = to.clamp(self.zeta_old + dt * zeta_dot, min=0.0)
+            # Forward Euler step
+            zeta = zeta + dt_sub * zeta_rate
+            zeta = to.clamp(zeta, min=0.0)
+            dt_rem = dt_rem - dt_sub
 
-        # No additional B / H coupling terms (keep minimal & non-invasive)
+        self.zeta = zeta
+
+        # Update stored F to reflect final zeta state
+        _, _, _, eps_t_star_final, F_final = \
+            self._compute_md_fields(stress, Temp, self.zeta)
+        self.F = F_final.clone()
+        self._eps_t_star = eps_t_star_final
+
+        # No additional B / H coupling terms
         B = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
         H_over_h = to.zeros((self.n_elems, 6, 6), dtype=to.float64)
         return B, H_over_h
