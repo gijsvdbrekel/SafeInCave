@@ -44,9 +44,9 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["regular1200"],
-    "pressure": ["industry", "power_generation", "csv", "transport"],
-    "scenario": None,
+    "caverns": None,
+    "pressure": ["csv"],
+    "scenario": ["A_SIC"],
     "n_cycles": None,
     "operation_days": None,
     "case_contains": None,
@@ -71,14 +71,14 @@ SELECT = {
 #                         cavern and scenario (e.g. industry vs power_generation).
 #                         Color = pressure scheme, linestyle = pressure scheme.
 
-PLOT_MODE = "compare_pressures"    # "compare_shapes", "compare_scenarios", or "compare_pressures"
+PLOT_MODE = "compare_shapes"    # "compare_shapes", "compare_scenarios", or "compare_pressures"
 
 FIGURES = {
-    "convergence": True,         # Figure 1: volume convergence
-    "stress_state": True,        # Figure 2: p-q stress paths
-    "fos": True,                 # Figure 3: FOS over time
-    "fracture_propagation": True,# Figure 4: dilatancy zone analysis
-    "fos_summary": True,         # Figure 5: global min FOS + 4 pressure profiles
+    "convergence": True,          # Figure 1: volume convergence
+    "stress_state": True,         # Figure 2: p-q stress paths
+    "fos": True,                  # Figure 3: FOS over time
+    "fracture_propagation": True, # Figure 4: dilatancy zone analysis
+    "fos_summary": True,          # Figure 5: global min FOS + 4 pressure profiles
 }
 
 # Stress state options
@@ -87,7 +87,7 @@ SHOW_DILATANCY = ["ratigan_027", "spiers", "devries_comp", "devries_ext"]
 
 # FOS plot tuning (rolling quantile bands)
 FOS_MAX_POINTS = 1200       # downsample for cleaner plots
-FOS_BAND_WINDOW = 31        # rolling window size (odd)
+FOS_BAND_WINDOW = 7        # rolling window size (odd)
 FOS_SHOW_BAND = True        # show P10-P90 band + median
 PROBE_ORDER = ["top", "quarter", "mid", "threequarter", "bottom"]
 
@@ -125,7 +125,7 @@ DAY = 24.0 * HOUR
 
 CAVERN_COLORS = {
     "Asymmetric":          "#1f77b4",
-    "Direct-circulation":  "#ff7f0e",
+    "Direct-circulation":  "#2ca02c",
     "IrregularFine":       "#d62728",
     "Regular":             "#9467bd",
     "Reversed-circulation":"#8c564b",
@@ -1065,7 +1065,7 @@ def compute_FOS_data(time_days, stress_data):
 def plot_convergence_combined(cases):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 7), sharex=True,
                                    gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
-    fig.suptitle(f"3D cavern volume convergence | pressure={SELECT.get('pressure')}")
+    ax1.set_title("Cavern convergence", fontsize=14, fontweight='bold', pad=8)
 
     for c in cases:
         cav = c.get("cavern_label")
@@ -1080,7 +1080,8 @@ def plot_convergence_combined(cases):
             continue
         ax1.plot(t_days, conv, linewidth=2.0, color=col, linestyle=ls, alpha=0.95, label=label)
 
-    ax1.set_ylabel("Convergence (ΔV/V0) (%)")
+    ax1.set_ylabel("Convergence (ΔV/V₀) (%)", fontsize=12)
+    ax1.tick_params(axis='both', labelsize=11)
     ax1.grid(True, alpha=0.3)
 
     h, l = ax1.get_legend_handles_labels()
@@ -1089,7 +1090,7 @@ def plot_convergence_combined(cases):
         if ll not in uniq:
             uniq[ll] = hh
     if uniq:
-        ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=9, frameon=True)
+        ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=10, frameon=True)
 
     # Plot pressure schedule(s) — overlay all distinct schedules in compare_pressures
     _plotted_pressures = set()
@@ -1100,16 +1101,18 @@ def plot_convergence_combined(cases):
         _plotted_pressures.add(ps)
         tH, pMPa = read_pressure_schedule(c["case_path"])
         if tH is not None:
-            pcol, pls = get_case_color_and_style(c.get("cavern_label"), c.get("scenario_preset"), ps)
-            ax2.plot(tH / 24.0, pMPa, linewidth=1.7, color=pcol, linestyle=pls,
+            ax2.plot(tH / 24.0, pMPa, linewidth=1.7, color='black',
                      label=PRESSURE_LABELS.get(ps, ps))
     if not _plotted_pressures:
         ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
     if len(_plotted_pressures) > 1:
-        ax2.legend(fontsize=8, frameon=True, loc="best")
-    ax2.set_ylabel("Pressure (MPa)")
-    ax2.set_xlabel("Time (days)")
+        ax2.legend(fontsize=9, frameon=True, loc="best")
+    ax2.set_ylabel("Pressure (MPa)", fontsize=12)
+    ax2.set_xlabel("Time (days)", fontsize=12)
+    ax2.tick_params(axis='both', labelsize=11)
     ax2.grid(True, alpha=0.3)
+
+    fig.tight_layout()
 
     outname = f"convergence_combined_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
     outpath = os.path.join(OUT_DIR, outname.replace(" ", ""))
@@ -1229,6 +1232,15 @@ def plot_convergence_per_cavern(cases):
 # 10. FIGURE 2 PLOTTING — Stress state
 # =============================================================================
 
+STRESS_PROBE_TITLES = {
+    "top":          "Cavern top",
+    "quarter":      "Cavern quarter-point",
+    "mid":          "Cavern mid-point",
+    "threequarter": "Cavern three-quarter-point",
+    "bottom":       "Cavern bottom",
+}
+
+
 def plot_stress_combined(cases, stress_by_series):
     probe_types = ["top", "quarter", "mid", "threequarter", "bottom"]
 
@@ -1248,9 +1260,10 @@ def plot_stress_combined(cases, stress_by_series):
             ax.scatter(p[-1], q[-1], s=30, edgecolors="black", linewidths=0.6,
                        color=color, zorder=5)
 
-        ax.set_title(f"p-q stress path: {ptype}")
-        ax.set_xlabel("Mean stress p (MPa)")
-        ax.set_ylabel("Von Mises q (MPa)")
+        ax.set_title(STRESS_PROBE_TITLES.get(ptype, ptype), fontsize=12, fontweight='bold', pad=6)
+        ax.set_xlabel("Mean stress p (MPa)", fontsize=11)
+        ax.set_ylabel("Von Mises q (MPa)", fontsize=11)
+        ax.tick_params(axis='both', labelsize=10)
         ax.grid(True, alpha=0.3)
 
     axp = axes[5]
@@ -1262,28 +1275,42 @@ def plot_stress_combined(cases, stress_by_series):
         _plotted_pressures.add(ps)
         tH, pMPa = read_pressure_schedule(c["case_path"])
         if tH is not None:
-            pcol, pls = get_case_color_and_style(c.get("cavern_label"), c.get("scenario_preset"), ps)
-            axp.plot(tH / 24.0, pMPa, linewidth=2.0, color=pcol, linestyle=pls,
+            axp.plot(tH / 24.0, pMPa, linewidth=2.0, color='black',
                      label=PRESSURE_LABELS.get(ps, ps))
     if not _plotted_pressures:
         axp.text(0.5, 0.5, "No pressure_schedule.json found.",
                  ha="center", va="center", transform=axp.transAxes)
         axp.axis("off")
     else:
-        axp.set_title("Pressure schedule")
-        axp.set_xlabel("Time (days)")
-        axp.set_ylabel("Pressure (MPa)")
+        axp.set_title("Pressure schedule", fontsize=12, fontweight='bold', pad=6)
+        axp.set_xlabel("Time (days)", fontsize=11)
+        axp.set_ylabel("Pressure (MPa)", fontsize=11)
+        axp.tick_params(axis='both', labelsize=10)
         axp.grid(True, alpha=0.3)
         if len(_plotted_pressures) > 1:
-            axp.legend(fontsize=8, frameon=True)
+            axp.legend(fontsize=9, frameon=True)
 
+    # Build separate legend entries for dilatancy boundaries and cavern shapes
+    boundary_handles, boundary_labels = [], []
+    shape_handles, shape_labels = [], []
     handles, labels = axes[0].get_legend_handles_labels()
-    uniq = {}
+    seen = set()
     for h, l in zip(handles, labels):
-        if l not in uniq:
-            uniq[l] = h
-    fig.legend(uniq.values(), uniq.keys(), loc="upper center", bbox_to_anchor=(0.5, 0.96),
-               ncol=min(5, len(uniq)), frameon=True, fontsize=9)
+        if l in seen:
+            continue
+        seen.add(l)
+        # Dilatancy boundary labels contain known keywords
+        if any(kw in l for kw in ["Ratigan", "Spiers", "De Vries"]):
+            boundary_handles.append(h)
+            boundary_labels.append(l)
+        else:
+            shape_handles.append(h)
+            shape_labels.append(l)
+
+    all_handles = shape_handles + boundary_handles
+    all_labels = shape_labels + boundary_labels
+    fig.legend(all_handles, all_labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
+               ncol=min(5, len(all_labels)), frameon=True, fontsize=9)
 
     fig.tight_layout(rect=[0, 0, 1, 0.92])
 
@@ -1873,6 +1900,110 @@ def plot_fracture_propagation(case_meta):
         traceback.print_exc()
 
 
+# Groups for the combined dilatancy zone figures
+FRACTURE_GROUPS = [
+    {
+        "label": "group1",
+        "shapes": ["Regular", "Direct-circulation", "Reversed-circulation"],
+    },
+    {
+        "label": "group2",
+        "shapes": ["Tube-failure", "Fast-leached", "Tilt"],
+    },
+]
+
+
+def plot_fracture_propagation_grouped(frac_cases):
+    """Create two grouped dilatancy zone figures, 3 cavern shapes each.
+
+    Each figure has 3 columns (one per shape). Each column has a cavern
+    profile subplot (left-ish) and a dilating-zone-size subplot (right-ish),
+    tightly packed.
+    """
+    # Build lookup: cavern_label -> case_meta
+    case_by_label = {}
+    for c in frac_cases:
+        cav = c.get("cavern_label")
+        if cav not in case_by_label:
+            case_by_label[cav] = c
+
+    for group in FRACTURE_GROUPS:
+        shapes = group["shapes"]
+        group_label = group["label"]
+
+        # Collect data for available shapes in this group
+        group_data = []
+        for shape_name in shapes:
+            if shape_name not in case_by_label:
+                print(f"[SKIP] {shape_name} not found for fracture group")
+                continue
+            c = case_by_label[shape_name]
+            folder = c["case_path"]
+            try:
+                wall_points = load_wall_points(folder)
+                normals = compute_outward_normal_2d(wall_points)
+                probes = auto_generate_probes_with_index(wall_points)
+                sample_points = generate_radial_sample_points(
+                    wall_points, probes, normals, RADIAL_DISTANCES
+                )
+                time_days, stress_data = read_stress_at_points(folder, sample_points)
+                fos_data = compute_FOS_data(time_days, stress_data)
+                group_data.append((shape_name, wall_points, sample_points,
+                                   time_days, fos_data))
+            except Exception as e:
+                print(f"[ERROR] {shape_name}: {e}")
+                import traceback
+                traceback.print_exc()
+
+        if not group_data:
+            continue
+
+        n_shapes = len(group_data)
+        # 2 subplots per shape (cavern profile + dilating zone), arranged in columns
+        fig, axes = plt.subplots(1, n_shapes * 2, figsize=(6.0 * n_shapes, 7),
+                                 gridspec_kw={"width_ratios": [0.8, 1.0] * n_shapes,
+                                              "wspace": 0.15})
+        if n_shapes * 2 == 2:
+            axes = [axes[0], axes[1]]
+
+        for idx, (shape_name, wall_pts, samp_pts, t_days, fos_d) in enumerate(group_data):
+            ax_cav = axes[idx * 2]
+            ax_dep = axes[idx * 2 + 1]
+
+            plot_cavern_with_probes(ax_cav, wall_pts, samp_pts)
+            ax_cav.set_title(shape_name, fontsize=12, fontweight='bold', pad=6)
+            ax_cav.set_xlabel("Radial distance (m)", fontsize=11)
+            ax_cav.set_ylabel("Height z (m)", fontsize=11)
+            ax_cav.tick_params(axis='both', labelsize=10)
+            leg = ax_cav.get_legend()
+            if leg is not None:
+                leg.remove()
+
+            plot_propagation_depth(ax_dep, t_days, fos_d, RADIAL_DISTANCES, FOS_THRESHOLD)
+            ax_dep.set_title("", fontsize=1)  # clear sub-title
+            ax_dep.set_xlabel("Time (days)", fontsize=11)
+            ax_dep.set_ylabel("FOS<1 penetration (m)", fontsize=11)
+            ax_dep.tick_params(axis='both', labelsize=10)
+            # Move legend to top-right, only show once (last column)
+            leg_dep = ax_dep.get_legend()
+            if idx == n_shapes - 1:
+                ax_dep.legend(loc='upper right', fontsize=9, frameon=True)
+            elif leg_dep is not None:
+                leg_dep.remove()
+
+        fig.suptitle("Dilatancy zone", fontsize=14, fontweight='bold')
+        fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+        outname = f"dilatancy_zone_{group_label}.png"
+        outpath = os.path.join(OUT_DIR, outname)
+        fig.savefig(outpath, dpi=DPI)
+        print(f"[SAVED] {outpath}")
+
+        if SHOW:
+            plt.show()
+        plt.close(fig)
+
+
 # =============================================================================
 # 13. MAIN
 # =============================================================================
@@ -1980,13 +2111,16 @@ def main():
         else:
             print("[FOS SUMMARY] No cases with required files (geom.msh + p/q_elems + sig.xdmf)")
 
-    # --- Figure 4: Fracture propagation (always per-case) ---
+    # --- Figure 4: Fracture propagation ---
     if FIGURES.get("fracture_propagation"):
         frac_cases = [c for c in cases if case_has_fracture_files(c["case_path"])]
         if frac_cases:
             print(f"\n[FRACTURE PROPAGATION] {len(frac_cases)} case(s) with required files")
-            for case_meta in frac_cases:
-                plot_fracture_propagation(case_meta)
+            if mode == "compare_shapes":
+                plot_fracture_propagation_grouped(frac_cases)
+            else:
+                for case_meta in frac_cases:
+                    plot_fracture_propagation(case_meta)
         else:
             print("[FRACTURE PROPAGATION] No cases with required files (u.xdmf + geom.msh + p/q_elems + sig.xdmf)")
 

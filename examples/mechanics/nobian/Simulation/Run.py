@@ -66,7 +66,7 @@ CAVERN_SIZE = 1200
 # LEACHING_MODE: How pressure decreases during leaching:
 #   "linear"  - Linear decrease from lithostatic to operational pressure
 #   "stepped" - Stepped decrease with plateaus (more realistic)
-LEACHING_MODE = "linear"
+LEACHING_MODE = "stepped"
 
 # LEACHING_DAYS: Duration of leaching phase in days
 LEACHING_DAYS = 91
@@ -122,9 +122,9 @@ P_LOW_OFFSET_MPA  = 1.5    # Low-pressure offset above p_leach_end (MPa)
 # ── POWER GENERATION SETTINGS (only used when PRESSURE_SCENARIO = "power_generation") ──
 # N_EVENTS abrupt withdrawal events over the operation period, each with a sharp
 # 30-min drop, sustained low, and exponential re-pressurisation.
-N_EVENTS = 8              # Number of withdrawal events
+N_EVENTS = 10           # Number of withdrawal events
 P_BASE_OFFSET_MPA = 10.0    # Resting pressure offset above p_leach_end (MPa)
-RECOVERY_TAU_HOURS = 500.0   # Time constant for exponential re-pressurisation (hours)
+RECOVERY_TAU_HOURS = 300.0   # Time constant for exponential re-pressurisation (hours)
                             #   4 h  = fast recovery (~95% in 12 h)
                             #  24 h  = gradual (~63% in 1 day, ~95% in 3 days)
                             #  48 h  = slow   (~63% in 2 days, ~95% in 6 days)
@@ -147,10 +147,10 @@ MAX_DP_MPA      = 0.2              # Max pressure change per step (MPa)
 SCHEDULE_MODE = "direct"
 
 # OPERATION_DAYS: Total simulation duration in days (operation phase only)
-OPERATION_DAYS = 1825
+OPERATION_DAYS = 365
 
 # N_CYCLES: Number of pressure cycles (industry: sinusoidal; transport: 2-day cycles)
-N_CYCLES = 10
+N_CYCLES = 180
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
 dt_hours = 2
@@ -1623,7 +1623,7 @@ def main():
     with open(os.path.join(output_folder, "pressure_schedule.json"), 'w') as f:
         json.dump(pressure_data, f, indent=2)
 
-    output_mom_op = SparseSaveFields(mom_eq, interval=15)
+    output_mom_op = SparseSaveFields(mom_eq, interval=1)
     output_mom_op.set_output_folder(output_folder_operation)
     output_mom_op.add_output_field("u", "Displacement (m)")
     output_mom_op.add_output_field("eps_tot", "Total strain (-)")
@@ -1693,7 +1693,7 @@ def main():
 
         heat_eq.set_boundary_conditions(heat_bc_handler)
 
-        output_heat_op = SparseSaveFields(heat_eq, interval=15)
+        output_heat_op = SparseSaveFields(heat_eq, interval=1)
         output_heat_op.set_output_folder(output_folder_operation)
         output_heat_op.add_output_field("T", "Temperature (K)")
         outputs_op.append(output_heat_op)
