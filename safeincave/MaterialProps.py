@@ -1661,49 +1661,17 @@ class MunsonDawsonCreep(NonElasticElement):
 
         return s_dev, sigma_safe, epsdot_ss, eps_t_star, F
 
-    def _select_zeta_for_rate(self, stress_vec: to.Tensor, Temp: to.Tensor,
-                              phi1: float) -> to.Tensor:
-        """
-        Adaptively select zeta per element for the rate computation.
-
-        Uses self.zeta_old (beginning of time step) by default for Newton
-        stability. Switches to self.zeta (sub-stepped) only for elements
-        where zeta_old produces such extreme F values that the rate limiter
-        would clip the gradient, preventing Newton convergence.
-
-        The sub-stepped zeta gives a moderate F because the sub-stepping
-        resolves the fast/stiff transient dynamics within the time step.
-
-        Parameters
-        ----------
-        stress_vec : (N, 3, 3) stress tensor
-        Temp : (N,) temperature
-        phi1 : float, time integration factor (dt*theta)
-
-        Returns
-        -------
-        zeta_eff : (N,) effective zeta for rate computation
-        """
-        if phi1 > 0:
-            # Check what F * epsdot_ss would be using zeta_old
-            _, _, epsdot_ss_check, _, F_check = \
-                self._compute_md_fields(stress_vec, Temp, self.zeta_old)
-            rate_from_zeta_old = F_check * epsdot_ss_check
-            # If the strain increment from zeta_old exceeds 0.1%, F is large
-            # enough to distort the Newton gradient → switch to sub-stepped zeta
-            would_be_limited = (rate_from_zeta_old * phi1) > 1e-3
-            return to.where(would_be_limited, self.zeta, self.zeta_old)
-        else:
-            return self.zeta_old.clone()
-
     def compute_eps_ne_rate(self, stress_vec: to.Tensor, phi1: float, Temp: to.Tensor,
                             return_eps_ne: bool = False):
         """
         Compute Munson-Dawson creep strain rate from current stress.
 
-        Uses an adaptive zeta per element: sub-stepped zeta for elements where
-        the transient equilibrates within one step (fast), zeta_old for elements
-        where transient dynamics are physically meaningful (slow).
+        Uses a transient-timescale criterion to determine F per element:
+        - Fast transient (tau << dt): F = 1.  The MD model predicts that
+          zeta equilibrates to eps_t_star within one time step, so F = 1
+          is the exact analytical solution at the evaluation point.
+        - Slow transient (tau >= dt): F is computed from the sub-stepped
+          (frozen) zeta, which evolves slowly and is accurate between steps.
 
         Parameters
         ----------
@@ -1721,14 +1689,28 @@ class MunsonDawsonCreep(NonElasticElement):
         None or torch.Tensor
             (N, 3, 3) if `return_eps_ne=True`, else `None`.
         """
-        # Select zeta adaptively per element: zeta_old for Newton stability
-        # where possible, sub-stepped zeta where zeta_old would trigger the
-        # rate limiter and destroy Newton gradients.
-        zeta_eff = self._select_zeta_for_rate(stress_vec, Temp, phi1)
+        # Compute all MD fields using the frozen sub-stepped zeta.
+        # s_dev, sigma_safe, epsdot_ss depend only on stress (not zeta).
+        # eps_t_star depends on stress. F depends on both stress and zeta.
+        s_dev, sigma_safe, epsdot_ss, eps_t_star, F_from_zeta = \
+            self._compute_md_fields(stress_vec, Temp, self.zeta)
 
-        # Second pass: compute F using the selected zeta
-        s_dev, sigma_safe, epsdot_ss, eps_t_star, F = \
-            self._compute_md_fields(stress_vec, Temp, zeta_eff)
+        if phi1 > 0:
+            # Transient timescale: tau = eps_t_star / epsdot_ss
+            # This is the characteristic time for zeta to reach equilibrium.
+            tau = eps_t_star / to.clamp(epsdot_ss, min=1e-50)
+
+            # Recover approximate dt from phi1 = dt * theta (theta = 0.5)
+            dt_approx = phi1 * 2.0
+
+            # Per-element decision: if tau < 1% of dt, the transient fully
+            # equilibrates within one step → F = 1 (exact MD steady state).
+            # Otherwise, compute F from the frozen sub-stepped zeta.
+            fast = tau < (dt_approx * 0.01)
+            F = to.where(fast, to.ones_like(F_from_zeta), F_from_zeta)
+        else:
+            # phi1 == 0 means no time advancement; use F from zeta directly
+            F = F_from_zeta
 
         # Store for diagnostics
         self._eps_t_star = eps_t_star
@@ -1737,12 +1719,9 @@ class MunsonDawsonCreep(NonElasticElement):
         # Scalar creep rate: F * epsdot_ss
         scalar_rate = F * epsdot_ss
 
-        # Newton solver regularization: cap the strain increment per half-step
-        # at 1%.  This only activates at stress-concentration elements during
-        # intermediate Newton iterations where the stress field has not yet
-        # converged.  Once the Newton loop converges, element stresses are
-        # moderate and this limiter is inactive — it does not alter the
-        # converged solution or the MD physics.
+        # Safety rate limiter: cap strain increment at 1% per half-step.
+        # With tau-based F selection this should rarely activate, since
+        # F ~ 1 for fast elements and F is moderate for slow elements.
         if phi1 > 0:
             max_rate = 1e-2 / phi1
             scalar_rate = to.clamp(scalar_rate, max=max_rate)
@@ -1831,9 +1810,9 @@ class MunsonDawsonCreep(NonElasticElement):
             self.zeta = zeta
             self._zeta_frozen = True
 
-        # Recompute eps_ne_rate using adaptive zeta selection:
-        # - Fast elements (tau << dt): use sub-stepped self.zeta ≈ eps_t_star → F ≈ 1
-        # - Slow elements (tau ~ dt): use self.zeta_old → F reflects physical transient
+        # Recompute eps_ne_rate using tau-based F selection:
+        # - Fast elements (tau << dt): F = 1 (exact MD steady state)
+        # - Slow elements (tau >= dt): F from frozen sub-stepped zeta
         # This ensures the stored rate and E matrix (computed next) are consistent.
         self.compute_eps_ne_rate(stress, dt * theta, Temp, return_eps_ne=False)
 

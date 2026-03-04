@@ -34,7 +34,7 @@ from pressure_scheme import (
 # =============================================================================
 # PARAMETERS  (aligned with Run.py)
 # =============================================================================
-P_LITHOSTATIC    = 26.0       # MPa
+P_LITHOSTATIC    = 27.22      # MPa (regular1200k: p_ref=19.3 + ρgh at z_center=293.21)
 LEACHING_END_FR  = 0.40
 LEACHING_DAYS    = 91.0
 LEACHING_DT_H    = 12.0
@@ -228,7 +228,7 @@ def _annotate_phases(ax, y_frac=0.96):
 
     yl, yh = ax.get_ylim()
     yt = yl + y_frac * (yh - yl)
-    kw = dict(ha="center", va="top", fontsize=8.5, color="grey")
+    kw = dict(ha="center", va="top", fontsize=10, color="grey")
     ax.text(LEACHING_DAYS / 2,              yt, "Leaching",   **kw)
     ax.text(LEACHING_DAYS + DEBRINING_DAYS / 2, yt, "Debrining",  **kw)
     ax.text(OP_START_DAY + RAMP_UP_HOURS / 24 / 2, yt, "Transition", **kw)
@@ -244,9 +244,10 @@ def plot_overview(scenarios):
                 label=LABELS[key], alpha=0.85)
 
     ax.set_xlim(0, TOTAL_DAYS)
-    ax.set_xlabel("Time (days)")
-    ax.set_ylabel("Cavern pressure (MPa)")
-    ax.legend(loc="upper right", fontsize=9, framealpha=0.9)
+    ax.set_xlabel("Time (days)", fontsize=12)
+    ax.set_ylabel("Cavern pressure (MPa)", fontsize=12)
+    ax.tick_params(labelsize=11)
+    ax.legend(loc="upper right", fontsize=11, framealpha=0.9)
     ax.grid(True, alpha=0.25)
     _annotate_phases(ax)
 
