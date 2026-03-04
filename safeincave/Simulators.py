@@ -184,8 +184,7 @@ class Simulator_TM(Simulator):
 			# Update boundary conditions
 			self.eq_mom.bc.update_dirichlet(t)
 			self.eq_mom.bc.update_neumann(t)
-			self.eq_heat.bc.update_dirichlet(t)
-			self.eq_heat.bc.update_neumann(t)
+			self.eq_heat.bc.update_bcs(t)
 
 			# Solve heat
 			self.eq_heat.solve(t, dt)
@@ -533,8 +532,7 @@ class Simulator_T(Simulator):
 			dt = self.t_control.dt
 
 			# Update boundary conditions
-			self.eq_heat.bc.update_dirichlet(t)
-			self.eq_heat.bc.update_neumann(t)
+			self.eq_heat.bc.update_bcs(t)
 
 			# Solve heat
 			self.eq_heat.solve(t, dt)
