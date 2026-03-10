@@ -66,7 +66,7 @@ CAVERN_SIZE = 1200
 # LEACHING_MODE: How pressure decreases during leaching:
 #   "linear"  - Linear decrease from lithostatic to operational pressure
 #   "stepped" - Stepped decrease with plateaus (more realistic)
-LEACHING_MODE = "stepped"
+LEACHING_MODE = "linear"
 
 # LEACHING_DAYS: Duration of leaching phase in days
 LEACHING_DAYS = 91
@@ -124,18 +124,18 @@ P_LOW_OFFSET_MPA  = 1.5    # Low-pressure offset above p_leach_end (MPa)
 # 30-min drop, sustained low, and exponential re-pressurisation.
 N_EVENTS = 10           # Number of withdrawal events
 P_BASE_OFFSET_MPA = 10.0    # Resting pressure offset above p_leach_end (MPa)
-RECOVERY_TAU_HOURS = 300.0   # Time constant for exponential re-pressurisation (hours)
+RECOVERY_TAU_HOURS = 200.0   # Time constant for exponential re-pressurisation (hours)
                             #   4 h  = fast recovery (~95% in 12 h)
                             #  24 h  = gradual (~63% in 1 day, ~95% in 3 days)
                             #  48 h  = slow   (~63% in 2 days, ~95% in 6 days)
-P_MIN_MPA = 6.2            # Absolute minimum cavern pressure (MPa)
+P_MIN_MPA = 8            # Absolute minimum cavern pressure (MPa)
                             # Prevents event stacking from driving pressure too low
 
 # ── VARIABLE TIME-STEPPING (only used when PRESSURE_SCENARIO = "power_generation") ──
 # Adaptive dt: small steps during sharp pressure drops, coarse steps elsewhere.
 # MAX_DP_MPA controls refinement: steps are halved until |Δp| ≤ MAX_DP_MPA per step.
 USE_VARIABLE_DT = True             # True = adaptive dt for power_generation
-DT_FINE_HOURS   = 0.2              # Minimum dt (12 min) during sharp events
+DT_FINE_HOURS   = 0.1              # Minimum dt (12 min) during sharp events
 DT_COARSE_HOURS = 2.0              # Maximum dt away from events (same as dt_hours)
 MAX_DP_MPA      = 0.2              # Max pressure change per step (MPa)
 
@@ -150,7 +150,7 @@ SCHEDULE_MODE = "direct"
 OPERATION_DAYS = 365
 
 # N_CYCLES: Number of pressure cycles (industry: sinusoidal; transport: 2-day cycles)
-N_CYCLES = 180
+N_CYCLES = 183
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
 dt_hours = 2
@@ -165,8 +165,8 @@ RESCALE_MAX_MPA = 20.0
 RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
-USE_SCENARIO_B    = False    # False = Scenario A (CCC Zuidwending + Herminio calibration), True = Scenario B (calibrated)
-USE_MUNSON_DAWSON = True    # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
+USE_SCENARIO_B    = True        # False = Scenario A (CCC Zuidwending + Herminio calibration), True = Scenario B (calibrated)
+USE_MUNSON_DAWSON = False    # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
 USE_THERMAL = False
@@ -1068,17 +1068,45 @@ class LinearMomentumMod(sf.LinearMomentum):
 
 
 class SparseSaveFields(sf.SaveFields):
-    def __init__(self, mom_eq, interval: int):
+    """Save every *interval*-th step, but always save when pressure is changing drastically.
+
+    Parameters
+    ----------
+    mom_eq : equation object
+    interval : int
+        Save every *interval*-th step during steady pressure holds.
+    p_interp : callable(t_seconds) -> float, optional
+        Pressure interpolator. When provided, steps where
+        |p(t) - p(t_prev)| > *dp_thresh_pa* are always saved regardless
+        of the interval counter.
+    dp_thresh_pa : float
+        Pressure-change threshold (Pa) to trigger a save. Default 2.0 MPa.
+    """
+    def __init__(self, mom_eq, interval: int, p_interp=None, dp_thresh_pa=2.0e6):
         super().__init__(mom_eq)
         self.interval = max(1, int(interval))
         self._counter = 0
+        self._p_interp = p_interp
+        self._dp_thresh = dp_thresh_pa
+        self._t_prev = 0.0
 
     def save_fields(self, t):
         if t == 0:
+            self._t_prev = t
             return super().save_fields(t)
 
         self._counter += 1
-        if self._counter % self.interval == 0:
+
+        # Always save when pressure is changing rapidly
+        force_save = False
+        if self._p_interp is not None:
+            dp = abs(self._p_interp(t) - self._p_interp(self._t_prev))
+            if dp > self._dp_thresh:
+                force_save = True
+
+        self._t_prev = t
+
+        if force_save or self._counter % self.interval == 0:
             return super().save_fields(t)
 
 
@@ -1217,6 +1245,8 @@ def main():
         # ── Scenario A: CCC Zuidwending ───────────────────────────────────────
         if not USE_MUNSON_DAWSON:
             # SafeInCave model: Kelvin + DislocationCreep
+            # Note: DislocationCreep uses eps_ij = A*q^(n-1)*s (no 3/2 prefactor),
+            # so A_3D = 1.5 * A_calibrated to match the scalar calibration rate.
             eta = 2.5e5 * to.ones(mom_eq.n_elems)
             E1  = 42.0 * ut.GPa * to.ones(mom_eq.n_elems)
             nu1 = 0.32 * to.ones(mom_eq.n_elems)
@@ -1247,32 +1277,34 @@ def main():
                                       mu=mu_md, name="munson_dawson")
             mat.add_to_non_elastic(md)
     else:
-        # ── Scenario B: calibrated against TCC-1 ──────────────────────────────
+        # ── Scenario B: calibrated against cyclic triaxial data (T=21°C, σ3=12 MPa) ─
         if not USE_MUNSON_DAWSON:
             # SafeInCave model: Kelvin + DislocationCreep
-            eta = 5.0e12 * to.ones(mom_eq.n_elems)
-            E1  = 1.5 * ut.GPa * to.ones(mom_eq.n_elems)
+            # Note: DislocationCreep uses eps_ij = A*q^(n-1)*s (no 3/2 prefactor),
+            # so A_3D = 1.5 * A_calibrated to match the scalar calibration rate.
+            eta = 1.0e15 * to.ones(mom_eq.n_elems)
+            E1  = 1.0e11 * to.ones(mom_eq.n_elems)
             nu1 = 0.25 * to.ones(mom_eq.n_elems)
             kelvin  = sf.Viscoelastic(eta, E1, nu1, "kelvin")
-            ndc = 5.0
-            A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
-            Q_dc = (6252.0 * 8.32) * to.ones(mom_eq.n_elems)
+            ndc = 5.6897
+            A_dc = (17.28 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+            Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
             n_dc = ndc * to.ones(mom_eq.n_elems)
             creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
             mat.add_to_non_elastic(kelvin)
             mat.add_to_non_elastic(creep_0)
         else:
             # Munson-Dawson model (shared A/n/Q with SIC Scenario B)
-            nmd   = 5.0
-            A_md  = (40.0 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems)
-            Q_md  = (6252.0 * 8.32) * to.ones(mom_eq.n_elems)
+            nmd   = 5.6897
+            A_md  = (17.28 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems)
+            Q_md  = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
             n_md  = nmd  * to.ones(mom_eq.n_elems)
-            K0_md = 0.60   * to.ones(mom_eq.n_elems)
-            c_md  = 9.02e-3 * to.ones(mom_eq.n_elems)
-            m_md  = 1.1    * to.ones(mom_eq.n_elems)
-            aw_md = -17.0  * to.ones(mom_eq.n_elems)
-            bw_md = -7.738 * to.ones(mom_eq.n_elems)
-            d_md  = 0.25   * to.ones(mom_eq.n_elems)
+            K0_md = 2253.87  * to.ones(mom_eq.n_elems)
+            c_md  = 9.02e-3  * to.ones(mom_eq.n_elems)
+            m_md  = 2.466    * to.ones(mom_eq.n_elems)
+            aw_md = 179.70   * to.ones(mom_eq.n_elems)
+            bw_md = 60.00    * to.ones(mom_eq.n_elems)
+            d_md  = 299.95   * to.ones(mom_eq.n_elems)
             mu_md = E0 / (2.0 * (1.0 + nu0))
             md = sf.MunsonDawsonCreep(A=A_md, Q=Q_md, n=n_md,
                                       K0=K0_md, c=c_md, m=m_md,
@@ -1399,12 +1431,12 @@ def main():
             eta_vp  = 0.82 * to.ones(mom_eq.n_elems)
             alpha_0 = 2.0e-3 * to.ones(mom_eq.n_elems)
         else:
-            # Scenario B (calibrated)
-            mu_1    = 1.0e-15 * to.ones(mom_eq.n_elems)
-            N_1     = 2.0 * to.ones(mom_eq.n_elems)
-            a_1     = 1.0e-3 * to.ones(mom_eq.n_elems)
-            eta_vp  = 1.2 * to.ones(mom_eq.n_elems)
-            alpha_0 = 5.0e-3 * to.ones(mom_eq.n_elems)
+            # Scenario B (calibrated against cyclic triaxial data)
+            mu_1    = 1.016e-15 * to.ones(mom_eq.n_elems)
+            N_1     = 4.2515 * to.ones(mom_eq.n_elems)
+            a_1     = 1.101e-6 * to.ones(mom_eq.n_elems)
+            eta_vp  = 1.7902 * to.ones(mom_eq.n_elems)
+            alpha_0 = 1.781e-3 * to.ones(mom_eq.n_elems)
         # Fixed Desai shape parameters (both scenarios)
         n_desai  = 3.0 * to.ones(mom_eq.n_elems)
         beta_1   = 0.0048 * to.ones(mom_eq.n_elems)
@@ -1623,7 +1655,12 @@ def main():
     with open(os.path.join(output_folder, "pressure_schedule.json"), 'w') as f:
         json.dump(pressure_data, f, indent=2)
 
-    output_mom_op = SparseSaveFields(mom_eq, interval=1)
+    # Pressure interpolator for adaptive save (always save during pressure changes)
+    _t_p = np.array(t_pressure, dtype=float)
+    _p_p = np.array(p_pressure, dtype=float)
+    p_interp_save = lambda t: float(np.interp(t, _t_p, _p_p))
+
+    output_mom_op = SparseSaveFields(mom_eq, interval=15, p_interp=p_interp_save)
     output_mom_op.set_output_folder(output_folder_operation)
     output_mom_op.add_output_field("u", "Displacement (m)")
     output_mom_op.add_output_field("eps_tot", "Total strain (-)")
@@ -1693,7 +1730,7 @@ def main():
 
         heat_eq.set_boundary_conditions(heat_bc_handler)
 
-        output_heat_op = SparseSaveFields(heat_eq, interval=1)
+        output_heat_op = SparseSaveFields(heat_eq, interval=15, p_interp=p_interp_save)
         output_heat_op.set_output_folder(output_folder_operation)
         output_heat_op.add_output_field("T", "Temperature (K)")
         outputs_op.append(output_heat_op)

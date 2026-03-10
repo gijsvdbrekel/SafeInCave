@@ -1058,18 +1058,43 @@ class LinearMomentumMod(sf.LinearMomentum):
 
 
 class SparseSaveFields(sf.SaveFields):
-    """SaveFields that only writes every `interval`-th call after t=0."""
-    def __init__(self, mom_eq, interval: int):
+    """Save every *interval*-th step, but always save when pressure is changing.
+
+    Parameters
+    ----------
+    mom_eq : equation object
+    interval : int
+        Save every *interval*-th step during steady pressure holds.
+    p_interp : callable(t_seconds) -> float, optional
+        Pressure interpolator. When provided, steps where
+        |p(t) - p(t_prev)| > *dp_thresh_pa* are always saved.
+    dp_thresh_pa : float
+        Pressure-change threshold (Pa) to trigger a save. Default 2.0 MPa.
+    """
+    def __init__(self, mom_eq, interval: int, p_interp=None, dp_thresh_pa=2.0e6):
         super().__init__(mom_eq)
         self.interval = max(1, int(interval))
         self._counter = 0
+        self._p_interp = p_interp
+        self._dp_thresh = dp_thresh_pa
+        self._t_prev = 0.0
 
     def save_fields(self, t):
         if t == 0:
+            self._t_prev = t
             return super().save_fields(t)
 
         self._counter += 1
-        if self._counter % self.interval == 0:
+
+        force_save = False
+        if self._p_interp is not None:
+            dp = abs(self._p_interp(t) - self._p_interp(self._t_prev))
+            if dp > self._dp_thresh:
+                force_save = True
+
+        self._t_prev = t
+
+        if force_save or self._counter % self.interval == 0:
             return super().save_fields(t)
 
 
@@ -1847,7 +1872,12 @@ def main():
     with open(os.path.join(output_folder, "pressure_schedule.json"), 'w') as f:
         json.dump(pressure_data, f, indent=2)
 
-    output_mom_op = SparseSaveFields(mom_eq, interval=15)
+    # Pressure interpolator for adaptive save
+    _t_p = np.array(t_pressure, dtype=float)
+    _p_p = np.array(p_pressure, dtype=float)
+    p_interp_save = lambda t: float(np.interp(t, _t_p, _p_p))
+
+    output_mom_op = SparseSaveFields(mom_eq, interval=15, p_interp=p_interp_save)
     output_mom_op.set_output_folder(output_folder_operation)
     output_mom_op.add_output_field("u", "Displacement (m)")
     output_mom_op.add_output_field("eps_tot", "Total strain (-)")
@@ -1935,7 +1965,7 @@ def main():
         heat_eq.set_boundary_conditions(heat_bc_handler)
 
         # Add heat output
-        output_heat_op = SparseSaveFields(heat_eq, interval=15)
+        output_heat_op = SparseSaveFields(heat_eq, interval=15, p_interp=p_interp_save)
         output_heat_op.set_output_folder(output_folder_operation)
         output_heat_op.add_output_field("T", "Temperature (K)")
         outputs_op.append(output_heat_op)

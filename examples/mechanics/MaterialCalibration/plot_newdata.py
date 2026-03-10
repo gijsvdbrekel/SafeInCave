@@ -119,8 +119,15 @@ def detect_stages_from_stress(time_h, sigma_diff):
     return stages
 
 
-def plot_newdata(data, fig_dir):
-    """Create a 2-panel figure (stress + axial strain) for the cyclic creep test."""
+def plot_newdata(data, fig_dir, thesis=False):
+    """Create a 2-panel figure (stress + axial strain) for the cyclic creep test.
+
+    Parameters
+    ----------
+    thesis : bool
+        If True, produce a clean thesis-ready figure: no parameter boxes,
+        no RMSE/MAPE annotations, 1-column layout.
+    """
     test_id = data["test_id"]
     T_C = data["temperature_C"]
     s3_mean = data.get("sigma3_MPa_mean", 12.0)
@@ -138,16 +145,22 @@ def plot_newdata(data, fig_dir):
     # Detect stages for metrics
     stages = detect_stages_from_stress(t_lab, sig_diff_lab)
 
-    # ── Figure layout: 2 rows (stress + axial strain) + parameter column ──
-    fig = plt.figure(figsize=(20, 10))
-    gs = fig.add_gridspec(2, 2, width_ratios=[3, 1],
-                          height_ratios=[1, 3],
-                          hspace=0.08, wspace=0.2)
-
-    ax_sig = fig.add_subplot(gs[0, 0])
-    ax_ax = fig.add_subplot(gs[1, 0], sharex=ax_sig)
-    ax_par = fig.add_subplot(gs[:, 1])
-    ax_par.axis("off")
+    # ── Figure layout ────────────────────────────────────────────────────────
+    if thesis:
+        fig, (ax_sig, ax_ax) = plt.subplots(
+            2, 1, figsize=(12, 8), height_ratios=[1, 3],
+            sharex=True, gridspec_kw={"hspace": 0.08}
+        )
+        ax_par = None
+    else:
+        fig = plt.figure(figsize=(20, 10))
+        gs = fig.add_gridspec(2, 2, width_ratios=[3, 1],
+                              height_ratios=[1, 3],
+                              hspace=0.08, wspace=0.2)
+        ax_sig = fig.add_subplot(gs[0, 0])
+        ax_ax = fig.add_subplot(gs[1, 0], sharex=ax_sig)
+        ax_par = fig.add_subplot(gs[:, 1])
+        ax_par.axis("off")
 
     # ── Top panel: stress schedule ───────────────────────────────────────────
     t_days = t_lab / 24
@@ -156,8 +169,13 @@ def plot_newdata(data, fig_dir):
     ax_sig.plot(t_days, sig_diff_lab, "k--", linewidth=1, alpha=0.7,
                 label="$\\sigma_{diff}$")
     ax_sig.set_ylabel("Stress (MPa)")
-    ax_sig.set_title(f"Cyclic Triaxial Creep Test  |  T = {T_C} C  |  "
-                     f"$\\sigma_3$ ~ {s3_mean:.0f} MPa")
+    if thesis:
+        ax_sig.set_title(f"Cyclic triaxial creep test — "
+                         f"$T = {T_C:.0f}$ °C, "
+                         f"$\\sigma_3 \\approx {s3_mean:.0f}$ MPa")
+    else:
+        ax_sig.set_title(f"Cyclic Triaxial Creep Test  |  T = {T_C} C  |  "
+                         f"$\\sigma_3$ ~ {s3_mean:.0f} MPa")
     ax_sig.grid(True, alpha=0.3)
     ax_sig.legend(loc="upper right", fontsize=9)
     plt.setp(ax_sig.get_xticklabels(), visible=False)
@@ -231,8 +249,8 @@ def plot_newdata(data, fig_dir):
     ax_ax.grid(True, alpha=0.3)
     ax_ax.legend(loc="upper left", fontsize=8, ncol=2)
 
-    # Add metrics annotation
-    if metrics_text:
+    # Add metrics annotation (skip in thesis mode)
+    if metrics_text and not thesis:
         ax_ax.annotate("\n".join(metrics_text),
                        xy=(0.98, 0.02), xycoords="axes fraction",
                        ha="right", va="bottom", fontsize=7,
@@ -240,72 +258,79 @@ def plot_newdata(data, fig_dir):
                        bbox=dict(boxstyle="round,pad=0.3", fc="white",
                                  alpha=0.8, ec="0.7"))
 
-    # ── Right column: parameter boxes ────────────────────────────────────────
-    y = 0.98
-    fs = 7.5
-    lh = 0.018
+    # ── Right column: parameter boxes (skip in thesis mode) ────────────────
+    if not thesis and ax_par is not None:
+        y = 0.98
+        fs = 7.5
+        lh = 0.018
 
-    def _box(ax, x, y, title, lines, fc):
-        header = f"  {title}\n"
-        body = "\n".join(f"  {l}" for l in lines)
-        text = header + body
-        n_lines = 1 + len(lines)
-        box_h = n_lines * lh + 0.02
-        ax.annotate(text, xy=(x, y), xycoords="axes fraction",
-                    va="top", ha="left", fontsize=fs, family="monospace",
-                    bbox=dict(boxstyle="round,pad=0.4", fc=fc, ec="0.6",
-                              alpha=0.85, linewidth=0.8))
-        return y - box_h - 0.01
+        def _box(ax, x, y, title, lines, fc):
+            header = f"  {title}\n"
+            body = "\n".join(f"  {l}" for l in lines)
+            text = header + body
+            n_lines = 1 + len(lines)
+            box_h = n_lines * lh + 0.02
+            ax.annotate(text, xy=(x, y), xycoords="axes fraction",
+                        va="top", ha="left", fontsize=fs, family="monospace",
+                        bbox=dict(boxstyle="round,pad=0.4", fc=fc, ec="0.6",
+                                  alpha=0.85, linewidth=0.8))
+            return y - box_h - 0.01
 
-    # Elastic
-    gp = data.get("params", {})
-    el_lines = [
-        f"E   = {gp.get('E_elastic', 0)/1e9:.3f} GPa",
-        f"nu  = {gp.get('nu_elastic', 0):.2f}",
-    ]
-    y = _box(ax_par, 0.02, y, "ELASTIC (fixed)", el_lines, "#e8e8e8")
-
-    # SafeInCave parameters
-    if has_sic:
-        sic = data["safeincave"]
-        p = sic.get("params", {})
-        sic_lines = [
-            f"A   = {_fmt(p.get('A_mpa_yr', 0))} MPa^-n/yr",
-            f"n   = {p.get('n', 0):.4f}",
-            f"Q/R = {gp.get('Q_over_R', 6252):.0f} K",
-            "-- Kelvin --",
-            f"eta = {_fmt(p.get('eta_kelvin', 0))} Pa.s",
-            f"E1  = {_fmt(p.get('E1_kelvin', 0))} Pa",
-            "-- Desai --",
-            f"mu1 = {_fmt(p.get('mu1_desai', 0))} 1/s",
-            f"N1  = {p.get('N1_desai', 0):.1f}",
-            f"a1  = {_fmt(p.get('a1_desai', 0))}",
-            f"eta = {p.get('eta_desai', 0):.4g}",
-            f"a0  = {p.get('alpha0_desai', 0):.4g}",
+        # Elastic
+        gp = data.get("params", {})
+        el_lines = [
+            f"E   = {gp.get('E_elastic', 0)/1e9:.3f} GPa",
+            f"nu  = {gp.get('nu_elastic', 0):.2f}",
         ]
-        y = _box(ax_par, 0.02, y, "SAFEINCAVE", sic_lines, "#dde8f7")
+        y = _box(ax_par, 0.02, y, "ELASTIC (fixed)", el_lines, "#e8e8e8")
 
-    # Munson-Dawson parameters
-    if has_md:
-        md = data["munsondawson"]
-        p = md.get("params", {})
-        md_lines = [
-            f"A   = {_fmt(p.get('A_mpa_yr', 0))} MPa^-n/yr",
-            f"n   = {p.get('n', 0):.4f}",
-            f"Q/R = {gp.get('Q_over_R', 6252):.0f} K",
-            "-- Transient --",
-            f"K0  = {_fmt(p.get('K0', 0))}",
-            f"c   = {p.get('c', 0):.5f} 1/K",
-            f"m   = {p.get('m', 0):.4f}",
-            f"a_w = {_fmt(p.get('alpha_w', 0))}",
-            f"b_w = {_fmt(p.get('beta_w', 0))}",
-            f"d   = {_fmt(p.get('delta', 0))}",
-        ]
-        y = _box(ax_par, 0.02, y, "MUNSON-DAWSON", md_lines, "#f7dddd")
+        # SafeInCave parameters
+        if has_sic:
+            sic = data["safeincave"]
+            p = sic.get("params", {})
+            sic_lines = [
+                f"A   = {_fmt(p.get('A_mpa_yr', 0))} MPa^-n/yr",
+                f"n   = {p.get('n', 0):.4f}",
+                f"Q/R = {gp.get('Q_over_R', 6252):.0f} K",
+                "-- Kelvin --",
+                f"eta = {_fmt(p.get('eta_kelvin', 0))} Pa.s",
+                f"E1  = {_fmt(p.get('E1_kelvin', 0))} Pa",
+                "-- Desai --",
+                f"mu1 = {_fmt(p.get('mu1_desai', 0))} 1/s",
+                f"N1  = {p.get('N1_desai', 0):.1f}",
+                f"a1  = {_fmt(p.get('a1_desai', 0))}",
+                f"eta = {p.get('eta_desai', 0):.4g}",
+                f"a0  = {p.get('alpha0_desai', 0):.4g}",
+            ]
+            y = _box(ax_par, 0.02, y, "SAFEINCAVE", sic_lines, "#dde8f7")
 
-    fig.subplots_adjust(left=0.06, right=0.97, top=0.95, bottom=0.07)
+        # Munson-Dawson parameters
+        if has_md:
+            md = data["munsondawson"]
+            p = md.get("params", {})
+            md_lines = [
+                f"A   = {_fmt(p.get('A_mpa_yr', 0))} MPa^-n/yr",
+                f"n   = {p.get('n', 0):.4f}",
+                f"Q/R = {gp.get('Q_over_R', 6252):.0f} K",
+                "-- Transient --",
+                f"K0  = {_fmt(p.get('K0', 0))}",
+                f"c   = {p.get('c', 0):.5f} 1/K",
+                f"m   = {p.get('m', 0):.4f}",
+                f"a_w = {_fmt(p.get('alpha_w', 0))}",
+                f"b_w = {_fmt(p.get('beta_w', 0))}",
+                f"d   = {_fmt(p.get('delta', 0))}",
+            ]
+            y = _box(ax_par, 0.02, y, "MUNSON-DAWSON", md_lines, "#f7dddd")
 
-    outpath = os.path.join(fig_dir, f"calibration_{test_id}.png")
+    if thesis:
+        fig.subplots_adjust(left=0.10, right=0.97, top=0.94, bottom=0.08)
+    else:
+        fig.subplots_adjust(left=0.06, right=0.97, top=0.95, bottom=0.07)
+
+    if thesis:
+        outpath = os.path.join(fig_dir, f"calibration_{test_id}_thesis.png")
+    else:
+        outpath = os.path.join(fig_dir, f"calibration_{test_id}.png")
     fig.savefig(outpath, dpi=DPI)
     print(f"[SAVED] {outpath}")
 

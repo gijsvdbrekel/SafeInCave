@@ -3,14 +3,15 @@ Two-phase material parameter optimizer for new cyclic triaxial creep data.
 
 Phase 1: Extract steady-state creep rates from the tail of each loading stage,
          then fit dislocation creep parameters (A, n) with Q/R on a grid.
+         Run independently for SIC and MD (same scalar fit, stored separately).
 Phase 2: Optimize transient parameters via differential_evolution using a
          MAPE-like objective with zone-based weighting for cyclic loading.
+         Run independently for each model.
 
-Supports both SIC (SafeInCave) and MD (Munson-Dawson) models.
+Both models are calibrated in a single execution.
 
 Usage:
-    python optimize_newdata.py                # default: SIC model
-    MODEL="md" python optimize_newdata.py     # Munson-Dawson model
+    python optimize_newdata.py                # calibrate both SIC and MD
     SKIP_PHASE1=1 python optimize_newdata.py  # skip Phase 1 (use preset A, n)
 """
 
@@ -38,7 +39,6 @@ from calibrate_newdata import (
 # ║                          CONFIGURATION                                     ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
-MODEL = os.environ.get("MODEL", "md").lower()  # "sic" or "md"
 SKIP_PHASE1 = os.environ.get("SKIP_PHASE1", "0") == "1"
 
 # Temperature
@@ -473,11 +473,153 @@ def integrate_md_fast(t_s, sigma_diff_Pa, A_pa_s, n, Q, T,
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                     PHASE 2 RUNNER (per model)                             ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+def run_phase2(model, A_mpa_yr, N_disloc, QR_disloc,
+               t_s, sigma_diff_fine, t_mod_h,
+               t_resamp, e_resamp, weights, stage_ids, stages):
+    """
+    Run Phase 2 transient optimization for a single model.
+
+    Returns:
+        result_x  — optimized parameter vector
+        wmape     — final WMAPE
+        elapsed   — wall time in seconds
+        n_evals   — number of objective evaluations
+    """
+    Q_val = QR_disloc * R_GAS
+    A_pa_s = A_mpa_yr * (1e-6) ** N_disloc / _SEC_PER_YR
+
+    _call_count = [0]
+    _best = [np.inf]
+    _best_params_opt = [None]
+
+    def objective(x):
+        try:
+            if model == "sic":
+                log_eta, log_E1, log_mu1, N1, log_a1, eta_vp, log_alpha0 = x
+                eta = 10.0 ** log_eta
+                E1 = 10.0 ** log_E1
+                mu1 = 10.0 ** log_mu1
+                a1 = 10.0 ** log_a1
+                alpha0 = 10.0 ** log_alpha0
+
+                e_mod = integrate_sic_fast(
+                    t_s, sigma_diff_fine,
+                    A_pa_s, N_disloc, Q_val, T_KELVIN,
+                    eta, E1, mu1, N1, a1, eta_vp, alpha0
+                )
+            else:
+                log_K0, m_md, alpha_w, beta_w, delta = x
+                K0 = 10.0 ** log_K0
+
+                e_mod = integrate_md_fast(
+                    t_s, sigma_diff_fine,
+                    A_pa_s, N_disloc, Q_val, T_KELVIN,
+                    K0, C_MD, m_md, alpha_w, beta_w, delta
+                )
+        except Exception:
+            return 1e6
+
+        e_mod_resamp = np.interp(t_resamp, t_mod_h, e_mod)
+
+        eps_floor = 0.005
+        abs_lab = np.maximum(np.abs(e_resamp), eps_floor)
+        ape = np.abs(e_mod_resamp - e_resamp) / abs_lab
+        wmape = np.sum(weights * ape) / np.sum(weights) * 100.0
+
+        _call_count[0] += 1
+
+        if wmape < _best[0]:
+            _best[0] = wmape
+            _best_params_opt[0] = x.copy()
+            if model == "sic":
+                print(f"  [{_call_count[0]:5d}] NEW BEST WMAPE={wmape:.2f}%  "
+                      f"eta={10**log_eta:.2e} E1={10**log_E1:.2e} "
+                      f"mu1={10**log_mu1:.2e} N1={N1:.2f} "
+                      f"a1={10**log_a1:.2e} eta_vp={eta_vp:.2f} "
+                      f"a0={10**log_alpha0:.3e}", flush=True)
+            else:
+                print(f"  [{_call_count[0]:5d}] NEW BEST WMAPE={wmape:.2f}%  "
+                      f"K0={10**log_K0:.4f} m={m_md:.3f} "
+                      f"aw={alpha_w:.2f} bw={beta_w:.2f} d={delta:.4f}",
+                      flush=True)
+        elif _call_count[0] % 500 == 0:
+            print(f"  [{_call_count[0]:5d}] best so far WMAPE={_best[0]:.2f}%",
+                  flush=True)
+
+        return wmape
+
+    # ── Search bounds and seeds ──────────────────────────────────────────────
+
+    if model == "sic":
+        BOUNDS = [
+            (8.0, 15.0),     # log10(eta [Pa s])
+            (7.0, 11.0),     # log10(E1 [Pa])
+            (-15.0, -8.0),   # log10(mu1 [1/s])
+            (1.5, 5.0),      # N1 [-]
+            (-7.0, -1.0),    # log10(a1)
+            (0.3, 2.0),      # eta_vp
+            (-4.0, -1.0),    # log10(alpha0)
+        ]
+        _SEED_ROW = np.array([12.0, 8.7, -15.0, 2.0, -3.0, 1.2, -2.3])
+        _n_params = 7
+        _popsize = 15
+        _maxiter = 200
+    else:
+        BOUNDS = [
+            (-6.0, 8.0),      # log10(K0) — wide range for transient duration
+            (0.1, 6.0),       # m_md
+            (-10.0, 200.0),   # alpha_w — controls F magnitude (exp(Δ))
+            (-30.0, 60.0),    # beta_w — stress-dependence of Δ
+            (0.001, 300.0),   # delta — recovery branch strength
+        ]
+        _SEED_ROW = np.array([3.39, 2.47, 93.3, 30.0, 99.4])
+        _n_params = 5
+        _popsize = 20
+        _maxiter = 300
+
+    _n_pop = _popsize * _n_params
+    rng = np.random.default_rng(42)
+    _init_pop = rng.uniform(0, 1, size=(_n_pop, _n_params))
+    for j, (lo, hi) in enumerate(BOUNDS):
+        _init_pop[:, j] = lo + _init_pop[:, j] * (hi - lo)
+    _init_pop[0] = _SEED_ROW
+
+    print(f"  {_n_params} parameters, popsize={_popsize}, maxiter={_maxiter}")
+    print(f"  Dislocation (fixed): A={A_mpa_yr:.2f} MPa^-n/yr, "
+          f"n={N_disloc:.4f}, Q/R={QR_disloc:.0f} K")
+    print(f"  Weights: loading_trans={W_LOADING_TRANSIENT}, "
+          f"loading_ss={W_LOADING_STEADY}, "
+          f"unloading_trans={W_UNLOADING_TRANSIENT}, "
+          f"unloading_ss={W_UNLOADING_STEADY}")
+
+    t0 = _time.time()
+    result = differential_evolution(
+        objective,
+        bounds=BOUNDS,
+        popsize=_popsize,
+        maxiter=_maxiter,
+        tol=1e-6,
+        mutation=(0.5, 1.5),
+        recombination=0.8,
+        seed=42,
+        init=_init_pop,
+        polish=True,
+        disp=False,
+    )
+    elapsed = _time.time() - t0
+
+    return result.x, result.fun, elapsed, _call_count[0]
+
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║                          MAIN EXECUTION                                    ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 def main():
-    print(f"Loading new lab data for optimizer ({MODEL.upper()} model) ...")
+    print("Loading new lab data for optimizer (SIC + MD) ...")
 
     time_h_raw, sigma1_raw, sigma3_raw, epsilon1_raw, epsilon3_raw = read_excel_data(XLSX_PATH)
     sigma_diff_raw = sigma1_raw - sigma3_raw
@@ -520,13 +662,14 @@ def main():
 
     print(f"  Resampled to {len(t_resamp)} points")
 
-    # ── PHASE 1: DISLOCATION CREEP ───────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # PHASE 1: DISLOCATION CREEP — separately for each model
+    # ══════════════════════════════════════════════════════════════════════════
 
     if SKIP_PHASE1:
         print("\n[PHASE 1] SKIPPED — using preset dislocation parameters")
-        A_DISLOC_MPA_YR = 40.0
-        N_DISLOC = 4.5
-        QR_DISLOC = 6252.0
+        A_SIC_MPA_YR = 40.0;  N_SIC = 4.5;  QR_SIC = 6252.0
+        A_MD_MPA_YR  = 40.0;  N_MD  = 4.5;  QR_MD  = 6252.0
     else:
         print("\n" + "=" * 70)
         print("PHASE 1: Dislocation creep from steady-state slopes")
@@ -543,279 +686,184 @@ def main():
             print(f"    sigma_diff = {sm:.1f} MPa -> rate = {r:.3e} /s "
                   f"({r * 100 * 3600:.4e} %/h)")
 
+        # The Phase 1 grid search fits the scalar rate: eps_dot = A * sigma^n * exp(-Q/RT).
+        # This is model-independent (identical fit for both SIC and MD).
+        # The resulting A is used directly by each model's 1D integrator and 3D code.
         best_params, best_resid = fit_dislocation_params(
             stress_mpa, rates, T_KELVIN, QR_GRID
         )
 
         if best_params is not None:
-            A_DISLOC_MPA_YR, N_DISLOC, QR_DISLOC = best_params
+            A_FIT, N_FIT, QR_FIT = best_params
             print(f"\n  Best fit:")
-            print(f"    A = {A_DISLOC_MPA_YR:.2f} MPa^-n/yr")
-            print(f"    n = {N_DISLOC:.4f}")
-            print(f"    Q/R = {QR_DISLOC:.0f} K")
+            print(f"    A   = {A_FIT:.2f} MPa^-n/yr")
+            print(f"    n   = {N_FIT:.4f}")
+            print(f"    Q/R = {QR_FIT:.0f} K")
             print(f"    log-space residual = {best_resid:.4f}")
         else:
             print("\n[WARNING] Could not fit dislocation parameters within bounds!")
             print("  Using defaults: A=40, n=4.5, Q/R=6252")
-            A_DISLOC_MPA_YR = 40.0
-            N_DISLOC = 4.5
-            QR_DISLOC = 6252.0
+            A_FIT = 40.0; N_FIT = 4.5; QR_FIT = 6252.0
 
-    # Convert to SI
-    Q_DISLOC_val = QR_DISLOC * R_GAS
-    A_DISLOC_PA_S = A_DISLOC_MPA_YR * (1e-6) ** N_DISLOC / _SEC_PER_YR
+        # Store separately for each model (same values from scalar fit)
+        A_SIC_MPA_YR = A_FIT;  N_SIC = N_FIT;  QR_SIC = QR_FIT
+        A_MD_MPA_YR  = A_FIT;  N_MD  = N_FIT;  QR_MD  = QR_FIT
 
-    # ── PHASE 2: TRANSIENT OPTIMIZATION ──────────────────────────────────────
+        print(f"\n  SIC dislocation: A={A_SIC_MPA_YR:.2f}, n={N_SIC:.4f}, Q/R={QR_SIC:.0f}")
+        print(f"  MD  dislocation: A={A_MD_MPA_YR:.2f},  n={N_MD:.4f},  Q/R={QR_MD:.0f}")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PHASE 2: TRANSIENT OPTIMIZATION — SIC
+    # ══════════════════════════════════════════════════════════════════════════
 
     print("\n" + "=" * 70)
-    print(f"PHASE 2: Transient parameter optimization ({MODEL.upper()} model)")
+    print("PHASE 2a: Transient parameter optimization (SIC model)")
     print("=" * 70)
 
-    _call_count = [0]
-    _best = [np.inf]
-    _best_params_opt = [None]
-
-    def objective(x):
-        """MAPE-like objective with zone-based weighting."""
-        try:
-            if MODEL == "sic":
-                log_eta, log_E1, log_mu1, N1, log_a1, eta_vp, log_alpha0 = x
-                eta = 10.0 ** log_eta
-                E1 = 10.0 ** log_E1
-                mu1 = 10.0 ** log_mu1
-                a1 = 10.0 ** log_a1
-                alpha0 = 10.0 ** log_alpha0
-
-                e_mod = integrate_sic_fast(
-                    t_s, sigma_diff_fine,
-                    A_DISLOC_PA_S, N_DISLOC, Q_DISLOC_val, T_KELVIN,
-                    eta, E1, mu1, N1, a1, eta_vp, alpha0
-                )
-            else:
-                log_K0, m_md, alpha_w, beta_w, delta = x
-                K0 = 10.0 ** log_K0
-
-                e_mod = integrate_md_fast(
-                    t_s, sigma_diff_fine,
-                    A_DISLOC_PA_S, N_DISLOC, Q_DISLOC_val, T_KELVIN,
-                    K0, C_MD, m_md, alpha_w, beta_w, delta
-                )
-        except Exception:
-            return 1e6
-
-        # Interpolate model onto resampled lab times
-        e_mod_resamp = np.interp(t_resamp, t_mod_h, e_mod)
-
-        # MAPE: |model - lab| / max(|lab|, eps_floor) * 100
-        eps_floor = 0.005  # 0.005% floor to avoid division by very small strains
-        abs_lab = np.maximum(np.abs(e_resamp), eps_floor)
-        ape = np.abs(e_mod_resamp - e_resamp) / abs_lab
-
-        # Weighted MAPE
-        wmape = np.sum(weights * ape) / np.sum(weights) * 100.0
-
-        _call_count[0] += 1
-
-        if wmape < _best[0]:
-            _best[0] = wmape
-            _best_params_opt[0] = x.copy()
-            if MODEL == "sic":
-                print(f"  [{_call_count[0]:5d}] NEW BEST WMAPE={wmape:.2f}%  "
-                      f"eta={10**log_eta:.2e} E1={10**log_E1:.2e} "
-                      f"mu1={10**log_mu1:.2e} N1={N1:.2f} "
-                      f"a1={10**log_a1:.2e} eta_vp={eta_vp:.2f} "
-                      f"a0={10**log_alpha0:.3e}", flush=True)
-            else:
-                print(f"  [{_call_count[0]:5d}] NEW BEST WMAPE={wmape:.2f}%  "
-                      f"K0={10**log_K0:.4f} m={m_md:.3f} "
-                      f"aw={alpha_w:.2f} bw={beta_w:.2f} d={delta:.4f}",
-                      flush=True)
-        elif _call_count[0] % 500 == 0:
-            print(f"  [{_call_count[0]:5d}] best so far WMAPE={_best[0]:.2f}%",
-                  flush=True)
-
-        return wmape
-
-    # ── Search bounds and seeds ──────────────────────────────────────────────
-
-    if MODEL == "sic":
-        BOUNDS = [
-            (8.0, 15.0),     # log10(eta [Pa s])
-            (7.0, 11.0),     # log10(E1 [Pa])
-            (-15.0, -8.0),   # log10(mu1 [1/s])
-            (1.5, 5.0),      # N1 [-]
-            (-7.0, -1.0),    # log10(a1)
-            (0.3, 2.0),      # eta_vp
-            (-4.0, -1.0),    # log10(alpha0)
-        ]
-        _SEED_ROW = np.array([12.0, 8.7, -15.0, 2.0, -3.0, 1.2, -2.3])
-        _n_params = 7
-        _popsize = 15
-        _maxiter = 200
-    else:
-        BOUNDS = [
-            (-6.0, 8.0),      # log10(K0) — wide range for transient duration
-            (0.1, 6.0),       # m_md
-            (-10.0, 200.0),   # alpha_w — controls F magnitude (exp(Δ))
-            (-30.0, 60.0),    # beta_w — stress-dependence of Δ
-            (0.001, 300.0),   # delta — recovery branch strength
-        ]
-        # Seed near previous best
-        _SEED_ROW = np.array([3.39, 2.47, 93.3, 30.0, 99.4])
-        _n_params = 5
-        _popsize = 20
-        _maxiter = 300
-
-    # Build initial population with seed
-    _n_pop = _popsize * _n_params
-    rng = np.random.default_rng(42)
-    _init_pop = rng.uniform(0, 1, size=(_n_pop, _n_params))
-    for j, (lo, hi) in enumerate(BOUNDS):
-        _init_pop[:, j] = lo + _init_pop[:, j] * (hi - lo)
-    _init_pop[0] = _SEED_ROW
-
-    print(f"  {_n_params} parameters, popsize={_popsize}, maxiter={_maxiter}")
-    print(f"  Dislocation (fixed): A={A_DISLOC_MPA_YR:.2f} MPa^-n/yr, "
-          f"n={N_DISLOC:.4f}, Q/R={QR_DISLOC:.0f} K")
-    print(f"  Weights: loading_trans={W_LOADING_TRANSIENT}, "
-          f"loading_ss={W_LOADING_STEADY}, "
-          f"unloading_trans={W_UNLOADING_TRANSIENT}, "
-          f"unloading_ss={W_UNLOADING_STEADY}")
-    print(f"  N_PER_STAGE={N_PER_STAGE}")
-
-    t0 = _time.time()
-    result = differential_evolution(
-        objective,
-        bounds=BOUNDS,
-        popsize=_popsize,
-        maxiter=_maxiter,
-        tol=1e-6,
-        mutation=(0.5, 1.5),
-        recombination=0.8,
-        seed=42,
-        init=_init_pop,
-        polish=True,
-        disp=False,
+    x_sic, wmape_sic, elapsed_sic, n_evals_sic = run_phase2(
+        "sic", A_SIC_MPA_YR, N_SIC, QR_SIC,
+        t_s, sigma_diff_fine, t_mod_h,
+        t_resamp, e_resamp, weights, stage_ids, stages,
     )
-    elapsed = _time.time() - t0
 
-    # ── REPORT & DIAGNOSTICS ─────────────────────────────────────────────────
-
-    x = result.x
+    log_eta, log_E1, log_mu1, N1, log_a1, eta_vp, log_alpha0 = x_sic
+    eta_sic = 10.0 ** log_eta
+    E1_sic = 10.0 ** log_E1
+    mu1_sic = 10.0 ** log_mu1
+    a1_sic = 10.0 ** log_a1
+    alpha0_sic = 10.0 ** log_alpha0
 
     print(f"\n{'='*80}")
-    print(f"OPTIMUM — {MODEL.upper()} MODEL  "
-          f"(elapsed {elapsed/60:.1f} min, {_call_count[0]} evals)")
+    print(f"SIC OPTIMUM (elapsed {elapsed_sic/60:.1f} min, {n_evals_sic} evals)")
     print(f"{'='*80}")
+    print(f"  A          = {A_SIC_MPA_YR:.2f} MPa^-n/yr")
+    print(f"  n          = {N_SIC:.4f}")
+    print(f"  Q/R        = {QR_SIC:.0f} K")
+    tau_h = eta_sic / E1_sic / 3600
+    kelvin_eq = 21e6 / E1_sic * 100
+    print(f"  ETA_KELVIN = {eta_sic:.4e} Pa s")
+    print(f"  E1_KELVIN  = {E1_sic:.4e} Pa")
+    print(f"  Kelvin tau = {tau_h:.1f} h, eq@21MPa = {kelvin_eq:.2f}%")
+    print(f"  MU1_DESAI  = {mu1_sic:.4e} 1/s")
+    print(f"  N1_DESAI   = {N1:.4f}")
+    print(f"  A1_DESAI   = {a1_sic:.4e}")
+    print(f"  ETA_DESAI  = {eta_vp:.4f}")
+    print(f"  ALPHA0     = {alpha0_sic:.4e}")
+    print(f"  WMAPE      = {wmape_sic:.2f}%")
 
-    print(f"\n  -- Dislocation creep (from Phase 1) --")
-    print(f"  A          = {A_DISLOC_MPA_YR:.2f} MPa^-n/yr")
-    print(f"  n          = {N_DISLOC:.4f}")
-    print(f"  Q/R        = {QR_DISLOC:.0f} K")
+    # ══════════════════════════════════════════════════════════════════════════
+    # PHASE 2: TRANSIENT OPTIMIZATION — MD
+    # ══════════════════════════════════════════════════════════════════════════
 
-    if MODEL == "sic":
-        log_eta, log_E1, log_mu1, N1, log_a1, eta_vp, log_alpha0 = x
-        eta = 10.0 ** log_eta
-        E1 = 10.0 ** log_E1
-        mu1 = 10.0 ** log_mu1
-        a1 = 10.0 ** log_a1
-        alpha0 = 10.0 ** log_alpha0
+    print("\n" + "=" * 70)
+    print("PHASE 2b: Transient parameter optimization (MD model)")
+    print("=" * 70)
 
-        tau_h = eta / E1 / 3600
-        kelvin_eq_21 = 21e6 / E1 * 100
+    x_md, wmape_md, elapsed_md, n_evals_md = run_phase2(
+        "md", A_MD_MPA_YR, N_MD, QR_MD,
+        t_s, sigma_diff_fine, t_mod_h,
+        t_resamp, e_resamp, weights, stage_ids, stages,
+    )
 
-        print(f"\n  -- Transient (optimized) --")
-        print(f"  ETA_KELVIN = {eta:.4e} Pa s")
-        print(f"  E1_KELVIN  = {E1:.4e} Pa")
-        print(f"  Kelvin tau = {tau_h:.1f} h, eq@21MPa = {kelvin_eq_21:.2f}%")
-        print(f"  MU1_DESAI  = {mu1:.4e} 1/s")
-        print(f"  N1_DESAI   = {N1:.4f}")
-        print(f"  A1_DESAI   = {a1:.4e}")
-        print(f"  ETA_DESAI  = {eta_vp:.4f}")
-        print(f"  ALPHA0     = {alpha0:.4e}")
-    else:
-        log_K0, m_md, alpha_w, beta_w, delta = x
-        K0 = 10.0 ** log_K0
+    log_K0, m_md, alpha_w, beta_w, delta = x_md
+    K0_md = 10.0 ** log_K0
 
-        print(f"\n  -- Transient (optimized) --")
-        print(f"  K0         = {K0:.6f}")
-        print(f"  m          = {m_md:.4f}")
-        print(f"  alpha_w    = {alpha_w:.4f}")
-        print(f"  beta_w     = {beta_w:.4f}")
-        print(f"  delta      = {delta:.6f}")
+    print(f"\n{'='*80}")
+    print(f"MD OPTIMUM (elapsed {elapsed_md/60:.1f} min, {n_evals_md} evals)")
+    print(f"{'='*80}")
+    print(f"  A          = {A_MD_MPA_YR:.2f} MPa^-n/yr")
+    print(f"  n          = {N_MD:.4f}")
+    print(f"  Q/R        = {QR_MD:.0f} K")
+    print(f"  K0         = {K0_md:.6f}")
+    print(f"  m          = {m_md:.4f}")
+    print(f"  alpha_w    = {alpha_w:.4f}")
+    print(f"  beta_w     = {beta_w:.4f}")
+    print(f"  delta      = {delta:.6f}")
+    print(f"  WMAPE      = {wmape_md:.2f}%")
 
-    print(f"\n  Weighted MAPE = {result.fun:.2f}%")
+    # ══════════════════════════════════════════════════════════════════════════
+    # PER-STAGE METRICS
+    # ══════════════════════════════════════════════════════════════════════════
 
-    # ── Per-stage RMSE and MAPE breakdown ────────────────────────────────────
+    Q_SIC_val = QR_SIC * R_GAS
+    Q_MD_val = QR_MD * R_GAS
+    A_SIC_PA_S = A_SIC_MPA_YR * (1e-6) ** N_SIC / _SEC_PER_YR
+    A_MD_PA_S = A_MD_MPA_YR * (1e-6) ** N_MD / _SEC_PER_YR
+
+    for label, model_name in [("SIC", "sic"), ("MD", "md")]:
+        print(f"\n{'─'*80}")
+        print(f"Per-stage metrics — {label}:")
+        print(f"{'─'*80}")
+
+        if model_name == "sic":
+            e_mod = integrate_sic_fast(
+                t_s, sigma_diff_fine,
+                A_SIC_PA_S, N_SIC, Q_SIC_val, T_KELVIN,
+                eta_sic, E1_sic, mu1_sic, N1, a1_sic, eta_vp, alpha0_sic
+            )
+        else:
+            e_mod = integrate_md_fast(
+                t_s, sigma_diff_fine,
+                A_MD_PA_S, N_MD, Q_MD_val, T_KELVIN,
+                K0_md, C_MD, m_md, alpha_w, beta_w, delta
+            )
+
+        e_mod_resamp = np.interp(t_resamp, t_mod_h, e_mod)
+        residuals = e_mod_resamp - e_resamp
+
+        for k, stg in enumerate(stages):
+            mask_stg = stage_ids == k
+            if not np.any(mask_stg):
+                continue
+            res_stg = residuals[mask_stg]
+            e_lab_stg = e_resamp[mask_stg]
+            rmse = np.sqrt(np.mean(res_stg ** 2))
+            eps_floor = 0.005
+            abs_lab = np.maximum(np.abs(e_lab_stg), eps_floor)
+            mape = np.mean(np.abs(res_stg) / abs_lab) * 100.0
+            print(f"  Stage {k} ({stg['type']:>9}, sigma={stg['sigma_mpa']:.1f} MPa): "
+                  f"RMSE={rmse:.4f}%  MAPE={mape:.1f}%")
+
+        e_mod_full = np.interp(t_lab, t_mod_h, e_mod)
+        rmse_total = np.sqrt(np.mean((e_mod_full - e_lab_ax) ** 2))
+        final_err = float(e_mod_full[-1] - e_lab_ax[-1])
+        print(f"\n  Overall RMSE = {rmse_total:.4f}%")
+        print(f"  Final strain error = {final_err:+.4f}%")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # COPY-PASTE PARAMETERS
+    # ══════════════════════════════════════════════════════════════════════════
+
     print(f"\n{'─'*80}")
-    print("Per-stage metrics:")
+    print("Copy-paste parameters for simulation scripts:")
     print(f"{'─'*80}")
 
-    if MODEL == "sic":
-        e_mod = integrate_sic_fast(
-            t_s, sigma_diff_fine,
-            A_DISLOC_PA_S, N_DISLOC, Q_DISLOC_val, T_KELVIN,
-            eta, E1, mu1, N1, a1, eta_vp, alpha0
-        )
-    else:
-        e_mod = integrate_md_fast(
-            t_s, sigma_diff_fine,
-            A_DISLOC_PA_S, N_DISLOC, Q_DISLOC_val, T_KELVIN,
-            K0, C_MD, m_md, alpha_w, beta_w, delta
-        )
+    print(f"\n  -- SIC --")
+    print(f"  A_SIC         = {A_SIC_MPA_YR:.2f}")
+    print(f"  N_SIC         = {N_SIC:.4f}")
+    print(f"  Q_OVER_R      = {QR_SIC:.0f}")
+    print(f"  ETA_KELVIN    = {eta_sic:.4e}")
+    print(f"  E1_KELVIN     = {E1_sic:.4e}")
+    print(f"  MU1_DESAI     = {mu1_sic:.4e}")
+    print(f"  N1_DESAI      = {N1:.4f}")
+    print(f"  A1_DESAI      = {a1_sic:.4e}")
+    print(f"  ETA_DESAI     = {eta_vp:.4f}")
+    print(f"  ALPHA0_DESAI  = {alpha0_sic:.4e}")
 
-    e_mod_resamp = np.interp(t_resamp, t_mod_h, e_mod)
-    residuals = e_mod_resamp - e_resamp
+    print(f"\n  -- MD --")
+    print(f"  A_MD          = {A_MD_MPA_YR:.2f}")
+    print(f"  N_MD          = {N_MD:.4f}")
+    print(f"  Q_OVER_R      = {QR_MD:.0f}")
+    print(f"  K0_MD         = {K0_md:.6f}")
+    print(f"  M_MD          = {m_md:.4f}")
+    print(f"  ALPHA_W_MD    = {alpha_w:.4f}")
+    print(f"  BETA_W_MD     = {beta_w:.4f}")
+    print(f"  DELTA_MD      = {delta:.6f}")
 
-    for k, stg in enumerate(stages):
-        mask_stg = stage_ids == k
-        if not np.any(mask_stg):
-            continue
-        res_stg = residuals[mask_stg]
-        e_lab_stg = e_resamp[mask_stg]
-        rmse = np.sqrt(np.mean(res_stg ** 2))
+    # ══════════════════════════════════════════════════════════════════════════
+    # AUTO-SAVE: full integration → JSON for both models
+    # ══════════════════════════════════════════════════════════════════════════
 
-        eps_floor = 0.005
-        abs_lab = np.maximum(np.abs(e_lab_stg), eps_floor)
-        mape = np.mean(np.abs(res_stg) / abs_lab) * 100.0
-
-        print(f"  Stage {k} ({stg['type']:>9}, sigma={stg['sigma_mpa']:.1f} MPa): "
-              f"RMSE={rmse:.4f}%  MAPE={mape:.1f}%")
-
-    # ── Overall flat RMSE ────────────────────────────────────────────────────
-    e_mod_full = np.interp(t_lab, t_mod_h, e_mod)
-    rmse_total = np.sqrt(np.mean((e_mod_full - e_lab_ax) ** 2))
-    final_err = float(e_mod_full[-1] - e_lab_ax[-1])
-    print(f"\n  Overall RMSE = {rmse_total:.4f}%")
-    print(f"  Final strain error = {final_err:+.4f}%")
-
-    # ── Copy-paste parameters for calibrate_newdata.py ───────────────────────
-    print(f"\n{'─'*80}")
-    print("To update calibrate_newdata.py:")
-    print(f"{'─'*80}")
-
-    if MODEL == "sic":
-        print(f"  _A_SIC_MPA_YR = {A_DISLOC_MPA_YR:.2f}")
-        print(f"  N_SIC         = {N_DISLOC:.4f}")
-        print(f"  Q_OVER_R      = {QR_DISLOC:.0f}")
-        print(f"  ETA_KELVIN    = {eta:.4e}")
-        print(f"  E1_KELVIN     = {E1:.4e}")
-        print(f"  MU1_DESAI     = {mu1:.4e}")
-        print(f"  N1_DESAI      = {N1:.4f}")
-        print(f"  A1_DESAI      = {a1:.4e}")
-        print(f"  ETA_DESAI     = {eta_vp:.4f}")
-        print(f"  ALPHA0_DESAI  = {alpha0:.4e}")
-    else:
-        print(f"  _A_MD_MPA_YR  = {A_DISLOC_MPA_YR:.2f}")
-        print(f"  N_MD          = {N_DISLOC:.4f}")
-        print(f"  Q_OVER_R      = {QR_DISLOC:.0f}")
-        print(f"  K0_MD         = {K0:.6f}")
-        print(f"  M_MD          = {m_md:.4f}")
-        print(f"  ALPHA_W_MD    = {alpha_w:.4f}")
-        print(f"  BETA_W_MD     = {beta_w:.4f}")
-        print(f"  DELTA_MD      = {delta:.6f}")
-
-    # ── AUTO-SAVE: run full integration and save JSON ─────────────────────
     print(f"\n{'='*70}")
     print("AUTO-SAVE: Running full integration with optimized parameters ...")
     print(f"{'='*70}")
@@ -823,7 +871,6 @@ def main():
     import calibrate_newdata as cn
     import json
 
-    # Re-read data via calibrate_newdata (finer dt for final output)
     time_h_raw_full, sigma1_raw_full, sigma3_raw_full, eps1_raw, eps3_raw = \
         cn.read_excel_data(XLSX_PATH)
     t_s_full, sig1_full, sig3_full, idx0 = cn.build_stress_schedule(
@@ -838,7 +885,21 @@ def main():
     lab_sig1 = sigma1_raw_full[idx0:]
     lab_sig3 = sigma3_raw_full[idx0:]
 
-    result_json = {
+    t_hours_full = t_s_full / HOUR
+    out_dir = os.path.join(os.path.dirname(__file__), "output")
+    os.makedirs(out_dir, exist_ok=True)
+
+    # -- SIC JSON --
+    A_sic_pa_s_full = A_SIC_MPA_YR * (1e-6) ** N_SIC / _SEC_PER_YR
+    eps_ax_sic, eps_dc_sic, eps_kv_sic, eps_de_sic, eps_rad_sic = cn.integrate_safeincave(
+        t_s_full, sig1_full, sig3_full,
+        A=A_sic_pa_s_full, n=N_SIC, Q=QR_SIC * R_GAS, T=T_KELVIN,
+        eta=eta_sic, E1=E1_sic, mu1=mu1_sic, N1=N1, a1=a1_sic,
+        eta_vp=eta_vp, alpha0=alpha0_sic,
+    )
+    print(f"  SIC final axial strain:  {eps_ax_sic[-1] * 100:.4f}%")
+
+    result_sic = {
         "test_id": "newdata_cyclic",
         "temperature_C": T_CELSIUS,
         "sigma3_MPa_mean": float(np.mean(sigma3_raw_full[idx0:])),
@@ -850,86 +911,84 @@ def main():
             "sigma1_MPa": lab_sig1.tolist(),
             "sigma3_MPa": lab_sig3.tolist(),
         },
-        "params": {
-            "Q_over_R": QR_DISLOC,
-            "E_elastic": E_ELASTIC,
-            "nu_elastic": NU_ELASTIC,
+        "params": {"Q_over_R": QR_SIC, "E_elastic": E_ELASTIC, "nu_elastic": NU_ELASTIC},
+        "safeincave": {
+            "time_hours": t_hours_full.tolist(),
+            "strain_axial_pct": (eps_ax_sic * 100).tolist(),
+            "strain_radial_pct": (eps_rad_sic * 100).tolist(),
+            "strain_disloc_pct": (eps_dc_sic * 100).tolist(),
+            "strain_kelvin_pct": (eps_kv_sic * 100).tolist(),
+            "strain_desai_pct": (eps_de_sic * 100).tolist(),
+            "params": {
+                "A_mpa_yr": A_SIC_MPA_YR, "n": N_SIC,
+                "eta_kelvin": eta_sic, "E1_kelvin": E1_sic,
+                "mu1_desai": mu1_sic, "N1_desai": N1,
+                "a1_desai": a1_sic, "eta_desai": eta_vp,
+                "alpha0_desai": alpha0_sic,
+            },
         },
     }
+    json_path_sic = os.path.join(out_dir, "calibration_newdata_sic.json")
+    with open(json_path_sic, "w") as f:
+        json.dump(result_sic, f, indent=2)
+    print(f"  [SAVED] {json_path_sic}")
 
-    t_hours_full = t_s_full / HOUR
+    # -- MD JSON --
+    A_md_pa_s_full = A_MD_MPA_YR * (1e-6) ** N_MD / _SEC_PER_YR
+    eps_ax_md, eps_ss_md, eps_tr_md, eps_rad_md = cn.integrate_munsondawson(
+        t_s_full, sig1_full, sig3_full,
+        A=A_md_pa_s_full, n=N_MD, Q=QR_MD * R_GAS, T=T_KELVIN,
+        K0=K0_md, c=C_MD, m_md=m_md,
+        alpha_w=alpha_w, beta_w=beta_w, delta=delta,
+    )
+    print(f"  MD  final axial strain:  {eps_ax_md[-1] * 100:.4f}%")
 
-    if MODEL == "sic":
-        A_pa_s_full = A_DISLOC_MPA_YR * (1e-6) ** N_DISLOC / _SEC_PER_YR
-        eps_ax, eps_dc, eps_kv, eps_de, eps_rad = cn.integrate_safeincave(
-            t_s_full, sig1_full, sig3_full,
-            A=A_pa_s_full, n=N_DISLOC, Q=Q_DISLOC_val, T=T_KELVIN,
-            eta=eta, E1=E1, mu1=mu1, N1=N1, a1=a1, eta_vp=eta_vp, alpha0=alpha0,
-        )
-        result_json["safeincave"] = {
+    result_md = {
+        "test_id": "newdata_cyclic",
+        "temperature_C": T_CELSIUS,
+        "sigma3_MPa_mean": float(np.mean(sigma3_raw_full[idx0:])),
+        "lab": {
+            "time_hours": lab_time.tolist(),
+            "strain_axial_pct": lab_eps1.tolist(),
+            "strain_radial_pct": lab_eps3.tolist(),
+            "sigma_diff_MPa": lab_sdiff.tolist(),
+            "sigma1_MPa": lab_sig1.tolist(),
+            "sigma3_MPa": lab_sig3.tolist(),
+        },
+        "params": {"Q_over_R": QR_MD, "E_elastic": E_ELASTIC, "nu_elastic": NU_ELASTIC},
+        "munsondawson": {
             "time_hours": t_hours_full.tolist(),
-            "strain_axial_pct": (eps_ax * 100).tolist(),
-            "strain_radial_pct": (eps_rad * 100).tolist(),
-            "strain_disloc_pct": (eps_dc * 100).tolist(),
-            "strain_kelvin_pct": (eps_kv * 100).tolist(),
-            "strain_desai_pct": (eps_de * 100).tolist(),
+            "strain_axial_pct": (eps_ax_md * 100).tolist(),
+            "strain_radial_pct": (eps_rad_md * 100).tolist(),
+            "strain_steady_pct": (eps_ss_md * 100).tolist(),
+            "strain_transient_pct": (eps_tr_md * 100).tolist(),
             "params": {
-                "A_mpa_yr": A_DISLOC_MPA_YR, "n": N_DISLOC,
-                "eta_kelvin": eta, "E1_kelvin": E1,
-                "mu1_desai": mu1, "N1_desai": N1,
-                "a1_desai": a1, "eta_desai": eta_vp,
-                "alpha0_desai": alpha0,
-            },
-        }
-        print(f"  SIC final axial strain:  {eps_ax[-1] * 100:.4f}%")
-    else:
-        A_pa_s_full = A_DISLOC_MPA_YR * (1e-6) ** N_DISLOC / _SEC_PER_YR
-        eps_ax, eps_ss_arr, eps_tr_arr, eps_rad = cn.integrate_munsondawson(
-            t_s_full, sig1_full, sig3_full,
-            A=A_pa_s_full, n=N_DISLOC, Q=Q_DISLOC_val, T=T_KELVIN,
-            K0=K0, c=C_MD, m_md=m_md,
-            alpha_w=alpha_w, beta_w=beta_w, delta=delta,
-        )
-        result_json["munsondawson"] = {
-            "time_hours": t_hours_full.tolist(),
-            "strain_axial_pct": (eps_ax * 100).tolist(),
-            "strain_radial_pct": (eps_rad * 100).tolist(),
-            "strain_steady_pct": (eps_ss_arr * 100).tolist(),
-            "strain_transient_pct": (eps_tr_arr * 100).tolist(),
-            "params": {
-                "A_mpa_yr": A_DISLOC_MPA_YR, "n": N_DISLOC,
-                "K0": K0, "c": C_MD, "m": m_md,
+                "A_mpa_yr": A_MD_MPA_YR, "n": N_MD,
+                "K0": K0_md, "c": C_MD, "m": m_md,
                 "alpha_w": alpha_w, "beta_w": beta_w, "delta": delta,
             },
-        }
-        print(f"  MD final axial strain:   {eps_ax[-1] * 100:.4f}%")
+        },
+    }
+    json_path_md = os.path.join(out_dir, "calibration_newdata_md.json")
+    with open(json_path_md, "w") as f:
+        json.dump(result_md, f, indent=2)
+    print(f"  [SAVED] {json_path_md}")
 
-    out_dir = os.path.join(os.path.dirname(__file__), "output")
-    os.makedirs(out_dir, exist_ok=True)
-    json_path = os.path.join(out_dir, f"calibration_newdata_{MODEL}.json")
-    with open(json_path, "w") as f:
-        json.dump(result_json, f, indent=2)
-    print(f"  [SAVED] {json_path}")
+    # ══════════════════════════════════════════════════════════════════════════
+    # AUTO-PLOT: combined figure (normal + thesis)
+    # ══════════════════════════════════════════════════════════════════════════
 
-    # ── AUTO-PLOT: merge both models if available ─────────────────────────
-    print("\nGenerating combined plot ...")
+    print("\nGenerating plots ...")
     fig_dir = os.path.join(os.path.dirname(__file__), "figures")
     os.makedirs(fig_dir, exist_ok=True)
 
-    # Try to load the other model's results and merge
-    other = "sic" if MODEL == "md" else "md"
-    other_path = os.path.join(out_dir, f"calibration_newdata_{other}.json")
-    if os.path.exists(other_path):
-        with open(other_path, "r") as f:
-            other_data = json.load(f)
-        # Merge: keep current model's lab data, add both model sections
-        for key in ("safeincave", "munsondawson"):
-            if key in other_data and key not in result_json:
-                result_json[key] = other_data[key]
-        print(f"  Merged with {other_path}")
+    # Merge both models into one dict for combined plotting
+    combined = dict(result_sic)
+    combined["munsondawson"] = result_md["munsondawson"]
 
     from plot_newdata import plot_newdata
-    plot_newdata(result_json, fig_dir)
+    plot_newdata(combined, fig_dir)
+    plot_newdata(combined, fig_dir, thesis=True)
 
     print("\n[ALL DONE]")
 
