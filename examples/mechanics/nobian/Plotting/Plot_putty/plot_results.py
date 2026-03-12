@@ -46,7 +46,7 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 SELECT = {
     "caverns": None,
     "pressure": ["csv"],
-    "scenario": ["A_SIC"],
+    "scenario": ["B_SIC", "B_MD"],
     "n_cycles": None,
     "operation_days": None,
     "case_contains": None,
@@ -71,7 +71,7 @@ SELECT = {
 #                         cavern and scenario (e.g. industry vs power_generation).
 #                         Color = pressure scheme, linestyle = pressure scheme.
 
-PLOT_MODE = "compare_shapes"    # "compare_shapes", "compare_scenarios", or "compare_pressures"
+PLOT_MODE = "compare_scenarios"    # "compare_shapes", "compare_scenarios", or "compare_pressures"
 
 FIGURES = {
     "convergence": True,          # Figure 1: volume convergence

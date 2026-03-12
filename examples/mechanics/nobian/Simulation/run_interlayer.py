@@ -1022,9 +1022,27 @@ def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days,
 # ══════════════════════════════════════════════════════════════════════════════
 
 class LinearMomentumMod(sf.LinearMomentum):
+    _MAX_EPS_NE_PER_HALFSTEP = 5e-3
+
     def __init__(self, grid, theta):
         super().__init__(grid, theta)
         self.expect_vp_state = False
+
+    def compute_eps_ne_rate(self, stress, dt):
+        """Override: compute non-elastic rates then clamp to prevent NaN."""
+        super().compute_eps_ne_rate(stress, dt)
+        phi1 = dt * self.theta
+        if phi1 <= 0.0:
+            return
+        max_rate = self._MAX_EPS_NE_PER_HALFSTEP / phi1
+        for elem_ne in self.mat.elems_ne:
+            rate = elem_ne.eps_ne_rate
+            mag = to.sqrt((rate * rate).sum(dim=(1, 2)))
+            over = mag > max_rate
+            if over.any():
+                scale = to.ones_like(mag)
+                scale[over] = max_rate / mag[over]
+                elem_ne.eps_ne_rate = rate * scale[:, None, None]
 
     def initialize(self) -> None:
         self.C.x.array[:] = to.flatten(self.mat.C)

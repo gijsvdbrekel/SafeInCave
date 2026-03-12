@@ -336,8 +336,9 @@ def integrate_sic_fast(t_s, sigma_diff_Pa, A_pa_s, n, Q, T, eta, E1,
         e_el = sigma / _E_EL
 
         if dt > 0.0:
-            # Dislocation creep
-            rate_dc = A_pa_s * (abs(sigma) ** n) * exp_QRT
+            # Dislocation creep — factor 2/3 matches the SIC 3D flow rule
+            # (eps_ij = A*q^(n-1)*s_ij → axial rate = (2/3)*A*sigma^n*exp(-Q/RT))
+            rate_dc = (2.0 / 3.0) * A_pa_s * (abs(sigma) ** n) * exp_QRT
             eps_d += rate_dc * dt
 
             # Kelvin — exact update
@@ -556,14 +557,14 @@ def run_phase2(model, A_mpa_yr, N_disloc, QR_disloc,
     if model == "sic":
         BOUNDS = [
             (8.0, 15.0),     # log10(eta [Pa s])
-            (7.0, 11.0),     # log10(E1 [Pa])
+            (7.0, 11.0),     # log10(E1 [Pa]) — unconstrained
             (-15.0, -8.0),   # log10(mu1 [1/s])
-            (1.5, 5.0),      # N1 [-]
+            (1.5, 2.5),      # N1 [-] — capped to keep Desai active at cavern stress levels
             (-7.0, -1.0),    # log10(a1)
             (0.3, 2.0),      # eta_vp
             (-4.0, -1.0),    # log10(alpha0)
         ]
-        _SEED_ROW = np.array([12.0, 8.7, -15.0, 2.0, -3.0, 1.2, -2.3])
+        _SEED_ROW = np.array([12.0, 9.5, -15.0, 2.0, -3.0, 1.2, -2.3])
         _n_params = 7
         _popsize = 15
         _maxiter = 200
@@ -668,7 +669,7 @@ def main():
 
     if SKIP_PHASE1:
         print("\n[PHASE 1] SKIPPED — using preset dislocation parameters")
-        A_SIC_MPA_YR = 40.0;  N_SIC = 4.5;  QR_SIC = 6252.0
+        A_SIC_MPA_YR = 60.0;  N_SIC = 4.5;  QR_SIC = 6252.0   # 1.5× for 2/3 flow rule
         A_MD_MPA_YR  = 40.0;  N_MD  = 4.5;  QR_MD  = 6252.0
     else:
         print("\n" + "=" * 70)
@@ -705,11 +706,16 @@ def main():
             print("  Using defaults: A=40, n=4.5, Q/R=6252")
             A_FIT = 40.0; N_FIT = 4.5; QR_FIT = 6252.0
 
-        # Store separately for each model (same values from scalar fit)
-        A_SIC_MPA_YR = A_FIT;  N_SIC = N_FIT;  QR_SIC = QR_FIT
-        A_MD_MPA_YR  = A_FIT;  N_MD  = N_FIT;  QR_MD  = QR_FIT
+        # Store separately for each model.
+        # The scalar fit gives the "true" observed rate: rate = A_fit * sigma^n * exp(-Q/RT).
+        # MD 3D: flow_dir (3/2) × s/σ gives factor 1 in triaxial → A_MD = A_fit.
+        # SIC 3D: flow_dir = s_dev gives factor 2/3 in triaxial → need A_SIC = 1.5 * A_fit
+        #   so that (2/3) * A_SIC = A_fit = observed rate.
+        A_SIC_MPA_YR = 1.5 * A_FIT;  N_SIC = N_FIT;  QR_SIC = QR_FIT
+        A_MD_MPA_YR  = A_FIT;         N_MD  = N_FIT;  QR_MD  = QR_FIT
 
-        print(f"\n  SIC dislocation: A={A_SIC_MPA_YR:.2f}, n={N_SIC:.4f}, Q/R={QR_SIC:.0f}")
+        print(f"\n  Scalar fit:      A={A_FIT:.2f}, n={N_FIT:.4f}, Q/R={QR_FIT:.0f}")
+        print(f"  SIC dislocation: A={A_SIC_MPA_YR:.2f} (×1.5 for 2/3 flow rule), n={N_SIC:.4f}, Q/R={QR_SIC:.0f}")
         print(f"  MD  dislocation: A={A_MD_MPA_YR:.2f},  n={N_MD:.4f},  Q/R={QR_MD:.0f}")
 
     # ══════════════════════════════════════════════════════════════════════════

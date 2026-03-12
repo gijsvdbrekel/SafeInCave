@@ -34,7 +34,7 @@ import csv
 # USE_LEACHING: Choose initialization strategy before operation phase:
 #   True  - Leaching phase: pressure decreases from lithostatic to operational
 #   False - Equilibrium phase: short phase at constant equilibrium pressure
-USE_LEACHING = True
+USE_LEACHING = False
 
 # EQUILIBRIUM_HOURS: Duration of equilibrium phase (only used if USE_LEACHING = False)
 EQUILIBRIUM_HOURS = 10.0
@@ -157,8 +157,8 @@ dt_hours = 2
 
 # ── CSV SETTINGS (only used when PRESSURE_SCENARIO = "csv") ────────────────────
 CSV_FILE_PATH = "drukprofiel_zoutcaverne_2035_8760u.csv"
-CSV_SHIFT_TO_LEACH_END = False  # Shift CSV so minimum = p_leach_end
-P_EQUILIBRIUM_MPA = 15.0       # Equilibrium pressure (only used if USE_LEACHING = False)
+CSV_SHIFT_TO_LEACH_END = True  # Shift CSV so minimum = p_leach_end
+P_EQUILIBRIUM_MPA = 11.0       # Equilibrium pressure (only used if USE_LEACHING = False)
 RESCALE_PRESSURE = False          # Rescale CSV pressures to fit within a specific range 
 RESCALE_MIN_MPA = 6.0
 RESCALE_MAX_MPA = 20.0
@@ -166,7 +166,7 @@ RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
 USE_SCENARIO_B    = True        # False = Scenario A (CCC Zuidwending + Herminio calibration), True = Scenario B (calibrated)
-USE_MUNSON_DAWSON = False    # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
+USE_MUNSON_DAWSON = True    # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
 USE_THERMAL = False
@@ -1032,9 +1032,32 @@ def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days,
 # ══════════════════════════════════════════════════════════════════════════════
 
 class LinearMomentumMod(sf.LinearMomentum):
+    # Maximum creep strain increment per half-step.  If any element's
+    # non-elastic rate would exceed this, the tensor rate is uniformly
+    # scaled down for that element.  Prevents the linear system from
+    # becoming ill-conditioned during sudden large pressure drops.
+    _MAX_EPS_NE_PER_HALFSTEP = 5e-3   # 0.5 % strain per half-step
+
     def __init__(self, grid, theta):
         super().__init__(grid, theta)
         self.expect_vp_state = False
+
+    def compute_eps_ne_rate(self, stress, dt):
+        """Override: compute non-elastic rates then clamp to prevent NaN."""
+        super().compute_eps_ne_rate(stress, dt)
+        phi1 = dt * self.theta
+        if phi1 <= 0.0:
+            return
+        max_rate = self._MAX_EPS_NE_PER_HALFSTEP / phi1
+        for elem_ne in self.mat.elems_ne:
+            rate = elem_ne.eps_ne_rate          # (N, 3, 3)
+            # Frobenius norm per element
+            mag = to.sqrt((rate * rate).sum(dim=(1, 2)))   # (N,)
+            over = mag > max_rate
+            if over.any():
+                scale = to.ones_like(mag)
+                scale[over] = max_rate / mag[over]
+                elem_ne.eps_ne_rate = rate * scale[:, None, None]
 
     def initialize(self) -> None:
         self.C.x.array[:] = to.flatten(self.mat.C)
@@ -1245,8 +1268,6 @@ def main():
         # ── Scenario A: CCC Zuidwending ───────────────────────────────────────
         if not USE_MUNSON_DAWSON:
             # SafeInCave model: Kelvin + DislocationCreep
-            # Note: DislocationCreep uses eps_ij = A*q^(n-1)*s (no 3/2 prefactor),
-            # so A_3D = 1.5 * A_calibrated to match the scalar calibration rate.
             eta = 2.5e5 * to.ones(mom_eq.n_elems)
             E1  = 42.0 * ut.GPa * to.ones(mom_eq.n_elems)
             nu1 = 0.32 * to.ones(mom_eq.n_elems)
@@ -1280,8 +1301,6 @@ def main():
         # ── Scenario B: calibrated against cyclic triaxial data (T=21°C, σ3=12 MPa) ─
         if not USE_MUNSON_DAWSON:
             # SafeInCave model: Kelvin + DislocationCreep
-            # Note: DislocationCreep uses eps_ij = A*q^(n-1)*s (no 3/2 prefactor),
-            # so A_3D = 1.5 * A_calibrated to match the scalar calibration rate.
             eta = 1.0e15 * to.ones(mom_eq.n_elems)
             E1  = 1.0e11 * to.ones(mom_eq.n_elems)
             nu1 = 0.25 * to.ones(mom_eq.n_elems)

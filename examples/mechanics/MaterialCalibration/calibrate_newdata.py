@@ -341,8 +341,9 @@ def integrate_safeincave(t_s, sigma1_Pa, sigma3_Pa,
         eps_el_rad = -NU_ELASTIC * sigma_diff / E_ELASTIC
 
         if dt > 0:
-            # Dislocation creep
-            rate_dc = disloc_rate(sigma_diff, A, n, Q, T)
+            # Dislocation creep — factor 2/3 matches SIC 3D flow rule
+            # (eps_ij = A*q^(n-1)*s_ij → axial = (2/3)*A*sigma^n*exp(-Q/RT))
+            rate_dc = (2.0 / 3.0) * disloc_rate(sigma_diff, A, n, Q, T)
             eps_d += rate_dc * dt
 
             # Kelvin element — exact update (exponential integrator)
