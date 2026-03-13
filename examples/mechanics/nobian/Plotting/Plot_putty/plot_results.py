@@ -44,11 +44,11 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": None,
+    "caverns": ["regular1200"],
     "pressure": ["csv"],
-    "scenario": ["B_SIC", "B_MD"],
+    "scenario": ["B_freecalibr_MD"],
     "n_cycles": None,
-    "operation_days": None,
+    "operation_days": 365,
     "case_contains": None,
 }
 
@@ -135,11 +135,13 @@ CAVERN_COLORS = {
 }
 
 SCENARIO_COLORS = {
-    # Current: Scenario A/B × SafeInCave/Munson-Dawson
+    # Current: Scenario A/B/B_freecalibr × SafeInCave/Munson-Dawson
     "A_SIC":            "#1f77b4",   # Scenario A, SafeInCave   (blue)
     "A_MD":             "#ff7f0e",   # Scenario A, Munson-Dawson (orange)
     "B_SIC":            "#2ca02c",   # Scenario B, SafeInCave   (green)
     "B_MD":             "#d62728",   # Scenario B, Munson-Dawson (red)
+    "B_freecalibr_SIC": "#9467bd",   # Scenario B_freecalibr, SafeInCave (purple)
+    "B_freecalibr_MD":  "#17becf",   # Scenario B_freecalibr, Munson-Dawson (cyan)
     # Legacy names (kept for backward compatibility)
     "disloc_old_only":  "#1f77b4",
     "disloc_new_only":  "#ff7f0e",
@@ -161,6 +163,8 @@ SCENARIO_LINESTYLES = {
     "A_MD":             "--",
     "B_SIC":            "-",
     "B_MD":             "--",
+    "B_freecalibr_SIC": "-",
+    "B_freecalibr_MD":  "--",
     # Legacy
     "disloc_old_only":  "-",
     "disloc_new_only":  "--",
@@ -224,7 +228,7 @@ CAVERN_ORDER = [
 ]
 SCENARIO_ORDER = [
     # Current
-    "A_SIC", "A_MD", "B_SIC", "B_MD",
+    "A_SIC", "A_MD", "B_SIC", "B_MD", "B_freecalibr_SIC", "B_freecalibr_MD",
     # Legacy
     "disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai",
     "full", "full_minus_ps", "md_only", "md_steady_only", "full_md",

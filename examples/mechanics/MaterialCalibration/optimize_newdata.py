@@ -496,12 +496,20 @@ def run_phase2(model, A_mpa_yr, N_disloc, QR_disloc,
     _best = [np.inf]
     _best_params_opt = [None]
 
+    _MIN_TAU_S = 43200.0  # Kelvin tau >= 12 hours
+
     def objective(x):
         try:
             if model == "sic":
                 log_eta, log_E1, log_mu1, N1, log_a1, eta_vp, log_alpha0 = x
                 eta = 10.0 ** log_eta
                 E1 = 10.0 ** log_E1
+
+                # Enforce Kelvin tau >= 2 hours
+                tau = eta / E1
+                if tau < _MIN_TAU_S:
+                    return 1e6
+
                 mu1 = 10.0 ** log_mu1
                 a1 = 10.0 ** log_a1
                 alpha0 = 10.0 ** log_alpha0
@@ -556,18 +564,18 @@ def run_phase2(model, A_mpa_yr, N_disloc, QR_disloc,
 
     if model == "sic":
         BOUNDS = [
-            (8.0, 15.0),     # log10(eta [Pa s])
-            (7.0, 11.0),     # log10(E1 [Pa]) — unconstrained
+            (10.0, 14.5),    # log10(eta [Pa s]) — with tau>=2h constraint
+            (8.0, 10.5),    # log10(E1 [Pa]) — [0.1, 316 GPa], forces meaningful stiffness
             (-15.0, -8.0),   # log10(mu1 [1/s])
             (1.5, 2.5),      # N1 [-] — capped to keep Desai active at cavern stress levels
             (-7.0, -1.0),    # log10(a1)
             (0.3, 2.0),      # eta_vp
             (-4.0, -1.0),    # log10(alpha0)
         ]
-        _SEED_ROW = np.array([12.0, 9.5, -15.0, 2.0, -3.0, 1.2, -2.3])
+        _SEED_ROW = np.array([13.0, 8.5, -15.0, 2.0, -3.0, 1.2, -2.3])  # tau=1e13/1e8.5 ≈ 878h
         _n_params = 7
-        _popsize = 15
-        _maxiter = 200
+        _popsize = 20
+        _maxiter = 300
     else:
         BOUNDS = [
             (-6.0, 8.0),      # log10(K0) — wide range for transient duration

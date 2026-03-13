@@ -16,8 +16,8 @@ KNOWN_PRESSURES = {
     "sinus", "irregular", "csv_profile",
 }
 KNOWN_SCENARIOS = {
-    # current names: Scenario A/B × SafeInCave/Munson-Dawson
-    "A_SIC", "A_MD", "B_SIC", "B_MD",
+    # current names: Scenario A/B/B_freecalibr × SafeInCave/Munson-Dawson
+    "A_SIC", "A_MD", "B_SIC", "B_MD", "B_freecalibr_SIC", "B_freecalibr_MD",
     # legacy names
     "desai_only", "disloc_old_only", "disloc_new_only", "full",
     "full_minus_desai", "full_md", "full_minus_ps", "md_only", "md_steady_only",
@@ -107,7 +107,7 @@ def read_case_metadata(case_path: str) -> dict:
                 mat_sc = old_sc
 
         if mat_sc is not None and model is not None:
-            sc = str(mat_sc).upper().strip()          # "A" or "B"
+            sc = str(mat_sc).strip()                   # "A", "B", or "B_freecalibr"
             is_md = "munson" in str(model).lower()
             meta["scenario_preset"] = f"{sc}_MD" if is_md else f"{sc}_SIC"
 
@@ -136,7 +136,7 @@ def read_case_metadata(case_path: str) -> dict:
 
     if meta["scenario_preset"] is None:
         # New-style S{A/B}_{SIC/MD} tags in folder name, e.g. "sa_sic", "sb_md"
-        _SA_MAP = {"sa_sic": "A_SIC", "sa_md": "A_MD", "sb_sic": "B_SIC", "sb_md": "B_MD"}
+        _SA_MAP = {"sb_freecalibr_sic": "B_freecalibr_SIC", "sb_freecalibr_md": "B_freecalibr_MD", "sa_sic": "A_SIC", "sa_md": "A_MD", "sb_sic": "B_SIC", "sb_md": "B_MD"}
         for tag, preset in _SA_MAP.items():
             if f"_{tag}_" in name or name.endswith(f"_{tag}"):
                 meta["scenario_preset"] = preset

@@ -276,7 +276,7 @@ def plot_newdata(data, fig_dir, thesis=False):
                                   alpha=0.85, linewidth=0.8))
             return y - box_h - 0.01
 
-        # Elastic
+        # Elastic (fixed)
         gp = data.get("params", {})
         el_lines = [
             f"E   = {gp.get('E_elastic', 0)/1e9:.3f} GPa",
@@ -302,6 +302,14 @@ def plot_newdata(data, fig_dir, thesis=False):
                 f"eta = {p.get('eta_desai', 0):.4g}",
                 f"a0  = {p.get('alpha0_desai', 0):.4g}",
             ]
+            # Show extra Desai params if present (from free calibration)
+            if 'n_desai_power' in p:
+                sic_lines.append("-- Desai (yield surf.) --")
+                sic_lines.append(f"n_d = {p['n_desai_power']:.2f}")
+                sic_lines.append(f"b1  = {_fmt(p.get('beta1_desai', 0))}")
+                sic_lines.append(f"bet = {p.get('beta_desai', 0):.4g}")
+                sic_lines.append(f"m_d = {p.get('m_desai', 0):.4g}")
+                sic_lines.append(f"gam = {_fmt(p.get('gamma_desai', 0))}")
             y = _box(ax_par, 0.02, y, "SAFEINCAVE", sic_lines, "#dde8f7")
 
         # Munson-Dawson parameters
@@ -340,9 +348,19 @@ def plot_newdata(data, fig_dir, thesis=False):
 
 
 def load_and_merge():
-    """Load SIC and MD JSON files and merge into a single dict."""
-    sic_path = os.path.join(DATA_DIR, "calibration_newdata_sic.json")
-    md_path = os.path.join(DATA_DIR, "calibration_newdata_md.json")
+    """Load SIC and MD JSON files and merge into a single dict.
+
+    Tries free calibration files first, then constrained ones.
+    """
+    # Prefer free calibration if available
+    sic_free = os.path.join(DATA_DIR, "calibration_newdata_free_sic.json")
+    md_free = os.path.join(DATA_DIR, "calibration_newdata_free_md.json")
+    if os.path.exists(sic_free) or os.path.exists(md_free):
+        sic_path = sic_free
+        md_path = md_free
+    else:
+        sic_path = os.path.join(DATA_DIR, "calibration_newdata_sic.json")
+        md_path = os.path.join(DATA_DIR, "calibration_newdata_md.json")
 
     data = None
 

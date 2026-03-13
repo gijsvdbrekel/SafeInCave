@@ -44,6 +44,7 @@ OPERATION_DAYS = 365
 DT_HOURS = 2
 
 # Material flags
+MATERIAL_SCENARIO = "B_freecalibr"  # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
 USE_DESAI = True
 USE_THERMAL = False
 
@@ -341,7 +342,7 @@ def run_single_swing(swing_mpa):
     p_leach_end_mpa = LEACHING_END_FRACTION * p_lithostatic_mpa
     p_leach_end = p_leach_end_mpa * ut.MPa
 
-    output_folder = os.path.join("output", f"case_swing_{swing_bar}bar_regular1200")
+    output_folder = os.path.join("output", f"case_swing_{swing_bar}bar_S{MATERIAL_SCENARIO}_SIC_regular1200")
 
     if MPI.COMM_WORLD.rank == 0:
         print("=" * 70)
@@ -390,15 +391,37 @@ def run_single_swing(swing_mpa):
     nu0 = 0.25 * to.ones(mom_eq.n_elems)
     spring_0 = sf.Spring(E0, nu0, "spring")
 
-    eta = 105e11 * to.ones(mom_eq.n_elems)
-    E1 = 10 * ut.GPa * to.ones(mom_eq.n_elems)
-    nu1 = 0.25 * to.ones(mom_eq.n_elems)
-    kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
-
     sec_per_year = 365.25 * 24 * 3600
-    ndc = 4.6
-    A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
-    Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
+
+    if MATERIAL_SCENARIO == "A":
+        # Scenario A: CCC Zuidwending
+        eta = 2.5e5 * ut.GPa * to.ones(mom_eq.n_elems)  # 2.5e5 GPa·s
+        E1 = 42.0 * ut.GPa * to.ones(mom_eq.n_elems)
+        nu1 = 0.32 * to.ones(mom_eq.n_elems)
+        ndc = 4.6
+        A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+    elif MATERIAL_SCENARIO == "B":
+        # Scenario B: calibrated against cyclic triaxial data
+        eta = 1.0e15 * to.ones(mom_eq.n_elems)
+        E1 = 1.0e11 * to.ones(mom_eq.n_elems)
+        nu1 = 0.25 * to.ones(mom_eq.n_elems)
+        ndc = 5.6897
+        A_dc = (25.92 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)  # 1.5 × A_MD
+    elif MATERIAL_SCENARIO == "B_freecalibr":
+        # Scenario B_freecalibr: free calibration (A=1457, n=7.61, Q/R=9250)
+        eta = 1.0e15 * to.ones(mom_eq.n_elems)
+        E1 = 1.0e11 * to.ones(mom_eq.n_elems)
+        nu1 = 0.25 * to.ones(mom_eq.n_elems)
+        ndc = 7.6122
+        A_dc = (1456.91 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+    else:
+        raise ValueError(f"Unknown MATERIAL_SCENARIO: {MATERIAL_SCENARIO}")
+
+    kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
+    if MATERIAL_SCENARIO == "B_freecalibr":
+        Q_dc = (9250.0 * 8.314) * to.ones(mom_eq.n_elems)
+    else:
+        Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
     n_dc = ndc * to.ones(mom_eq.n_elems)
     creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
 
@@ -479,16 +502,36 @@ def run_single_swing(swing_mpa):
 
     # ═════ ADD DESAI ═════
     if USE_DESAI:
-        mu_1 = 5.3665857009859815e-11 * to.ones(mom_eq.n_elems)
-        N_1 = 3.1 * to.ones(mom_eq.n_elems)
-        n = 3.0 * to.ones(mom_eq.n_elems)
-        a_1 = 1.965018496922832e-05 * to.ones(mom_eq.n_elems)
-        eta_vp = 0.8275682807874163 * to.ones(mom_eq.n_elems)
-        beta_1 = 0.0048 * to.ones(mom_eq.n_elems)
-        beta = 0.995 * to.ones(mom_eq.n_elems)
-        m = -0.5 * to.ones(mom_eq.n_elems)
-        gamma = 0.095 * to.ones(mom_eq.n_elems)
-        alpha_0 = 0.0022 * to.ones(mom_eq.n_elems)
+        if MATERIAL_SCENARIO == "A":
+            mu_1    = 6.89e-12 * to.ones(mom_eq.n_elems)
+            N_1     = 3.0 * to.ones(mom_eq.n_elems)
+            a_1     = 1.80e-5 * to.ones(mom_eq.n_elems)
+            eta_vp  = 0.82 * to.ones(mom_eq.n_elems)
+            alpha_0 = 2.0e-3 * to.ones(mom_eq.n_elems)
+        elif MATERIAL_SCENARIO == "B":
+            mu_1    = 1.016e-15 * to.ones(mom_eq.n_elems)
+            N_1     = 4.2515 * to.ones(mom_eq.n_elems)
+            a_1     = 1.101e-6 * to.ones(mom_eq.n_elems)
+            eta_vp  = 1.7902 * to.ones(mom_eq.n_elems)
+            alpha_0 = 1.781e-3 * to.ones(mom_eq.n_elems)
+        elif MATERIAL_SCENARIO == "B_freecalibr":
+            mu_1    = 1.803e-14 * to.ones(mom_eq.n_elems)
+            N_1     = 2.500 * to.ones(mom_eq.n_elems)
+            a_1     = 1.433e-6 * to.ones(mom_eq.n_elems)
+            eta_vp  = 2.000 * to.ones(mom_eq.n_elems)
+            alpha_0 = 8.457e-4 * to.ones(mom_eq.n_elems)
+        if MATERIAL_SCENARIO == "B_freecalibr":
+            n = 3.794 * to.ones(mom_eq.n_elems)
+            beta_1 = 4.823e-4 * to.ones(mom_eq.n_elems)
+            beta = 0.613 * to.ones(mom_eq.n_elems)
+            m = -1.162 * to.ones(mom_eq.n_elems)
+            gamma = 0.971 * to.ones(mom_eq.n_elems)
+        else:
+            n = 3.0 * to.ones(mom_eq.n_elems)
+            beta_1 = 0.0048 * to.ones(mom_eq.n_elems)
+            beta = 0.995 * to.ones(mom_eq.n_elems)
+            m = -0.5 * to.ones(mom_eq.n_elems)
+            gamma = 0.095 * to.ones(mom_eq.n_elems)
         sigma_t = 5.0 * to.ones(mom_eq.n_elems)
         desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n, beta_1, beta, m, gamma, sigma_t, alpha_0, "desai")
 
@@ -614,6 +657,8 @@ def run_single_swing(swing_mpa):
         "swing_bar": swing_bar,
         "operation_days": OPERATION_DAYS,
         "dt_hours": dt_hours,
+        "material_scenario": MATERIAL_SCENARIO,
+        "model": "safeincave",
         "use_desai": USE_DESAI,
         "p_lithostatic_mpa": p_lithostatic_mpa,
         "p_leach_end_mpa": p_leach_end_mpa,

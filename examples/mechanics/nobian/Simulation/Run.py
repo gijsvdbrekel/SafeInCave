@@ -34,7 +34,7 @@ import csv
 # USE_LEACHING: Choose initialization strategy before operation phase:
 #   True  - Leaching phase: pressure decreases from lithostatic to operational
 #   False - Equilibrium phase: short phase at constant equilibrium pressure
-USE_LEACHING = False
+USE_LEACHING = True
 
 # EQUILIBRIUM_HOURS: Duration of equilibrium phase (only used if USE_LEACHING = False)
 EQUILIBRIUM_HOURS = 10.0
@@ -153,11 +153,11 @@ OPERATION_DAYS = 365
 N_CYCLES = 183
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
-dt_hours = 2
+dt_hours = 0.5
 
 # ── CSV SETTINGS (only used when PRESSURE_SCENARIO = "csv") ────────────────────
 CSV_FILE_PATH = "drukprofiel_zoutcaverne_2035_8760u.csv"
-CSV_SHIFT_TO_LEACH_END = True  # Shift CSV so minimum = p_leach_end
+CSV_SHIFT_TO_LEACH_END = False  # Shift CSV so minimum = p_leach_end
 P_EQUILIBRIUM_MPA = 11.0       # Equilibrium pressure (only used if USE_LEACHING = False)
 RESCALE_PRESSURE = False          # Rescale CSV pressures to fit within a specific range 
 RESCALE_MIN_MPA = 6.0
@@ -165,8 +165,8 @@ RESCALE_MAX_MPA = 20.0
 RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
-USE_SCENARIO_B    = True        # False = Scenario A (CCC Zuidwending + Herminio calibration), True = Scenario B (calibrated)
-USE_MUNSON_DAWSON = True    # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
+MATERIAL_SCENARIO = "B"             # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
+USE_MUNSON_DAWSON = False           # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
 USE_THERMAL = False
@@ -1212,7 +1212,7 @@ def main():
         print(f"    Days:           {OPERATION_DAYS}")
         print(f"    Cycles:         {N_CYCLES}")
         print(f"    dt:             {dt_hours} hours")
-        print(f"    Material:       Scenario {'B' if USE_SCENARIO_B else 'A'} / {'Munson-Dawson' if USE_MUNSON_DAWSON else 'SafeInCave'}")
+        print(f"    Material:       Scenario {MATERIAL_SCENARIO} / {'Munson-Dawson' if USE_MUNSON_DAWSON else 'SafeInCave'}")
         print(f"    Thermal:        {'enabled' if USE_THERMAL else 'disabled'}")
         print("-" * 70)
         print(f"  Grid:             {config['grid_folder']}")
@@ -1226,7 +1226,7 @@ def main():
     p_ref = config["p_ref_mpa"] * ut.MPa
 
     # Output folder
-    _scen_tag  = "B" if USE_SCENARIO_B else "A"
+    _scen_tag  = MATERIAL_SCENARIO  # "A", "B", or "B_freecalibr"
     _model_tag = "MD" if USE_MUNSON_DAWSON else "SIC"
     if USE_LEACHING:
         output_folder = os.path.join(
@@ -1264,11 +1264,11 @@ def main():
     spring_0 = sf.Spring(E0, nu0, "spring")
     mat.add_to_elastic(spring_0)
 
-    if not USE_SCENARIO_B:
+    if MATERIAL_SCENARIO == "A":
         # ── Scenario A: CCC Zuidwending ───────────────────────────────────────
         if not USE_MUNSON_DAWSON:
             # SafeInCave model: Kelvin + DislocationCreep
-            eta = 2.5e5 * to.ones(mom_eq.n_elems)
+            eta = 2.5e5 * ut.GPa * to.ones(mom_eq.n_elems)  # 2.5e5 GPa·s
             E1  = 42.0 * ut.GPa * to.ones(mom_eq.n_elems)
             nu1 = 0.32 * to.ones(mom_eq.n_elems)
             kelvin  = sf.Viscoelastic(eta, E1, nu1, "kelvin")
@@ -1297,7 +1297,7 @@ def main():
                                       alpha_w=aw_md, beta_w=bw_md, delta=d_md,
                                       mu=mu_md, name="munson_dawson")
             mat.add_to_non_elastic(md)
-    else:
+    elif MATERIAL_SCENARIO == "B":
         # ── Scenario B: calibrated against cyclic triaxial data (T=21°C, σ3=12 MPa) ─
         if not USE_MUNSON_DAWSON:
             # SafeInCave model: Kelvin + DislocationCreep
@@ -1306,14 +1306,14 @@ def main():
             nu1 = 0.25 * to.ones(mom_eq.n_elems)
             kelvin  = sf.Viscoelastic(eta, E1, nu1, "kelvin")
             ndc = 5.6897
-            A_dc = (17.28 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+            A_dc = (25.92 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)  # 1.5 × A_MD
             Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
             n_dc = ndc * to.ones(mom_eq.n_elems)
             creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
             mat.add_to_non_elastic(kelvin)
             mat.add_to_non_elastic(creep_0)
         else:
-            # Munson-Dawson model (shared A/n/Q with SIC Scenario B)
+            # Munson-Dawson model
             nmd   = 5.6897
             A_md  = (17.28 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems)
             Q_md  = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
@@ -1330,6 +1330,41 @@ def main():
                                       alpha_w=aw_md, beta_w=bw_md, delta=d_md,
                                       mu=mu_md, name="munson_dawson")
             mat.add_to_non_elastic(md)
+    elif MATERIAL_SCENARIO == "B_freecalibr":
+        # ── Scenario B_freecalibr: free calibration (A=1457, n=7.61, Q/R=9250) ──
+        if not USE_MUNSON_DAWSON:
+            # SafeInCave model: Kelvin + DislocationCreep
+            eta = 1.0e15 * to.ones(mom_eq.n_elems)
+            E1  = 1.0e11 * to.ones(mom_eq.n_elems)
+            nu1 = 0.25 * to.ones(mom_eq.n_elems)
+            kelvin  = sf.Viscoelastic(eta, E1, nu1, "kelvin")
+            ndc = 7.6122
+            A_dc = (1456.91 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+            Q_dc = (9250.0 * 8.314) * to.ones(mom_eq.n_elems)
+            n_dc = ndc * to.ones(mom_eq.n_elems)
+            creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
+            mat.add_to_non_elastic(kelvin)
+            mat.add_to_non_elastic(creep_0)
+        else:
+            # Munson-Dawson model (shared n/Q with SIC, A_MD = A_SIC / 1.5)
+            nmd   = 7.6122
+            A_md  = (971.27 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems)
+            Q_md  = (9250.0 * 8.314) * to.ones(mom_eq.n_elems)
+            n_md  = nmd  * to.ones(mom_eq.n_elems)
+            K0_md = 0.1410  * to.ones(mom_eq.n_elems)
+            c_md  = 0.03421 * to.ones(mom_eq.n_elems)
+            m_md  = 2.103   * to.ones(mom_eq.n_elems)
+            aw_md = 180.21  * to.ones(mom_eq.n_elems)
+            bw_md = 60.00   * to.ones(mom_eq.n_elems)
+            d_md  = 299.47  * to.ones(mom_eq.n_elems)
+            mu_md = E0 / (2.0 * (1.0 + nu0))
+            md = sf.MunsonDawsonCreep(A=A_md, Q=Q_md, n=n_md,
+                                      K0=K0_md, c=c_md, m=m_md,
+                                      alpha_w=aw_md, beta_w=bw_md, delta=d_md,
+                                      mu=mu_md, name="munson_dawson")
+            mat.add_to_non_elastic(md)
+    else:
+        raise ValueError(f"Unknown MATERIAL_SCENARIO: {MATERIAL_SCENARIO}. Choose 'A', 'B', or 'B_freecalibr'.")
 
     # -- Pressure-solution creep (same for both scenarios) --
     A_ps = (14176.0 * 1e-9 / 1e6 / sec_per_year) * to.ones(mom_eq.n_elems)
@@ -1346,6 +1381,7 @@ def main():
     mom_eq.set_material(mat)
 
     g_vec = [0.0, 0.0, g]
+
     mom_eq.build_body_force(g_vec)
 
     # Temperature
@@ -1442,26 +1478,42 @@ def main():
     # ===== OPERATION PHASE =====
     if not USE_MUNSON_DAWSON:
         # SafeInCave model: add Desai viscoplastic element (scenario-dependent params)
-        if not USE_SCENARIO_B:
+        if MATERIAL_SCENARIO == "A":
             # Scenario A (CCC Zuidwending)
             mu_1    = 6.89e-12 * to.ones(mom_eq.n_elems)
             N_1     = 3.0 * to.ones(mom_eq.n_elems)
             a_1     = 1.80e-5 * to.ones(mom_eq.n_elems)
             eta_vp  = 0.82 * to.ones(mom_eq.n_elems)
             alpha_0 = 2.0e-3 * to.ones(mom_eq.n_elems)
-        else:
+        elif MATERIAL_SCENARIO == "B":
             # Scenario B (calibrated against cyclic triaxial data)
             mu_1    = 1.016e-15 * to.ones(mom_eq.n_elems)
             N_1     = 4.2515 * to.ones(mom_eq.n_elems)
             a_1     = 1.101e-6 * to.ones(mom_eq.n_elems)
             eta_vp  = 1.7902 * to.ones(mom_eq.n_elems)
             alpha_0 = 1.781e-3 * to.ones(mom_eq.n_elems)
-        # Fixed Desai shape parameters (both scenarios)
-        n_desai  = 3.0 * to.ones(mom_eq.n_elems)
-        beta_1   = 0.0048 * to.ones(mom_eq.n_elems)
-        beta     = 0.995 * to.ones(mom_eq.n_elems)
-        m_desai  = -0.5 * to.ones(mom_eq.n_elems)
-        gamma    = 0.095 * to.ones(mom_eq.n_elems)
+        elif MATERIAL_SCENARIO == "B_freecalibr":
+            # Scenario B_freecalibr (free calibration — all Desai params calibrated)
+            mu_1    = 1.803e-14 * to.ones(mom_eq.n_elems)
+            N_1     = 2.500 * to.ones(mom_eq.n_elems)
+            a_1     = 1.433e-6 * to.ones(mom_eq.n_elems)
+            eta_vp  = 2.000 * to.ones(mom_eq.n_elems)
+            alpha_0 = 8.457e-4 * to.ones(mom_eq.n_elems)
+        # Desai yield surface parameters
+        if MATERIAL_SCENARIO == "B_freecalibr":
+            # Calibrated yield surface (from free calibration)
+            n_desai  = 3.794 * to.ones(mom_eq.n_elems)
+            beta_1   = 4.823e-4 * to.ones(mom_eq.n_elems)
+            beta     = 0.613 * to.ones(mom_eq.n_elems)
+            m_desai  = -1.162 * to.ones(mom_eq.n_elems)
+            gamma    = 0.971 * to.ones(mom_eq.n_elems)
+        else:
+            # Fixed Desai shape parameters (Scenarios A and B)
+            n_desai  = 3.0 * to.ones(mom_eq.n_elems)
+            beta_1   = 0.0048 * to.ones(mom_eq.n_elems)
+            beta     = 0.995 * to.ones(mom_eq.n_elems)
+            m_desai  = -0.5 * to.ones(mom_eq.n_elems)
+            gamma    = 0.095 * to.ones(mom_eq.n_elems)
         sigma_t  = 5.0 * to.ones(mom_eq.n_elems)
         desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n_desai, beta_1, beta,
                                      m_desai, gamma, sigma_t, alpha_0, "desai")
@@ -1661,7 +1713,7 @@ def main():
         "n_cycles": N_CYCLES,
         "operation_days": OPERATION_DAYS,
         "dt_hours": dt_hours,
-        "material_scenario": "B" if USE_SCENARIO_B else "A",
+        "material_scenario": MATERIAL_SCENARIO,
         "model": "munson_dawson" if USE_MUNSON_DAWSON else "safeincave",
         "p_lithostatic_mpa": p_lithostatic_mpa,
         "units": {"t_raw": "s", "p_raw": "Pa", "t": "hour", "p": "MPa"},

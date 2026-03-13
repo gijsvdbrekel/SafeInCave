@@ -195,6 +195,7 @@ CSV_SHIFT_TO_LEACH_END = True
 RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
+MATERIAL_SCENARIO = "B_freecalibr"  # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
 # USE_DESAI: Enable Desai viscoplastic model during operation phase
 #   Note: Desai is NEVER enabled during leaching/equilibrium phase
 #   Note: Desai is only applied to SALT regions, not to interlayers
@@ -1129,16 +1130,32 @@ def setup_material_homogeneous(mat, n_elems):
     nu0 = 0.25 * to.ones(n_elems)
     spring_0 = sf.Spring(E0, nu0, "spring")
 
-    # Kelvin-Voigt (Viscoelastic)
-    eta = 105e11 * to.ones(n_elems)
-    E1 = 10 * ut.GPa * to.ones(n_elems)
-    nu1 = 0.25 * to.ones(n_elems)
-    kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
+    # Kelvin-Voigt (Viscoelastic) + Dislocation creep — scenario-dependent
+    if MATERIAL_SCENARIO == "A":
+        eta = 2.5e5 * ut.GPa * to.ones(n_elems)  # 2.5e5 GPa·s
+        E1 = 42.0 * ut.GPa * to.ones(n_elems)
+        nu1 = 0.32 * to.ones(n_elems)
+        ndc = 4.6
+        A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems)
+        Q_dc = (6495.0 * 8.32) * to.ones(n_elems)
+    elif MATERIAL_SCENARIO == "B":
+        eta = 1.0e15 * to.ones(n_elems)
+        E1 = 1.0e11 * to.ones(n_elems)
+        nu1 = 0.25 * to.ones(n_elems)
+        ndc = 5.6897
+        A_dc = (25.92 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems)  # 1.5 × A_MD
+        Q_dc = (6495.0 * 8.32) * to.ones(n_elems)
+    elif MATERIAL_SCENARIO == "B_freecalibr":
+        eta = 1.0e15 * to.ones(n_elems)
+        E1 = 1.0e11 * to.ones(n_elems)
+        nu1 = 0.25 * to.ones(n_elems)
+        ndc = 7.6122
+        A_dc = (1456.91 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems)
+        Q_dc = (9250.0 * 8.314) * to.ones(n_elems)
+    else:
+        raise ValueError(f"Unknown MATERIAL_SCENARIO: {MATERIAL_SCENARIO}")
 
-    # Dislocation creep
-    ndc = 4.91
-    A_dc = (15.8 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems)
-    Q_dc = (6445.0 * 8.32) * to.ones(n_elems)
+    kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
     n_dc = ndc * to.ones(n_elems)
     creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
 
@@ -1250,10 +1267,19 @@ def setup_material_heterogeneous(mat, n_elems, grid, config):
     E1 = to.zeros(n_elems, dtype=to.float64)
     nu1 = to.zeros(n_elems, dtype=to.float64)
 
-    # Salt: viscoelastic
-    eta[:] = 105e11  # Salt viscosity
-    E1[:] = 10 * ut.GPa
-    nu1[:] = 0.25
+    # Salt: viscoelastic — scenario-dependent
+    if MATERIAL_SCENARIO == "A":
+        eta[:] = 2.5e5 * ut.GPa  # 2.5e5 GPa·s
+        E1[:] = 42.0 * ut.GPa
+        nu1[:] = 0.32
+    elif MATERIAL_SCENARIO == "B":
+        eta[:] = 1.0e15
+        E1[:] = 1.0e11
+        nu1[:] = 0.25
+    elif MATERIAL_SCENARIO == "B_freecalibr":
+        eta[:] = 1.0e15
+        E1[:] = 1.0e11
+        nu1[:] = 0.25
 
     # Interlayers: very high viscosity (effectively rigid viscoelastic)
     # This effectively disables viscoelastic strain in interlayers
@@ -1276,14 +1302,23 @@ def setup_material_heterogeneous(mat, n_elems, grid, config):
     # ── DISLOCATION CREEP ─────────────────────────────────────────────────────
     # Only for salt; interlayers have A = 0 (no creep)
 
-    ndc = 4.6
     A_dc = to.zeros(n_elems, dtype=to.float64)
     Q_dc = to.zeros(n_elems, dtype=to.float64)
     n_dc = to.zeros(n_elems, dtype=to.float64)
 
-    # Salt: dislocation creep
-    A_dc[:] = 40.0 * (1e-6)**ndc / sec_per_year
-    Q_dc[:] = 6495.0 * 8.32
+    # Salt: dislocation creep — scenario-dependent
+    if MATERIAL_SCENARIO == "A":
+        ndc = 4.6
+        A_dc[:] = 40.0 * (1e-6)**ndc / sec_per_year
+        Q_dc[:] = 6495.0 * 8.32
+    elif MATERIAL_SCENARIO == "B":
+        ndc = 5.6897
+        A_dc[:] = 25.92 * (1e-6)**ndc / sec_per_year  # 1.5 × A_MD
+        Q_dc[:] = 6495.0 * 8.32
+    elif MATERIAL_SCENARIO == "B_freecalibr":
+        ndc = 7.6122
+        A_dc[:] = 1456.91 * (1e-6)**ndc / sec_per_year
+        Q_dc[:] = 9250.0 * 8.314
     n_dc[:] = ndc
 
     # Interlayers: A = 0 -> no dislocation creep
@@ -1349,17 +1384,37 @@ def add_desai_heterogeneous(mat, mom_eq, salt_cells, interlayer_1_cells, interla
     alpha_0 = to.zeros(n_elems, dtype=to.float64)
     sigma_t = to.zeros(n_elems, dtype=to.float64)
 
-    # Salt regions: standard Desai parameters
-    mu_1[:] = 5.3665857009859815e-11
-    N_1[:] = 3.1
-    n[:] = 3.0
-    a_1[:] = 1.965018496922832e-05
-    eta_vp[:] = 0.8275682807874163
-    beta_1[:] = 0.0048
-    beta[:] = 0.995
-    m[:] = -0.5
-    gamma[:] = 0.095
-    alpha_0[:] = 0.0022
+    # Salt regions: scenario-dependent Desai parameters
+    if MATERIAL_SCENARIO == "A":
+        mu_1[:] = 6.89e-12
+        N_1[:] = 3.0
+        a_1[:] = 1.80e-5
+        eta_vp[:] = 0.82
+        alpha_0[:] = 2.0e-3
+    elif MATERIAL_SCENARIO == "B":
+        mu_1[:] = 1.016e-15
+        N_1[:] = 4.2515
+        a_1[:] = 1.101e-6
+        eta_vp[:] = 1.7902
+        alpha_0[:] = 1.781e-3
+    elif MATERIAL_SCENARIO == "B_freecalibr":
+        mu_1[:] = 1.803e-14
+        N_1[:] = 2.500
+        a_1[:] = 1.433e-6
+        eta_vp[:] = 2.000
+        alpha_0[:] = 8.457e-4
+    if MATERIAL_SCENARIO == "B_freecalibr":
+        n[:] = 3.794
+        beta_1[:] = 4.823e-4
+        beta[:] = 0.613
+        m[:] = -1.162
+        gamma[:] = 0.971
+    else:
+        n[:] = 3.0
+        beta_1[:] = 0.0048
+        beta[:] = 0.995
+        m[:] = -0.5
+        gamma[:] = 0.095
     sigma_t[:] = 5.0
 
     # Interlayers: Set mu_1 = 0 to disable viscoplasticity
@@ -1472,7 +1527,7 @@ def main():
     # Output folder
     output_folder = os.path.join(
         "output",
-        f"case_{config['cavern_type']}_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days"
+        f"case_{config['cavern_type']}_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_S{MATERIAL_SCENARIO}_SIC"
     )
 
     side_burden = p_ref
@@ -1708,17 +1763,37 @@ def main():
         if n_interlayers > 0:
             mat = add_desai_heterogeneous(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
         else:
-            # Homogeneous Desai
-            mu_1 = 5.3665857009859815e-11 * to.ones(mom_eq.n_elems)
-            N_1 = 3.1 * to.ones(mom_eq.n_elems)
-            n = 3.0 * to.ones(mom_eq.n_elems)
-            a_1 = 1.965018496922832e-05 * to.ones(mom_eq.n_elems)
-            eta_vp = 0.8275682807874163 * to.ones(mom_eq.n_elems)
-            beta_1 = 0.0048 * to.ones(mom_eq.n_elems)
-            beta = 0.995 * to.ones(mom_eq.n_elems)
-            m = -0.5 * to.ones(mom_eq.n_elems)
-            gamma = 0.095 * to.ones(mom_eq.n_elems)
-            alpha_0 = 0.0022 * to.ones(mom_eq.n_elems)
+            # Homogeneous Desai (scenario-dependent)
+            if MATERIAL_SCENARIO == "A":
+                mu_1    = 6.89e-12 * to.ones(mom_eq.n_elems)
+                N_1     = 3.0 * to.ones(mom_eq.n_elems)
+                a_1     = 1.80e-5 * to.ones(mom_eq.n_elems)
+                eta_vp  = 0.82 * to.ones(mom_eq.n_elems)
+                alpha_0 = 2.0e-3 * to.ones(mom_eq.n_elems)
+            elif MATERIAL_SCENARIO == "B":
+                mu_1    = 1.016e-15 * to.ones(mom_eq.n_elems)
+                N_1     = 4.2515 * to.ones(mom_eq.n_elems)
+                a_1     = 1.101e-6 * to.ones(mom_eq.n_elems)
+                eta_vp  = 1.7902 * to.ones(mom_eq.n_elems)
+                alpha_0 = 1.781e-3 * to.ones(mom_eq.n_elems)
+            elif MATERIAL_SCENARIO == "B_freecalibr":
+                mu_1    = 1.803e-14 * to.ones(mom_eq.n_elems)
+                N_1     = 2.500 * to.ones(mom_eq.n_elems)
+                a_1     = 1.433e-6 * to.ones(mom_eq.n_elems)
+                eta_vp  = 2.000 * to.ones(mom_eq.n_elems)
+                alpha_0 = 8.457e-4 * to.ones(mom_eq.n_elems)
+            if MATERIAL_SCENARIO == "B_freecalibr":
+                n = 3.794 * to.ones(mom_eq.n_elems)
+                beta_1 = 4.823e-4 * to.ones(mom_eq.n_elems)
+                beta = 0.613 * to.ones(mom_eq.n_elems)
+                m = -1.162 * to.ones(mom_eq.n_elems)
+                gamma = 0.971 * to.ones(mom_eq.n_elems)
+            else:
+                n = 3.0 * to.ones(mom_eq.n_elems)
+                beta_1 = 0.0048 * to.ones(mom_eq.n_elems)
+                beta = 0.995 * to.ones(mom_eq.n_elems)
+                m = -0.5 * to.ones(mom_eq.n_elems)
+                gamma = 0.095 * to.ones(mom_eq.n_elems)
             sigma_t = 5.0 * to.ones(mom_eq.n_elems)
             desai = sf.ViscoplasticDesai(mu_1, N_1, a_1, eta_vp, n, beta_1, beta, m, gamma, sigma_t, alpha_0, "desai")
 
@@ -1883,6 +1958,8 @@ def main():
         "schedule_mode": SCHEDULE_MODE,
         "n_cycles": N_CYCLES,
         "operation_days": OPERATION_DAYS,
+        "material_scenario": MATERIAL_SCENARIO,
+        "model": "safeincave",
         "use_desai": USE_DESAI,
         "t_hours": [float(t / ut.hour) for t in t_pressure],
         "p_MPa": [float(p / ut.MPa) for p in p_pressure],
