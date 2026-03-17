@@ -80,7 +80,7 @@ STEPPED_N_STEPS = 6
 # LEACHING_END_FRACTION: Fraction of lithostatic pressure for operational minimum
 #   When USE_LEACHING = True: Leaching ends at this fraction
 #   When USE_LEACHING = False: Equilibrium pressure for industry/transport derived from this
-LEACHING_END_FRACTION = 0.40
+LEACHING_END_FRACTION = 0.30
 
 # ── DEBRINING PHASE SETTINGS (only used when USE_LEACHING = True) ────────────
 # After leaching, the cavern undergoes debrining where brine is displaced.
@@ -159,7 +159,7 @@ dt_hours = 0.5
 CSV_FILE_PATH = "drukprofiel_zoutcaverne_2035_8760u.csv"
 CSV_SHIFT_TO_LEACH_END = False  # Shift CSV so minimum = p_leach_end
 P_EQUILIBRIUM_MPA = 11.0       # Equilibrium pressure (only used if USE_LEACHING = False)
-RESCALE_PRESSURE = False          # Rescale CSV pressures to fit within a specific range 
+RESCALE_PRESSURE = True           # Rescale CSV pressures to fit within a specific range
 RESCALE_MIN_MPA = 6.0
 RESCALE_MAX_MPA = 20.0
 RAMP_HOURS = 24.0
@@ -1594,13 +1594,13 @@ def main():
             days=OPERATION_DAYS,
             mode=SCHEDULE_MODE,
             total_cycles=N_CYCLES,
-            rescale=RESCALE_PRESSURE if not USE_LEACHING else False,
+            rescale=RESCALE_PRESSURE,
             rescale_min=RESCALE_MIN_MPA,
             rescale_max=RESCALE_MAX_MPA,
             resample_at_dt=True
         )
 
-        if USE_LEACHING and CSV_SHIFT_TO_LEACH_END:
+        if not RESCALE_PRESSURE and USE_LEACHING and CSV_SHIFT_TO_LEACH_END:
             p_array = np.array(p_pressure)
             csv_min_pa = p_array.min()
             shift_pa = p_leach_end - csv_min_pa

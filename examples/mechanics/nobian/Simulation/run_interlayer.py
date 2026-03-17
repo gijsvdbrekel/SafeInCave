@@ -125,7 +125,7 @@ STEPPED_N_STEPS = 6
 #   - When USE_LEACHING = False: Equilibrium pressure is set to this fraction of lithostatic pressure
 #   All operational pressure schemes (including CSV) use this as the minimum pressure.
 #   Example: 0.40 means minimum operational pressure = 40% of lithostatic pressure.
-LEACHING_END_FRACTION = 0.40
+LEACHING_END_FRACTION = 0.30
 
 # ── DEBRINING PHASE SETTINGS (only used when USE_LEACHING = True) ────────────
 # After leaching, the cavern undergoes debrining where brine is displaced.
@@ -214,6 +214,13 @@ CSV_FILE_PATH = "drukprofiel_zoutcaverne_2035_8760u.csv"
 #     This preserves the volume swing (pressure range) while starting from leaching end pressure.
 #   - False: Use original CSV values (may not match leaching end pressure)
 CSV_SHIFT_TO_LEACH_END = True
+
+# RESCALE_PRESSURE: Rescale CSV pressures to fit within [RESCALE_MIN_MPA, RESCALE_MAX_MPA].
+#   Linearly maps the CSV range to the target range. Overrides CSV_SHIFT_TO_LEACH_END.
+#   Only used when PRESSURE_SCENARIO = "csv".
+RESCALE_PRESSURE = True
+RESCALE_MIN_MPA = 6.0    # Minimum pressure after rescaling (MPa)
+RESCALE_MAX_MPA = 20.0   # Maximum pressure after rescaling (MPa)
 
 # RAMP_HOURS: Startup ramp duration (hours) to smoothly transition at start of operation.
 #   Helps avoid numerical instabilities (NaNs) if there's a pressure jump.
@@ -628,6 +635,16 @@ def read_pressure_csv(csv_file: str):
         raise ValueError("Parsed pressure series has <2 numeric values")
 
     return pressures_mpa
+
+
+def rescale_pressure_profile(pressures_mpa, new_min, new_max):
+    """Linearly rescale pressure array to [new_min, new_max]."""
+    old_min = pressures_mpa.min()
+    old_max = pressures_mpa.max()
+    if old_max - old_min < 1e-9:
+        return np.full_like(pressures_mpa, (new_min + new_max) / 2.0)
+    fraction = (pressures_mpa - old_min) / (old_max - old_min)
+    return new_min + fraction * (new_max - new_min)
 
 
 def build_csv_pressure_schedule(tc, csv_file, *, days, mode, total_cycles=1,
@@ -1979,11 +1996,13 @@ def main():
             days=OPERATION_DAYS,
             mode=SCHEDULE_MODE,
             total_cycles=N_CYCLES,
-            rescale=False,
+            rescale=RESCALE_PRESSURE,
+            rescale_min=RESCALE_MIN_MPA,
+            rescale_max=RESCALE_MAX_MPA,
             resample_at_dt=True
         )
 
-        if CSV_SHIFT_TO_LEACH_END:
+        if not RESCALE_PRESSURE and CSV_SHIFT_TO_LEACH_END:
             p_array = np.array(p_pressure)
             csv_min_pa = p_array.min()
             shift_pa = p_leach_end - csv_min_pa
