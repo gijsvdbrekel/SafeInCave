@@ -1273,7 +1273,7 @@ def main():
             nu1 = 0.32 * to.ones(mom_eq.n_elems)
             kelvin  = sf.Viscoelastic(eta, E1, nu1, "kelvin")
             ndc = 4.6
-            A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+            A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)
             Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
             n_dc = ndc * to.ones(mom_eq.n_elems)
             creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
@@ -1282,7 +1282,7 @@ def main():
         else:
             # Munson-Dawson model (contains its own steady-state disloc)
             nmd   = 4.99
-            A_md  = (18.31 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems)
+            A_md  = (18.31 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)
             Q_md  = (6356.0 * 8.32) * to.ones(mom_eq.n_elems)
             n_md  = nmd  * to.ones(mom_eq.n_elems)
             K0_md = 7.0e-7 * to.ones(mom_eq.n_elems)
@@ -1306,7 +1306,7 @@ def main():
             nu1 = 0.25 * to.ones(mom_eq.n_elems)
             kelvin  = sf.Viscoelastic(eta, E1, nu1, "kelvin")
             ndc = 5.6897
-            A_dc = (25.92 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)  # 1.5 × A_MD
+            A_dc = (25.92 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)  # 1.5 × A_MD
             Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
             n_dc = ndc * to.ones(mom_eq.n_elems)
             creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
@@ -1315,7 +1315,7 @@ def main():
         else:
             # Munson-Dawson model
             nmd   = 5.6897
-            A_md  = (17.28 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems)
+            A_md  = (17.28 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)
             Q_md  = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
             n_md  = nmd  * to.ones(mom_eq.n_elems)
             K0_md = 2253.87  * to.ones(mom_eq.n_elems)
@@ -1339,7 +1339,7 @@ def main():
             nu1 = 0.25 * to.ones(mom_eq.n_elems)
             kelvin  = sf.Viscoelastic(eta, E1, nu1, "kelvin")
             ndc = 7.6122
-            A_dc = (1456.91 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+            A_dc = (1456.91 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)
             Q_dc = (9250.0 * 8.314) * to.ones(mom_eq.n_elems)
             n_dc = ndc * to.ones(mom_eq.n_elems)
             creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
@@ -1348,7 +1348,7 @@ def main():
         else:
             # Munson-Dawson model (shared n/Q with SIC, A_MD = A_SIC / 1.5)
             nmd   = 7.6122
-            A_md  = (971.27 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems)
+            A_md  = (971.27 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)
             Q_md  = (9250.0 * 8.314) * to.ones(mom_eq.n_elems)
             n_md  = nmd  * to.ones(mom_eq.n_elems)
             K0_md = 0.1410  * to.ones(mom_eq.n_elems)

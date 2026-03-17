@@ -615,6 +615,8 @@ def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=40.0, 
         "spiers":       {"color": "#66a61e", "linestyle": "-.", "linewidth": 1.3, "alpha": 0.85},
         "devries_comp": {"color": "#e7298a", "linestyle": "-",  "linewidth": 1.5, "alpha": 0.90},
         "devries_ext":  {"color": "#e7298a", "linestyle": "--", "linewidth": 1.5, "alpha": 0.90},
+        "mc_anhydrite": {"color": "#d95f02", "linestyle": "-",  "linewidth": 1.8, "alpha": 0.90},
+        "mc_mudstone":  {"color": "#d95f02", "linestyle": "--", "linewidth": 1.5, "alpha": 0.85},
     }
 
     if "ratigan_027" in show_boundaries:
@@ -652,6 +654,16 @@ def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=40.0, 
     if "devries_ext" in show_boundaries:
         ax.plot(p, devries_q(I1, psi_ext), label="De Vries 2005 (ext)",
                 **boundary_styles["devries_ext"])
+
+    if "mc_anhydrite" in show_boundaries:
+        ax.plot(p, q_dil_mc(p, c_MPa=4.0, phi_deg=35.0),
+                label=r"Mohr-Coulomb anhydrite ($c$=4 MPa, $\varphi$=35°)",
+                **boundary_styles["mc_anhydrite"])
+
+    if "mc_mudstone" in show_boundaries:
+        ax.plot(p, q_dil_mc(p, c_MPa=2.0, phi_deg=25.0),
+                label=r"Mohr-Coulomb mudstone ($c$=2 MPa, $\varphi$=25°)",
+                **boundary_styles["mc_mudstone"])
 
 
 # =============================================================================
@@ -974,6 +986,67 @@ def q_dil_devries(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0)
     num = D1 * (np.abs(I1) / sigma_ref) ** m + T0
     sqrtJ2_dil = num / denom
     return np.sqrt(3.0) * sqrtJ2_dil
+
+
+def q_dil_mc(p_MPa, c_MPa=4.0, phi_deg=35.0):
+    """Mohr-Coulomb failure boundary in p-q space (compression matching).
+
+    Returns the von Mises stress q at the Drucker-Prager yield surface
+    (matched to MC in triaxial compression) for given mean stress p.
+
+    Parameters
+    ----------
+    p_MPa : array_like
+        Mean stress in MPa (compression-positive).
+    c_MPa : float
+        Cohesion in MPa. Default: 4.0 (anhydrite, Cała et al. 2018).
+    phi_deg : float
+        Friction angle in degrees. Default: 35° (anhydrite).
+
+    Returns
+    -------
+    q_MPa : ndarray
+        Von Mises stress at the MC boundary (MPa).
+    """
+    phi = np.radians(phi_deg)
+    sin_phi = np.sin(phi)
+    cos_phi = np.cos(phi)
+    # Drucker-Prager in p-q space (compression matching):
+    # q = 6*sin(phi)/(3-sin(phi)) * p + 6*c*cos(phi)/(3-sin(phi))
+    q = 6.0 * sin_phi / (3.0 - sin_phi) * np.asarray(p_MPa) + 6.0 * c_MPa * cos_phi / (3.0 - sin_phi)
+    return np.maximum(q, 0.0)
+
+
+def compute_FOS_mc_field(p_elems, q_elems, c_MPa=4.0, phi_deg=35.0, q_tol_MPa=1e-3):
+    """Compute Mohr-Coulomb safety factor for full field.
+
+    FOS_MC = q_boundary_MC / q.  FOS < 1 means the MC yield criterion is exceeded.
+
+    Parameters
+    ----------
+    p_elems, q_elems : ndarray, shape (nt, nc)
+        Mean stress and von Mises stress in Pa (SafeInCave convention: p < 0 in compression).
+    c_MPa : float
+        Cohesion in MPa.
+    phi_deg : float
+        Friction angle in degrees.
+    q_tol_MPa : float
+        Minimum q threshold to avoid division by zero.
+
+    Returns
+    -------
+    FOS : ndarray, shape (nt, nc)
+    """
+    nt, nc = p_elems.shape
+    FOS = np.full((nt, nc), np.inf, dtype=float)
+    for it in range(nt):
+        p_MPa = -p_elems[it] / MPA   # compression-positive
+        q_MPa = q_elems[it] / MPA
+        q_boundary = q_dil_mc(p_MPa, c_MPa, phi_deg)
+        mask = q_MPa >= q_tol_MPa
+        FOS[it, mask] = q_boundary[mask] / q_MPa[mask]
+    FOS[~np.isfinite(FOS)] = np.inf
+    return np.clip(FOS, 0.0, 1e6)
 
 
 def tensor33_to_voigt6(sig33):

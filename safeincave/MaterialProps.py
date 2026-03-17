@@ -1486,6 +1486,190 @@ class ViscoplasticDesai(NonElasticElement):
         return H
 
 
+class MohrCoulombViscoplastic(NonElasticElement):
+    """
+    Mohr-Coulomb viscoplastic model using a Drucker-Prager smooth approximation
+    with Perzyna-type overstress regularization.
+
+    The yield surface matches Mohr-Coulomb in triaxial compression.
+    Perfect plasticity (no hardening). Non-associated flow rule via separate
+    dilation angle.
+
+    Parameters
+    ----------
+    mu_1 : torch.Tensor
+        Viscoplastic fluidity parameter per element, shape (N,). Units: 1/s.
+        Set to 0 for elements that should not yield (e.g., salt).
+    N_1 : torch.Tensor
+        Rate exponent per element, shape (N,). Higher values → sharper
+        overstress response (more rate-independent / plastic-like).
+    cohesion : torch.Tensor
+        Cohesion per element in MPa, shape (N,).
+    friction_angle : torch.Tensor
+        Friction angle per element in radians, shape (N,).
+    dilation_angle : torch.Tensor
+        Dilation angle per element in radians, shape (N,).
+        Use 0 for zero volumetric plastic strain (common for brittle rocks).
+    sigma_t : torch.Tensor
+        Tensile strength per element in MPa, shape (N,).
+    name : str, optional
+        Identifier, by default ``"mohr_coulomb"``.
+
+    Attributes
+    ----------
+    alpha_F, k_F : torch.Tensor
+        Drucker-Prager yield parameters (from friction angle and cohesion).
+    alpha_Q : torch.Tensor
+        Drucker-Prager flow potential parameter (from dilation angle).
+    Fvp : torch.Tensor
+        Current yield function value per element, shape (N,).
+
+    Notes
+    -----
+    Uses compression-positive stress convention internally (same as
+    :class:`ViscoplasticDesai`).  The Drucker-Prager approximation
+    circumscribes the Mohr-Coulomb hexagon in the deviatoric plane
+    when matched in triaxial compression:
+
+    .. math::
+        \\alpha_F = \\frac{2\\sin\\varphi}{\\sqrt{3}\\,(3 - \\sin\\varphi)}, \\quad
+        k_F = \\frac{6\\,c\\,\\cos\\varphi}{\\sqrt{3}\\,(3 - \\sin\\varphi)}
+
+    References
+    ----------
+    Cała, M. et al. (2018). Influence of the Anhydrite Interbeds on a
+    Storage Cavern — a Numerical Study. *Arch. Min. Sci.* 63(4), 1007–1025.
+    """
+
+    def __init__(self,
+                 mu_1: to.Tensor,
+                 N_1: to.Tensor,
+                 cohesion: to.Tensor,
+                 friction_angle: to.Tensor,
+                 dilation_angle: to.Tensor,
+                 sigma_t: to.Tensor,
+                 name: str = "mohr_coulomb"):
+        super().__init__(mu_1.shape[0])
+        self.name = name
+        self.mu_1 = mu_1
+        self.N_1 = N_1
+        self.cohesion = cohesion
+        self.friction_angle = friction_angle
+        self.dilation_angle = dilation_angle
+        self.sigma_t = sigma_t
+        self.F_0 = 1.0  # Reference stress (MPa) for overstress normalization
+
+        # Drucker-Prager parameters matching MC in triaxial compression
+        sin_phi = to.sin(self.friction_angle)
+        cos_phi = to.cos(self.friction_angle)
+        sin_psi = to.sin(self.dilation_angle)
+
+        # Yield surface: F = sqrt(J2) - alpha_F * I1 - k_F  (compression-positive I1)
+        self.alpha_F = 2.0 * sin_phi / (np.sqrt(3.0) * (3.0 - sin_phi))
+        self.k_F = 6.0 * self.cohesion * cos_phi / (np.sqrt(3.0) * (3.0 - sin_phi))
+
+        # Flow potential: Q = sqrt(J2) - alpha_Q * I1  (non-associated)
+        self.alpha_Q = 2.0 * sin_psi / (np.sqrt(3.0) * (3.0 - sin_psi))
+
+        self.Fvp = to.zeros(self.n_elems, dtype=to.float64)
+
+    def compute_eps_ne_rate(self, stress: to.Tensor, phi1: float, Temp: to.Tensor,
+                            alpha=None, return_eps_ne: bool = False):
+        """
+        Compute viscoplastic strain rate from Mohr-Coulomb yield criterion.
+
+        Parameters
+        ----------
+        stress : torch.Tensor
+            Stress per element, shape (N, 3, 3).
+        phi1 : float
+            Time integration factor ``dt*theta`` (unused, kept for interface).
+        Temp : torch.Tensor
+            Temperature per element (unused).
+        alpha : ignored
+            Kept for interface compatibility with Desai.
+        return_eps_ne : bool, default False
+            If True, return rate tensor; else store internally.
+
+        Returns
+        -------
+        None or torch.Tensor
+            ``(N, 3, 3)`` viscoplastic strain rate if ``return_eps_ne=True``.
+        """
+        # Extract compression-positive stress in MPa (same convention as Desai)
+        stress_vec = -stress
+        s_xx = stress_vec[:, 0, 0] / MPa
+        s_yy = stress_vec[:, 1, 1] / MPa
+        s_zz = stress_vec[:, 2, 2] / MPa
+        s_xy = stress_vec[:, 0, 1] / MPa
+        s_xz = stress_vec[:, 0, 2] / MPa
+        s_yz = stress_vec[:, 1, 2] / MPa
+
+        # Stress invariants
+        I1 = s_xx + s_yy + s_zz
+        I2 = s_xx * s_yy + s_yy * s_zz + s_xx * s_zz - s_xy**2 - s_yz**2 - s_xz**2
+        J2 = (1.0 / 3.0) * I1**2 - I2
+        J2 = to.clamp(J2, min=1e-20)
+        sqrt_J2 = to.sqrt(J2)
+
+        # Drucker-Prager yield function (compression-positive I1)
+        # Higher I1 (more confining pressure) → more negative F → further from yield
+        F_shear = sqrt_J2 - self.alpha_F * I1 - self.k_F
+
+        # Tension cut-off: activates when mean stress is tensile beyond sigma_t
+        # In compression-positive convention, tension means I1 < 0
+        F_tension = -I1 / 3.0 - self.sigma_t
+
+        # Combined yield (maximum of shear and tension)
+        Fvp = to.maximum(F_shear, F_tension)
+
+        if not return_eps_ne:
+            self.Fvp = Fvp.clone()
+
+        # ── Flow direction ──────────────────────────────────────────────────
+        is_tension = F_tension > F_shear
+
+        # Derivatives of J2 w.r.t. compression-positive stress components
+        dJ2_dSxx = (2.0 / 3.0) * I1 - (s_yy + s_zz)
+        dJ2_dSyy = (2.0 / 3.0) * I1 - (s_xx + s_zz)
+        dJ2_dSzz = (2.0 / 3.0) * I1 - (s_xx + s_yy)
+        dJ2_dSxy = 2.0 * s_xy
+        dJ2_dSxz = 2.0 * s_xz
+        dJ2_dSyz = 2.0 * s_yz
+
+        inv_2sqrtJ2 = 1.0 / (2.0 * sqrt_J2)
+
+        # Shear flow direction: dQ/dσ = d(sqrt(J2))/dσ - alpha_Q * dI1/dσ
+        dQdS = to.zeros_like(stress, dtype=to.float64)
+        dQdS[:, 0, 0] = inv_2sqrtJ2 * dJ2_dSxx - self.alpha_Q
+        dQdS[:, 1, 1] = inv_2sqrtJ2 * dJ2_dSyy - self.alpha_Q
+        dQdS[:, 2, 2] = inv_2sqrtJ2 * dJ2_dSzz - self.alpha_Q
+        dQdS[:, 0, 1] = dQdS[:, 1, 0] = inv_2sqrtJ2 * dJ2_dSxy
+        dQdS[:, 0, 2] = dQdS[:, 2, 0] = inv_2sqrtJ2 * dJ2_dSxz
+        dQdS[:, 1, 2] = dQdS[:, 2, 1] = inv_2sqrtJ2 * dJ2_dSyz
+
+        # Tension flow direction: volumetric expansion (dF_t/dσ = -δ_ij/3)
+        if to.any(is_tension):
+            dQdS[is_tension, :, :] = 0.0
+            dQdS[is_tension, 0, 0] = -1.0 / 3.0
+            dQdS[is_tension, 1, 1] = -1.0 / 3.0
+            dQdS[is_tension, 2, 2] = -1.0 / 3.0
+
+        # Perzyna viscoplastic multiplier: λ = μ₁ * <F/F₀>^N₁
+        ramp_idx = to.where(Fvp > 0)[0]
+        lmbda = to.zeros(self.n_elems, dtype=to.float64)
+        if len(ramp_idx) != 0:
+            lmbda[ramp_idx] = self.mu_1[ramp_idx] * (Fvp[ramp_idx] / self.F_0) ** self.N_1[ramp_idx]
+
+        # Convert from compression-positive convention back to SafeInCave convention
+        eps_vp_rate = -dQdS * lmbda[:, None, None]
+
+        if return_eps_ne:
+            return eps_vp_rate
+        else:
+            self.eps_ne_rate = eps_vp_rate
+
+
 class MunsonDawsonCreep(NonElasticElement):
     """
     Munson–Dawson creep law (steady-state + transient) with internal variable zeta.

@@ -399,21 +399,21 @@ def run_single_swing(swing_mpa):
         E1 = 42.0 * ut.GPa * to.ones(mom_eq.n_elems)
         nu1 = 0.32 * to.ones(mom_eq.n_elems)
         ndc = 4.6
-        A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+        A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)
     elif MATERIAL_SCENARIO == "B":
         # Scenario B: calibrated against cyclic triaxial data
         eta = 1.0e15 * to.ones(mom_eq.n_elems)
         E1 = 1.0e11 * to.ones(mom_eq.n_elems)
         nu1 = 0.25 * to.ones(mom_eq.n_elems)
         ndc = 5.6897
-        A_dc = (25.92 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)  # 1.5 × A_MD
+        A_dc = (25.92 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)  # 1.5 × A_MD
     elif MATERIAL_SCENARIO == "B_freecalibr":
         # Scenario B_freecalibr: free calibration (A=1457, n=7.61, Q/R=9250)
         eta = 1.0e15 * to.ones(mom_eq.n_elems)
         E1 = 1.0e11 * to.ones(mom_eq.n_elems)
         nu1 = 0.25 * to.ones(mom_eq.n_elems)
         ndc = 7.6122
-        A_dc = (1456.91 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems)
+        A_dc = (1456.91 * (1e-6)**ndc / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)
     else:
         raise ValueError(f"Unknown MATERIAL_SCENARIO: {MATERIAL_SCENARIO}")
 

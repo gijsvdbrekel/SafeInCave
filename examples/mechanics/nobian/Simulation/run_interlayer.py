@@ -23,14 +23,19 @@ import csv
 # ║      * "bulbous_ledges_600" / "bulbous_ledges_1200" - 3 interlayers, bulging  ║
 # ║      * "asymmetric_shelf_600" / "asymmetric_shelf_1200" - 2 interlayers, tilt ║
 # ║      * "vertical_intrusion_600" / "vertical_intrusion_1200" - vertical effect ║
+# ║  - For spike-shaped caverns (interlayer-modified capsule, 1,200,000 m³):      ║
+# ║      * "spike_upper"    - Upper tilted interlayer spike (1 interlayer)        ║
+# ║      * "spike_lower"    - Lower tilted interlayer spike (1 interlayer)        ║
+# ║      * "spike_none"     - Regular capsule, no interlayers (control)           ║
 # ║  - For Zuidwending A5 cavern (~965k m³, real depth 1140-1510m):               ║
 # ║      * "A5"             - Homogeneous salt (no interlayers)                   ║
 # ║      * "A5_interlayer"  - Heterogeneous with 2 interlayers (0.2m thick)       ║
 # ║                                                                               ║
-# ║  Interlayers are purely elastic (no creep). You can choose the material       ║
-# ║  for each interlayer independently:                                           ║
-# ║  - Anhydrite: E = 61.5 GPa, nu = 0.32                                        ║
-# ║  - Mudstone:  E = 19.33 GPa, nu = 0.223                                      ║
+# ║  Interlayers have no creep. Optionally, Mohr-Coulomb viscoplasticity          ║
+# ║  can be enabled (USE_MOHR_COULOMB = True) for plastic failure.               ║
+# ║  Available interlayer materials:                                              ║
+# ║  - Anhydrite: E=61.5 GPa, ν=0.32, c=4 MPa, φ=35°, σ_t=1 MPa               ║
+# ║  - Mudstone:  E=19.33 GPa, ν=0.223, c=2 MPa, φ=25°, σ_t=0.5 MPa           ║
 # ║                                                                               ║
 # ║  INITIALIZATION MODE:                                                         ║
 # ║  - USE_LEACHING = True:  Leaching phase (pressure ramp from lithostatic)      ║
@@ -59,10 +64,13 @@ EQUILIBRIUM_DT_HOURS = 0.5
 #   "asymmetric_shelf_1200"  - Asymmetric tilted shape with 2 interlayers (1,200,000 m³)
 #   "vertical_intrusion_600" - Shape with vertical interlayer effect (600,000 m³)
 #   "vertical_intrusion_1200"- Shape with vertical interlayer effect (1,200,000 m³)
+#   "spike_upper"            - Upper tilted interlayer spike, 1 interlayer (1,200,000 m³)
+#   "spike_lower"            - Lower tilted interlayer spike, 1 interlayer (1,200,000 m³)
+#   "spike_none"             - Regular capsule, no interlayers — control (1,200,000 m³)
 #   "A5"                     - Zuidwending cavern A5, homogeneous (~1.000.000 m³, depth 1140-1510m)
 #   "A5_interlayer"          - Zuidwending cavern A5 with 2 interlayers (~1.000.000 m³)
 
-CAVERN_TYPE = "interlayer"
+CAVERN_TYPE = "spike_upper"
 
 # ── INTERLAYER MATERIAL SELECTION ──────────────────────────────────────────────
 # Choose the material for each interlayer (used for all heterogeneous cavern types)
@@ -70,12 +78,30 @@ CAVERN_TYPE = "interlayer"
 #   "anhydrite" - E = 61.5 GPa, nu = 0.32  (stiffer, from Table 1 Herminio)
 #   "mudstone"  - E = 19.33 GPa, nu = 0.223 (softer, from Table 1 Herminio)
 #
-# All interlayers are PURELY ELASTIC (no creep behavior).
 # Note: INTERLAYER_3_MATERIAL is only used for "bulbous_ledges" caverns (3 interlayers)
+# Note: spike_upper and spike_lower have 1 interlayer each — both use INTERLAYER_1_MATERIAL
 
-INTERLAYER_1_MATERIAL = "anhydrite"  # Lower interlayer
+INTERLAYER_1_MATERIAL = "anhydrite"  # Lower interlayer (also used for spike_upper / spike_lower)
 INTERLAYER_2_MATERIAL = "mudstone"   # Middle/Upper interlayer
 INTERLAYER_3_MATERIAL = "anhydrite"  # Top interlayer (bulbous_ledges only)
+
+# ── INTERLAYER PLASTICITY (Mohr-Coulomb) ─────────────────────────────────────
+# USE_MOHR_COULOMB: Enable Mohr-Coulomb viscoplastic yielding for interlayers.
+#   When True, interlayer elements can yield and fail (plastic deformation).
+#   When False, interlayers remain purely elastic (original behavior).
+#   Only affects interlayer elements — salt always uses Desai viscoplasticity.
+#   Reference: Cała et al. (2018), Arch. Min. Sci. 63(4), 1007-1025.
+USE_MOHR_COULOMB = True
+
+# Mohr-Coulomb parameters per material (from Cała et al. 2018, Table 1):
+#   Anhydrite: c = 4 MPa, φ = 35°, σ_t = 1 MPa, ψ = 10° (non-associated)
+#   Mudstone:  c = 2 MPa, φ = 25°, σ_t = 0.5 MPa, ψ = 5°
+# These are used automatically based on the material selection above.
+# mu_1 and N_1 control the viscoplastic regularization (Perzyna approach):
+#   Higher mu_1 → faster stress relaxation toward yield surface
+#   Higher N_1  → sharper overstress response (more plastic-like)
+MC_MU_1 = 1e-7    # Fluidity parameter (1/s) — controls rate of plastic flow
+MC_N_1  = 5.0     # Rate exponent — higher = more rate-independent (plastic-like)
 
 # ── LEACHING PHASE SETTINGS ──────────────────────────────────────────────────────
 # LEACHING_MODE: How pressure decreases during leaching:
@@ -252,6 +278,7 @@ VALID_CAVERN_TYPES = [
     "bulbous_ledges_600", "bulbous_ledges_1200",
     "asymmetric_shelf_600", "asymmetric_shelf_1200",
     "vertical_intrusion_600", "vertical_intrusion_1200",
+    "spike_upper", "spike_lower", "spike_none",
     "A5", "A5_interlayer",
 ]
 VALID_SCENARIOS = ["industry", "transport", "power_generation", "csv"]
@@ -282,6 +309,12 @@ CAVERN_PARAMS = {
     # Vertical intrusion effect (2 interlayers)
     "vertical_intrusion_600": {"z_max": 340.0, "z_center": 237.5, "height": 205.0, "n_interlayers": 2},
     "vertical_intrusion_1200": {"z_max": 355.0, "z_center": 247.5, "height": 225.0, "n_interlayers": 2},
+    # Spike-shaped caverns (tilted interlayer modifies regular 1200k capsule)
+    # Spike face created by unleachable interlayer + shadow zone
+    # Both spike_upper and spike_lower use INTERLAYER_1_MATERIAL for their single interlayer
+    "spike_upper": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 1},
+    "spike_lower": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 1},
+    "spike_none": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 0},
     # ══════════════════════════════════════════════════════════════════════════════
     # ZUIDWENDING CAVERN A5 (~1.000.000 m³)
     # Real depth: Roof 1140m, Bottom 1510m, Height 370m
@@ -308,6 +341,9 @@ GRID_FOLDERS = {
     "asymmetric_shelf_1200": "cavern_asymmetric_shelf_1200_3D",
     "vertical_intrusion_600": "cavern_vertical_intrusion_600_3D",
     "vertical_intrusion_1200": "cavern_vertical_intrusion_1200_3D",
+    "spike_upper": "cavern_spike_upper_1200_3D",
+    "spike_lower": "cavern_spike_lower_1200_3D",
+    "spike_none": "cavern_spike_none_1200_3D",
     "A5": "cavern_A5_3D",
     "A5_interlayer": "cavern_A5_interlayer_3D",
 }
@@ -1136,21 +1172,21 @@ def setup_material_homogeneous(mat, n_elems):
         E1 = 42.0 * ut.GPa * to.ones(n_elems)
         nu1 = 0.32 * to.ones(n_elems)
         ndc = 4.6
-        A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems)
+        A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems, dtype=to.float64)
         Q_dc = (6495.0 * 8.32) * to.ones(n_elems)
     elif MATERIAL_SCENARIO == "B":
         eta = 1.0e15 * to.ones(n_elems)
         E1 = 1.0e11 * to.ones(n_elems)
         nu1 = 0.25 * to.ones(n_elems)
         ndc = 5.6897
-        A_dc = (25.92 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems)  # 1.5 × A_MD
+        A_dc = (25.92 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems, dtype=to.float64)  # 1.5 × A_MD
         Q_dc = (6495.0 * 8.32) * to.ones(n_elems)
     elif MATERIAL_SCENARIO == "B_freecalibr":
         eta = 1.0e15 * to.ones(n_elems)
         E1 = 1.0e11 * to.ones(n_elems)
         nu1 = 0.25 * to.ones(n_elems)
         ndc = 7.6122
-        A_dc = (1456.91 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems)
+        A_dc = (1456.91 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems, dtype=to.float64)
         Q_dc = (9250.0 * 8.314) * to.ones(n_elems)
     else:
         raise ValueError(f"Unknown MATERIAL_SCENARIO: {MATERIAL_SCENARIO}")
@@ -1433,6 +1469,87 @@ def add_desai_heterogeneous(mat, mom_eq, salt_cells, interlayer_1_cells, interla
 
     if MPI.COMM_WORLD.rank == 0:
         print(f"[MATERIAL] Desai viscoplasticity added (salt only, interlayers excluded)")
+
+    return mat
+
+
+def add_mohr_coulomb_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells=None):
+    """
+    Add Mohr-Coulomb viscoplastic model for interlayer elements.
+
+    Uses Drucker-Prager smooth approximation matching Mohr-Coulomb in
+    triaxial compression, with Perzyna viscoplastic regularization.
+    Salt elements get mu_1 = 0 (no MC yielding — they use Desai instead).
+
+    Parameters from Cała et al. (2018), Table 1:
+        Anhydrite: c = 4 MPa, φ = 35°, σ_t = 1.0 MPa
+        Mudstone:  c = 2 MPa, φ = 25°, σ_t = 0.5 MPa
+
+    Non-associated flow with dilation angle ψ < φ.
+    """
+    if interlayer_3_cells is None:
+        interlayer_3_cells = np.array([], dtype=int)
+
+    n_elems = mom_eq.n_elems
+
+    # Mohr-Coulomb parameters per material type
+    MC_PARAMS = {
+        "anhydrite": {
+            "cohesion_mpa": 4.0,          # MPa (Cała et al. 2018)
+            "friction_angle_deg": 35.0,    # degrees
+            "dilation_angle_deg": 10.0,    # degrees (non-associated, ψ ≈ φ/3)
+            "sigma_t_mpa": 1.0,           # MPa tensile strength
+        },
+        "mudstone": {
+            "cohesion_mpa": 2.0,
+            "friction_angle_deg": 25.0,
+            "dilation_angle_deg": 5.0,
+            "sigma_t_mpa": 0.5,
+        },
+    }
+
+    # Initialize all MC parameters to zero (salt = no MC yielding)
+    mu_1 = to.zeros(n_elems, dtype=to.float64)
+    N_1 = to.zeros(n_elems, dtype=to.float64)
+    cohesion = to.zeros(n_elems, dtype=to.float64)
+    friction_angle = to.zeros(n_elems, dtype=to.float64)
+    dilation_angle = to.zeros(n_elems, dtype=to.float64)
+    sigma_t = to.zeros(n_elems, dtype=to.float64)
+
+    # Assign MC parameters to interlayer elements
+    interlayer_groups = [
+        (interlayer_1_cells, INTERLAYER_1_MATERIAL),
+        (interlayer_2_cells, INTERLAYER_2_MATERIAL),
+        (interlayer_3_cells, INTERLAYER_3_MATERIAL),
+    ]
+
+    for cells, material_name in interlayer_groups:
+        if len(cells) == 0:
+            continue
+        params = MC_PARAMS[material_name]
+        mu_1[cells] = MC_MU_1
+        N_1[cells] = MC_N_1
+        cohesion[cells] = params["cohesion_mpa"]
+        friction_angle[cells] = np.radians(params["friction_angle_deg"])
+        dilation_angle[cells] = np.radians(params["dilation_angle_deg"])
+        sigma_t[cells] = params["sigma_t_mpa"]
+
+    mc = sf.MohrCoulombViscoplastic(
+        mu_1, N_1, cohesion, friction_angle, dilation_angle, sigma_t,
+        "mohr_coulomb"
+    )
+    mat.add_to_non_elastic(mc)
+
+    if MPI.COMM_WORLD.rank == 0:
+        print(f"[MATERIAL] Mohr-Coulomb viscoplasticity added for interlayers:")
+        for cells, material_name in interlayer_groups:
+            if len(cells) > 0:
+                p = MC_PARAMS[material_name]
+                print(f"  {material_name}: c={p['cohesion_mpa']} MPa, "
+                      f"φ={p['friction_angle_deg']}°, "
+                      f"ψ={p['dilation_angle_deg']}°, "
+                      f"σ_t={p['sigma_t_mpa']} MPa, "
+                      f"μ₁={MC_MU_1:.1e}, N₁={MC_N_1}")
 
     return mat
 
@@ -1762,6 +1879,8 @@ def main():
     if USE_DESAI:
         if n_interlayers > 0:
             mat = add_desai_heterogeneous(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
+            if USE_MOHR_COULOMB:
+                mat = add_mohr_coulomb_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
         else:
             # Homogeneous Desai (scenario-dependent)
             if MATERIAL_SCENARIO == "A":
