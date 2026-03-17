@@ -153,7 +153,7 @@ OPERATION_DAYS = 365
 N_CYCLES = 183
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
-dt_hours = 0.5
+dt_hours = 2
 
 # ── CSV SETTINGS (only used when PRESSURE_SCENARIO = "csv") ────────────────────
 CSV_FILE_PATH = "drukprofiel_zoutcaverne_2035_8760u.csv"

@@ -31,10 +31,11 @@ import csv
 # ║      * "A5"             - Homogeneous salt (no interlayers)                   ║
 # ║      * "A5_interlayer"  - Heterogeneous with 2 interlayers (0.2m thick)       ║
 # ║                                                                               ║
-# ║  Interlayers have no creep. Optionally, Mohr-Coulomb viscoplasticity          ║
-# ║  can be enabled (USE_MOHR_COULOMB = True) for plastic failure.               ║
+# ║  Anhydrite interlayers include pressure-solution creep (KEM-28).               ║
+# ║  Optionally, Mohr-Coulomb viscoplasticity can be enabled                     ║
+# ║  (USE_MOHR_COULOMB = True) for plastic failure.                              ║
 # ║  Available interlayer materials:                                              ║
-# ║  - Anhydrite: E=61.5 GPa, ν=0.32, c=4 MPa, φ=35°, σ_t=1 MPa               ║
+# ║  - Anhydrite: E=61.5 GPa, ν=0.32, c=4 MPa, φ=35°, σ_t=1 MPa + PS creep    ║
 # ║  - Mudstone:  E=19.33 GPa, ν=0.223, c=2 MPa, φ=25°, σ_t=0.5 MPa           ║
 # ║                                                                               ║
 # ║  INITIALIZATION MODE:                                                         ║
@@ -1232,7 +1233,7 @@ def setup_material_heterogeneous(mat, n_elems, grid, config):
 
     Material properties:
     - Salt (all salt regions): Full creep model
-    - Interlayer_1, _2, _3: Material specified by config (anhydrite or mudstone), PURELY ELASTIC
+    - Interlayer_1, _2, _3: Material specified by config. Anhydrite: elastic + pressure-solution creep. Mudstone: purely elastic.
     """
     sec_per_year = 365.25 * 24 * 3600
 
@@ -1382,20 +1383,29 @@ def setup_material_heterogeneous(mat, n_elems, grid, config):
     mat.add_to_non_elastic(creep_0)
 
     # ── PRESSURE-SOLUTION CREEP ───────────────────────────────────────────────
-    # Only for salt; interlayers have A = 0 (no creep)
+    # Active for salt and anhydrite interlayers (KEM-28 report).
+    # Disabled for mudstone interlayers.
 
     A_ps = to.zeros(n_elems, dtype=to.float64)
     d_ps = to.zeros(n_elems, dtype=to.float64)
     Q_ps = to.zeros(n_elems, dtype=to.float64)
 
-    # Salt: pressure-solution creep
-    A_ps[:] = 14176.0 * 1e-9 / 1e6 / sec_per_year
+    # Salt: standard pressure-solution creep parameters
+    A_ps_salt = 14176.0 * 1e-9 / 1e6 / sec_per_year
+    A_ps[:] = A_ps_salt
     d_ps[:] = 5.25e-3
     Q_ps[:] = 3252.0 * 8.32
 
-    # Interlayers: A = 0 -> no pressure-solution creep
-    if len(all_interlayer_cells) > 0:
-        A_ps[all_interlayer_cells] = 0.0
+    # Anhydrite: prefactor 10,000x smaller than halite (KEM-28 report)
+    # Mudstone: no pressure-solution creep
+    for cells, mat_name in [(interlayer_1_cells, il1_mat),
+                            (interlayer_2_cells, il2_mat),
+                            (interlayer_3_cells, il3_mat)]:
+        if len(cells) > 0:
+            if mat_name == "anhydrite":
+                A_ps[cells] = A_ps_salt / 10000.0
+            else:
+                A_ps[cells] = 0.0
 
     creep_pressure = sf.PressureSolutionCreep(A_ps, d_ps, Q_ps, "creep_pressure")
     mat.add_to_non_elastic(creep_pressure)
@@ -1403,10 +1413,12 @@ def setup_material_heterogeneous(mat, n_elems, grid, config):
     if MPI.COMM_WORLD.rank == 0:
         print(f"[MATERIAL] Heterogeneous material setup complete:")
         print(f"  Salt: E=20.425 GPa, nu=0.25, full creep model")
-        print(f"  Interlayer_1 ({il1_mat}): E={il1_E} GPa, nu={il1_nu}, purely elastic")
-        print(f"  Interlayer_2 ({il2_mat}): E={il2_E} GPa, nu={il2_nu}, purely elastic")
+        def _il_desc(mat_name):
+            return "elastic + pressure-solution creep" if mat_name == "anhydrite" else "purely elastic"
+        print(f"  Interlayer_1 ({il1_mat}): E={il1_E} GPa, nu={il1_nu}, {_il_desc(il1_mat)}")
+        print(f"  Interlayer_2 ({il2_mat}): E={il2_E} GPa, nu={il2_nu}, {_il_desc(il2_mat)}")
         if n_interlayers >= 3:
-            print(f"  Interlayer_3 ({il3_mat}): E={il3_E} GPa, nu={il3_nu}, purely elastic")
+            print(f"  Interlayer_3 ({il3_mat}): E={il3_E} GPa, nu={il3_nu}, {_il_desc(il3_mat)}")
 
     return mat, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells
 
@@ -1514,7 +1526,7 @@ def add_mohr_coulomb_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, in
         "anhydrite": {
             "cohesion_mpa": 4.0,          # MPa (Cała et al. 2018)
             "friction_angle_deg": 35.0,    # degrees
-            "dilation_angle_deg": 10.0,    # degrees (non-associated, ψ ≈ φ/3)
+            "dilation_angle_deg": 7.0,     # degrees (Rowe dilatancy, φ_cv≈29° from Pluymakers et al.)
             "sigma_t_mpa": 1.0,           # MPa tensile strength
         },
         "mudstone": {
