@@ -33,7 +33,7 @@ import csv
 # ║                                                                               ║
 # ║  Anhydrite interlayers include pressure-solution creep (KEM-28).               ║
 # ║  Optionally, Mohr-Coulomb viscoplasticity can be enabled                     ║
-# ║  (USE_MOHR_COULOMB = True) for plastic failure.                              ║
+# ║  INTERLAYER_MODEL = "drucker_prager" or "matsuoka_nakai" for plasticity.      ║
 # ║  Available interlayer materials:                                              ║
 # ║  - Anhydrite: E=61.5 GPa, ν=0.32, c=4 MPa, φ=35°, σ_t=1 MPa + PS creep    ║
 # ║  - Mudstone:  E=19.33 GPa, ν=0.223, c=2 MPa, φ=25°, σ_t=0.5 MPa           ║
@@ -86,13 +86,15 @@ INTERLAYER_1_MATERIAL = "anhydrite"  # Lower interlayer (also used for spike_upp
 INTERLAYER_2_MATERIAL = "mudstone"   # Middle/Upper interlayer
 INTERLAYER_3_MATERIAL = "anhydrite"  # Top interlayer (bulbous_ledges only)
 
-# ── INTERLAYER PLASTICITY (Mohr-Coulomb) ─────────────────────────────────────
-# USE_MOHR_COULOMB: Enable Mohr-Coulomb viscoplastic yielding for interlayers.
-#   When True, interlayer elements can yield and fail (plastic deformation).
-#   When False, interlayers remain purely elastic (original behavior).
-#   Only affects interlayer elements — salt always uses Desai viscoplasticity.
-#   Reference: Cała et al. (2018), Arch. Min. Sci. 63(4), 1007-1025.
-USE_MOHR_COULOMB = True
+# ── INTERLAYER FAILURE CRITERION ──────────────────────────────────────────────
+# INTERLAYER_MODEL: Controls how interlayer elements can fail.
+#   "elastic"        — No plasticity; interlayer is purely elastic (+ PS creep if anhydrite)
+#   "drucker_prager"  — Drucker-Prager smooth MC approximation (circular deviatoric section)
+#   "matsuoka_nakai"  — Matsuoka-Nakai smooth MC approximation (Lode-angle dependent,
+#                       tighter fit to MC; recommended, see Maiolino & Luong 2009)
+# All three use the same elastic properties and pressure-solution creep.
+# Salt always uses Desai viscoplasticity regardless of this setting.
+INTERLAYER_MODEL = "drucker_prager"  # Options: "elastic", "drucker_prager", "matsuoka_nakai"
 
 # Mohr-Coulomb parameters per material (from Cała et al. 2018, Table 1):
 #   Anhydrite: c = 4 MPa, φ = 35°, σ_t = 1 MPa, ψ = 10° (non-associated)
@@ -1077,27 +1079,10 @@ def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days,
 # ══════════════════════════════════════════════════════════════════════════════
 
 class LinearMomentumMod(sf.LinearMomentum):
-    _MAX_EPS_NE_PER_HALFSTEP = 5e-3
 
     def __init__(self, grid, theta):
         super().__init__(grid, theta)
         self.expect_vp_state = False
-
-    def compute_eps_ne_rate(self, stress, dt):
-        """Override: compute non-elastic rates then clamp to prevent NaN."""
-        super().compute_eps_ne_rate(stress, dt)
-        phi1 = dt * self.theta
-        if phi1 <= 0.0:
-            return
-        max_rate = self._MAX_EPS_NE_PER_HALFSTEP / phi1
-        for elem_ne in self.mat.elems_ne:
-            rate = elem_ne.eps_ne_rate
-            mag = to.sqrt((rate * rate).sum(dim=(1, 2)))
-            over = mag > max_rate
-            if over.any():
-                scale = to.ones_like(mag)
-                scale[over] = max_rate / mag[over]
-                elem_ne.eps_ne_rate = rate * scale[:, None, None]
 
     def initialize(self) -> None:
         self.C.x.array[:] = to.flatten(self.mat.C)
@@ -1583,6 +1568,90 @@ def add_mohr_coulomb_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, in
     return mat
 
 
+def add_matsuoka_nakai_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells=None):
+    """
+    Add Matsuoka-Nakai viscoplastic model for interlayer elements.
+
+    Same parameters and interface as add_mohr_coulomb_interlayers, but uses
+    the Matsuoka-Nakai yield criterion (Lode-angle-dependent shape function)
+    instead of the Drucker-Prager smooth approximation.  This provides a
+    tighter, more realistic fit to the Mohr-Coulomb surface in all stress
+    states, not just triaxial compression.
+
+    References
+    ----------
+    Matsuoka, H. & Nakai, T. (1974). Stress-deformation and strength
+        characteristics of soil under three different principal stresses.
+    Bigoni, D. & Piccolroaz, A. (2004). Yield criteria for quasibrittle and
+        frictional materials.
+    """
+    if interlayer_3_cells is None:
+        interlayer_3_cells = np.array([], dtype=int)
+
+    n_elems = mom_eq.n_elems
+
+    # Same MC parameters as for the Drucker-Prager version
+    MC_PARAMS = {
+        "anhydrite": {
+            "cohesion_mpa": 4.0,
+            "friction_angle_deg": 35.0,
+            "dilation_angle_deg": 7.0,
+            "sigma_t_mpa": 1.0,
+        },
+        "mudstone": {
+            "cohesion_mpa": 2.0,
+            "friction_angle_deg": 25.0,
+            "dilation_angle_deg": 5.0,
+            "sigma_t_mpa": 0.5,
+        },
+    }
+
+    # Initialize all parameters to zero (salt = no yielding)
+    mu_1 = to.zeros(n_elems, dtype=to.float64)
+    N_1 = to.zeros(n_elems, dtype=to.float64)
+    cohesion = to.zeros(n_elems, dtype=to.float64)
+    friction_angle = to.zeros(n_elems, dtype=to.float64)
+    dilation_angle = to.zeros(n_elems, dtype=to.float64)
+    sigma_t = to.zeros(n_elems, dtype=to.float64)
+
+    # Assign parameters to interlayer elements
+    interlayer_groups = [
+        (interlayer_1_cells, INTERLAYER_1_MATERIAL),
+        (interlayer_2_cells, INTERLAYER_2_MATERIAL),
+        (interlayer_3_cells, INTERLAYER_3_MATERIAL),
+    ]
+
+    for cells, material_name in interlayer_groups:
+        if len(cells) == 0:
+            continue
+        params = MC_PARAMS[material_name]
+        mu_1[cells] = MC_MU_1
+        N_1[cells] = MC_N_1
+        cohesion[cells] = params["cohesion_mpa"]
+        friction_angle[cells] = np.radians(params["friction_angle_deg"])
+        dilation_angle[cells] = np.radians(params["dilation_angle_deg"])
+        sigma_t[cells] = params["sigma_t_mpa"]
+
+    mn = sf.MatsuokaNakaiViscoplastic(
+        mu_1, N_1, cohesion, friction_angle, dilation_angle, sigma_t,
+        "matsuoka_nakai"
+    )
+    mat.add_to_non_elastic(mn)
+
+    if MPI.COMM_WORLD.rank == 0:
+        print(f"[MATERIAL] Matsuoka-Nakai viscoplasticity added for interlayers:")
+        for cells, material_name in interlayer_groups:
+            if len(cells) > 0:
+                p = MC_PARAMS[material_name]
+                print(f"  {material_name}: c={p['cohesion_mpa']} MPa, "
+                      f"\u03c6={p['friction_angle_deg']}\u00b0, "
+                      f"\u03c8={p['dilation_angle_deg']}\u00b0, "
+                      f"\u03c3_t={p['sigma_t_mpa']} MPa, "
+                      f"\u03bc\u2081={MC_MU_1:.1e}, N\u2081={MC_N_1}")
+
+    return mat
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1908,8 +1977,15 @@ def main():
     if USE_DESAI:
         if n_interlayers > 0:
             mat = add_desai_heterogeneous(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
-            if USE_MOHR_COULOMB:
+            if INTERLAYER_MODEL == "drucker_prager":
                 mat = add_mohr_coulomb_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
+            elif INTERLAYER_MODEL == "matsuoka_nakai":
+                mat = add_matsuoka_nakai_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
+            elif INTERLAYER_MODEL == "elastic":
+                if MPI.COMM_WORLD.rank == 0:
+                    print(f"[MATERIAL] Interlayer model: elastic only (no plasticity)")
+            else:
+                raise ValueError(f"Unknown INTERLAYER_MODEL: '{INTERLAYER_MODEL}'. Use 'elastic', 'drucker_prager', or 'matsuoka_nakai'.")
         else:
             # Homogeneous Desai (scenario-dependent)
             if MATERIAL_SCENARIO == "A":

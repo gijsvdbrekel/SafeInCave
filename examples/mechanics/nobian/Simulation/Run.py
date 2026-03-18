@@ -105,7 +105,7 @@ RAMP_UP_HOURS = 336 # 2 weeks
 #   "transport"        - Trapezoidal 2-day cycle (nighttime high → daytime low)
 #   "power_generation" - Abrupt withdrawal events with gradual re-pressurisation
 #   "csv"              - Load pressure profile from CSV file
-PRESSURE_SCENARIO = "csv"
+PRESSURE_SCENARIO = "industry"
 
 # ── INDUSTRY SETTINGS (only used when PRESSURE_SCENARIO = "industry") ──────────
 # Sinusoidal schedule. With leaching: oscillates around p_leach_end + P_AMPLITUDE_MPA.
@@ -144,13 +144,13 @@ MAX_DP_MPA      = 0.2              # Max pressure change per step (MPa)
 #   "stretch" - N_CYCLES spread evenly over OPERATION_DAYS
 #   "repeat"  - Cycle pattern repeated with its native period
 #   "direct"  - (CSV only) Use hourly CSV values directly
-SCHEDULE_MODE = "direct"
+SCHEDULE_MODE = "stretch"
 
 # OPERATION_DAYS: Total simulation duration in days (operation phase only)
-OPERATION_DAYS = 365
+OPERATION_DAYS = 50
 
 # N_CYCLES: Number of pressure cycles (industry: sinusoidal; transport: 2-day cycles)
-N_CYCLES = 183
+N_CYCLES = 20
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
 dt_hours = 2
@@ -1032,32 +1032,10 @@ def build_power_generation_schedule(tc, *, p_base_pa, n_events, operation_days,
 # ══════════════════════════════════════════════════════════════════════════════
 
 class LinearMomentumMod(sf.LinearMomentum):
-    # Maximum creep strain increment per half-step.  If any element's
-    # non-elastic rate would exceed this, the tensor rate is uniformly
-    # scaled down for that element.  Prevents the linear system from
-    # becoming ill-conditioned during sudden large pressure drops.
-    _MAX_EPS_NE_PER_HALFSTEP = 5e-3   # 0.5 % strain per half-step
 
     def __init__(self, grid, theta):
         super().__init__(grid, theta)
         self.expect_vp_state = False
-
-    def compute_eps_ne_rate(self, stress, dt):
-        """Override: compute non-elastic rates then clamp to prevent NaN."""
-        super().compute_eps_ne_rate(stress, dt)
-        phi1 = dt * self.theta
-        if phi1 <= 0.0:
-            return
-        max_rate = self._MAX_EPS_NE_PER_HALFSTEP / phi1
-        for elem_ne in self.mat.elems_ne:
-            rate = elem_ne.eps_ne_rate          # (N, 3, 3)
-            # Frobenius norm per element
-            mag = to.sqrt((rate * rate).sum(dim=(1, 2)))   # (N,)
-            over = mag > max_rate
-            if over.any():
-                scale = to.ones_like(mag)
-                scale[over] = max_rate / mag[over]
-                elem_ne.eps_ne_rate = rate * scale[:, None, None]
 
     def initialize(self) -> None:
         self.C.x.array[:] = to.flatten(self.mat.C)

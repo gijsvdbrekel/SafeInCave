@@ -45,10 +45,10 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 
 SELECT = {
     "caverns": ["regular1200"],
-    "pressure": ["csv"],
-    "scenario": ["B_freecalibr_MD"],
+    "pressure": None,
+    "scenario": ["B_MD"],
     "n_cycles": None,
-    "operation_days": 365,
+    "operation_days": 50,
     "case_contains": None,
 }
 

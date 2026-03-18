@@ -1670,6 +1670,228 @@ class MohrCoulombViscoplastic(NonElasticElement):
             self.eps_ne_rate = eps_vp_rate
 
 
+class MatsuokaNakaiViscoplastic(NonElasticElement):
+    """
+    True Matsuoka-Nakai viscoplastic model with Perzyna-type overstress
+    regularization.
+
+    Implements the NFC (n=1) formulation from Panteghini & Lagioia (2014),
+    which expresses the Matsuoka-Nakai failure criterion in terms of stress
+    obliquity angles between principal stress pairs:
+
+    .. math::
+        \\sin\\varphi_{ij} = \\frac{\\sigma_i - \\sigma_j}{\\sigma_i + \\sigma_j}
+
+    The yield function (Eq. 19 with n=1) is:
+
+    .. math::
+        f = \\sqrt{\\sin^2\\varphi_{12} + \\sin^2\\varphi_{23}
+            + \\sin^2\\varphi_{31}} - k = 0
+
+    where :math:`k = \\sqrt{2}\\,\\sin\\varphi` and :math:`\\varphi` is the
+    Mohr-Coulomb friction angle.
+
+    For cohesive materials, a Houlsby shift is applied:
+    :math:`\\sigma'_i = \\sigma_i + a` with
+    :math:`a = c\\,\\cos\\varphi / \\sin\\varphi`.
+
+    The dimensionless yield function is scaled to stress units (MPa) by
+    multiplying by the mean shifted stress:
+    :math:`F_{\\mathrm{shear}} = f \\cdot (I'_1 / 3)`.
+
+    The flow rule remains DP-based (non-associated with dilation angle psi),
+    identical to :class:`MohrCoulombViscoplastic`.
+
+    Parameters
+    ----------
+    mu_1, N_1, cohesion, friction_angle, dilation_angle, sigma_t :
+        Same as :class:`MohrCoulombViscoplastic`.
+    name : str, optional
+        Identifier, by default ``"matsuoka_nakai"``.
+
+    References
+    ----------
+    Panteghini, A. & Lagioia, R. (2014). A single numerically efficient
+        yield function for Matsuoka-Nakai criterion. *Eur. J. Mech. A/Solids*,
+        49, 396-408.
+    Matsuoka, H. & Nakai, T. (1974). Stress-deformation and strength
+        characteristics of soil under three different principal stresses.
+        *Proc. JSCE*, 232, 59-70.
+    """
+
+    def __init__(self,
+                 mu_1: to.Tensor,
+                 N_1: to.Tensor,
+                 cohesion: to.Tensor,
+                 friction_angle: to.Tensor,
+                 dilation_angle: to.Tensor,
+                 sigma_t: to.Tensor,
+                 name: str = "matsuoka_nakai"):
+        super().__init__(mu_1.shape[0])
+        self.name = name
+        self.mu_1 = mu_1
+        self.N_1 = N_1
+        self.cohesion = cohesion
+        self.friction_angle = friction_angle
+        self.dilation_angle = dilation_angle
+        self.sigma_t = sigma_t
+        self.F_0 = 1.0  # Reference stress (MPa) for overstress normalization
+
+        sin_phi = to.sin(self.friction_angle)
+        cos_phi = to.cos(self.friction_angle)
+        sin_psi = to.sin(self.dilation_angle)
+
+        # NFC criterion parameter: k = sqrt(2) * sin(phi)
+        self.k_nfc = np.sqrt(2.0) * sin_phi
+
+        # Cohesive (Houlsby) shift: a = c * cos(phi) / sin(phi)
+        # Handle frictionless case: when sin(phi) ~ 0, cohesive shift = 0
+        safe_sin_phi = to.where(sin_phi.abs() < 1e-10,
+                                to.ones_like(sin_phi),
+                                sin_phi)
+        self.cohesive_shift = to.where(sin_phi.abs() < 1e-10,
+                                       to.zeros_like(sin_phi),
+                                       self.cohesion * cos_phi / safe_sin_phi)
+
+        # Flow potential: Q = sqrt(J2) - alpha_Q * I1  (non-associated, DP-based)
+        self.alpha_Q = 2.0 * sin_psi / (np.sqrt(3.0) * (3.0 - sin_psi))
+
+        self.Fvp = to.zeros(self.n_elems, dtype=to.float64)
+
+    def compute_eps_ne_rate(self, stress: to.Tensor, phi1: float, Temp: to.Tensor,
+                            alpha=None, return_eps_ne: bool = False):
+        """
+        Compute viscoplastic strain rate from true Matsuoka-Nakai yield
+        criterion using the NFC (n=1) formulation.
+
+        Parameters
+        ----------
+        stress : torch.Tensor
+            Stress per element, shape (N, 3, 3).
+        phi1 : float
+            Time integration factor ``dt*theta`` (unused, kept for interface).
+        Temp : torch.Tensor
+            Temperature per element (unused).
+        alpha : ignored
+            Kept for interface compatibility with Desai.
+        return_eps_ne : bool, default False
+            If True, return rate tensor; else store internally.
+
+        Returns
+        -------
+        None or torch.Tensor
+            ``(N, 3, 3)`` viscoplastic strain rate if ``return_eps_ne=True``.
+        """
+        # Extract compression-positive stress in MPa (same convention as Desai)
+        stress_vec = -stress
+        s_xx = stress_vec[:, 0, 0] / MPa
+        s_yy = stress_vec[:, 1, 1] / MPa
+        s_zz = stress_vec[:, 2, 2] / MPa
+        s_xy = stress_vec[:, 0, 1] / MPa
+        s_xz = stress_vec[:, 0, 2] / MPa
+        s_yz = stress_vec[:, 1, 2] / MPa
+
+        n_elems = s_xx.shape[0]
+
+        # ── Principal stresses via eigenvalue decomposition ──────────────
+        stress_sym = to.zeros(n_elems, 3, 3, dtype=to.float64)
+        stress_sym[:, 0, 0] = s_xx
+        stress_sym[:, 1, 1] = s_yy
+        stress_sym[:, 2, 2] = s_zz
+        stress_sym[:, 0, 1] = stress_sym[:, 1, 0] = s_xy
+        stress_sym[:, 0, 2] = stress_sym[:, 2, 0] = s_xz
+        stress_sym[:, 1, 2] = stress_sym[:, 2, 1] = s_yz
+
+        # Eigenvalues in ascending order
+        eigvals = to.linalg.eigvalsh(stress_sym)  # shape (N, 3)
+        sig3 = eigvals[:, 0]  # smallest
+        sig2 = eigvals[:, 1]
+        sig1 = eigvals[:, 2]  # largest
+
+        # ── Cohesive (Houlsby) shift ─────────────────────────────────────
+        a_shift = self.cohesive_shift
+        sig1_s = sig1 + a_shift
+        sig2_s = sig2 + a_shift
+        sig3_s = sig3 + a_shift
+
+        # ── NFC (n=1) yield function ─────────────────────────────────────
+        # Obliquity sines squared: sin^2(phi_ij) = ((si - sj) / (si + sj))^2
+        denom_12 = to.clamp(sig1_s + sig2_s, min=1e-20)
+        denom_23 = to.clamp(sig2_s + sig3_s, min=1e-20)
+        denom_31 = to.clamp(sig3_s + sig1_s, min=1e-20)
+
+        sin2_12 = ((sig1_s - sig2_s) / denom_12) ** 2
+        sin2_23 = ((sig2_s - sig3_s) / denom_23) ** 2
+        sin2_31 = ((sig3_s - sig1_s) / denom_31) ** 2
+
+        # Dimensionless yield: f = sqrt(sin2_12 + sin2_23 + sin2_31) - k
+        f_nfc = to.sqrt(sin2_12 + sin2_23 + sin2_31 + 1e-30) - self.k_nfc
+
+        # Scale to stress units (MPa) using mean shifted stress
+        I1_shifted = sig1_s + sig2_s + sig3_s
+        p_mean = to.clamp(I1_shifted / 3.0, min=1e-20)
+        F_shear = f_nfc * p_mean
+
+        # ── Tension cut-off ──────────────────────────────────────────────
+        I1 = s_xx + s_yy + s_zz  # unshifted first invariant
+        F_tension = -I1 / 3.0 - self.sigma_t
+
+        # Combined yield (maximum of shear and tension)
+        Fvp = to.maximum(F_shear, F_tension)
+
+        if not return_eps_ne:
+            self.Fvp = Fvp.clone()
+
+        # ── Flow direction (DP-based, same as MohrCoulombViscoplastic) ───
+        is_tension = F_tension > F_shear
+
+        # J2 for the flow potential (computed from full tensor components)
+        I2 = s_xx * s_yy + s_yy * s_zz + s_xx * s_zz - s_xy**2 - s_yz**2 - s_xz**2
+        J2 = (1.0 / 3.0) * I1**2 - I2
+        J2 = to.clamp(J2, min=1e-20)
+        sqrt_J2 = to.sqrt(J2)
+
+        # Derivatives of J2 w.r.t. compression-positive stress components
+        dJ2_dSxx = (2.0 / 3.0) * I1 - (s_yy + s_zz)
+        dJ2_dSyy = (2.0 / 3.0) * I1 - (s_xx + s_zz)
+        dJ2_dSzz = (2.0 / 3.0) * I1 - (s_xx + s_yy)
+        dJ2_dSxy = 2.0 * s_xy
+        dJ2_dSxz = 2.0 * s_xz
+        dJ2_dSyz = 2.0 * s_yz
+
+        inv_2sqrtJ2 = 1.0 / (2.0 * sqrt_J2)
+
+        # Shear flow direction: dQ/dσ = d(sqrt(J2))/dσ - alpha_Q * dI1/dσ
+        dQdS = to.zeros_like(stress, dtype=to.float64)
+        dQdS[:, 0, 0] = inv_2sqrtJ2 * dJ2_dSxx - self.alpha_Q
+        dQdS[:, 1, 1] = inv_2sqrtJ2 * dJ2_dSyy - self.alpha_Q
+        dQdS[:, 2, 2] = inv_2sqrtJ2 * dJ2_dSzz - self.alpha_Q
+        dQdS[:, 0, 1] = dQdS[:, 1, 0] = inv_2sqrtJ2 * dJ2_dSxy
+        dQdS[:, 0, 2] = dQdS[:, 2, 0] = inv_2sqrtJ2 * dJ2_dSxz
+        dQdS[:, 1, 2] = dQdS[:, 2, 1] = inv_2sqrtJ2 * dJ2_dSyz
+
+        # Tension flow direction: volumetric expansion (dF_t/dσ = -δ_ij/3)
+        if to.any(is_tension):
+            dQdS[is_tension, :, :] = 0.0
+            dQdS[is_tension, 0, 0] = -1.0 / 3.0
+            dQdS[is_tension, 1, 1] = -1.0 / 3.0
+            dQdS[is_tension, 2, 2] = -1.0 / 3.0
+
+        # Perzyna viscoplastic multiplier: λ = μ₁ * <F/F₀>^N₁
+        ramp_idx = to.where(Fvp > 0)[0]
+        lmbda = to.zeros(self.n_elems, dtype=to.float64)
+        if len(ramp_idx) != 0:
+            lmbda[ramp_idx] = self.mu_1[ramp_idx] * (Fvp[ramp_idx] / self.F_0) ** self.N_1[ramp_idx]
+
+        # Convert from compression-positive convention back to SafeInCave convention
+        eps_vp_rate = -dQdS * lmbda[:, None, None]
+
+        if return_eps_ne:
+            return eps_vp_rate
+        else:
+            self.eps_ne_rate = eps_vp_rate
+
+
 class MunsonDawsonCreep(NonElasticElement):
     """
     Munson–Dawson creep law (steady-state + transient) with internal variable zeta.
