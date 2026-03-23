@@ -44,11 +44,11 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["regular1200"],
+    "caverns": ["regular1200", "regular600"],
     "pressure": None,
-    "scenario": ["B_SIC", "B_MD"],
-    "n_cycles": None,
-    "operation_days": 50,
+    "scenario": ["A_MD", "A_SIC"],
+    "n_cycles": 20,
+    "operation_days": 365,
     "case_contains": None,
 }
 
@@ -124,14 +124,31 @@ HOUR = 3600.0
 DAY = 24.0 * HOUR
 
 CAVERN_COLORS = {
-    "Asymmetric":          "#1f77b4",
-    "Direct-circulation":  "#2ca02c",
-    "IrregularFine":       "#d62728",
-    "Regular":             "#9467bd",
-    "Reversed-circulation":"#8c564b",
-    "Tilt":                "#e377c2",
-    "Fast-leached":        "#17becf",
-    "Tube-failure":        "#bcbd22",
+    "Asymmetric":              "#1f77b4",
+    "Direct-circulation":      "#2ca02c",
+    "IrregularFine":           "#d62728",
+    "Regular":                 "#9467bd",
+    "Reversed-circulation":    "#8c564b",
+    "Tilt":                    "#e377c2",
+    "Fast-leached":            "#17becf",
+    "Tube-failure":            "#bcbd22",
+    # Size-specific variants (solid = 1200k, lighter = 600k)
+    "Asymmetric (1200k)":          "#1f77b4",
+    "Direct-circulation (1200k)":  "#2ca02c",
+    "IrregularFine (1200k)":       "#d62728",
+    "Regular (1200k)":             "#9467bd",
+    "Reversed-circulation (1200k)":"#8c564b",
+    "Tilt (1200k)":                "#e377c2",
+    "Fast-leached (1200k)":        "#17becf",
+    "Tube-failure (1200k)":        "#bcbd22",
+    "Asymmetric (600k)":           "#aec7e8",
+    "Direct-circulation (600k)":   "#98df8a",
+    "IrregularFine (600k)":        "#ff9896",
+    "Regular (600k)":              "#c5b0d5",
+    "Reversed-circulation (600k)": "#c49c94",
+    "Tilt (600k)":                 "#f7b6d2",
+    "Fast-leached (600k)":         "#9edae5",
+    "Tube-failure (600k)":         "#dbdb8d",
 }
 
 SCENARIO_COLORS = {
@@ -225,6 +242,12 @@ PROBE_COLORS = {
 CAVERN_ORDER = [
     "Asymmetric", "Direct-circulation", "Regular", "Reversed-circulation",
     "Tilt", "Fast-leached", "Tube-failure", "IrregularFine",
+    "Asymmetric (1200k)", "Direct-circulation (1200k)", "Regular (1200k)",
+    "Reversed-circulation (1200k)", "Tilt (1200k)", "Fast-leached (1200k)",
+    "Tube-failure (1200k)", "IrregularFine (1200k)",
+    "Asymmetric (600k)", "Direct-circulation (600k)", "Regular (600k)",
+    "Reversed-circulation (600k)", "Tilt (600k)", "Fast-leached (600k)",
+    "Tube-failure (600k)", "IrregularFine (600k)",
 ]
 SCENARIO_ORDER = [
     # Current

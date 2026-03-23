@@ -48,24 +48,27 @@ def _infer_cavern_type_from_case_name(case_name: str) -> str | None:
 
 def _nice_cavern_label(cavern_type_or_group: str) -> str:
     low = (cavern_type_or_group or "").lower()
+    # Extract volume suffix (e.g. "600", "1200") if present
+    m = re.search(r"(600|1200)$", low)
+    size_tag = f" ({m.group(1)}k)" if m else ""
     if low.startswith("asymmetric"):
-        return "Asymmetric"
+        return f"Asymmetric{size_tag}"
     if low.startswith("directcirculation"):
-        return "Direct-circulation"
+        return f"Direct-circulation{size_tag}"
     if low.startswith("reversedcirculation"):
-        return "Reversed-circulation"
+        return f"Reversed-circulation{size_tag}"
     if low.startswith("tilt") or low.startswith("tilted"):
-        return "Tilt"
+        return f"Tilt{size_tag}"
     if low.startswith("regular"):
-        return "Regular"
+        return f"Regular{size_tag}"
     if low.startswith("irregularfine") or low.startswith("irregular_fine"):
-        return "IrregularFine"
+        return f"IrregularFine{size_tag}"
     if low.startswith("irregular"):
-        return "Irregular"
+        return f"Irregular{size_tag}"
     if low.startswith("fastleached"):
-        return "Fast-leached"
+        return f"Fast-leached{size_tag}"
     if low.startswith("tubefailure"):
-        return "Tube-failure"
+        return f"Tube-failure{size_tag}"
     return (cavern_type_or_group or "").split("_")[0] if cavern_type_or_group else "Unknown"
 
 def read_case_metadata(case_path: str) -> dict:
