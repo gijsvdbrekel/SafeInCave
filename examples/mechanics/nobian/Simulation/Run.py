@@ -105,7 +105,7 @@ RAMP_UP_HOURS = 336 # 2 weeks
 #   "transport"        - Trapezoidal 2-day cycle (nighttime high → daytime low)
 #   "power_generation" - Abrupt withdrawal events with gradual re-pressurisation
 #   "csv"              - Load pressure profile from CSV file
-PRESSURE_SCENARIO = "industry"
+PRESSURE_SCENARIO = "power_generation"
 
 # ── INDUSTRY SETTINGS (only used when PRESSURE_SCENARIO = "industry") ──────────
 # Sinusoidal schedule. With leaching: oscillates around p_leach_end + P_AMPLITUDE_MPA.
@@ -122,19 +122,19 @@ P_LOW_OFFSET_MPA  = 1.5    # Low-pressure offset above p_leach_end (MPa)
 # ── POWER GENERATION SETTINGS (only used when PRESSURE_SCENARIO = "power_generation") ──
 # N_EVENTS abrupt withdrawal events over the operation period, each with a sharp
 # 30-min drop, sustained low, and exponential re-pressurisation.
-N_EVENTS = 10           # Number of withdrawal events
+N_EVENTS = 8           # Number of withdrawal events
 P_BASE_OFFSET_MPA = 10.0    # Resting pressure offset above p_leach_end (MPa)
 RECOVERY_TAU_HOURS = 200.0   # Time constant for exponential re-pressurisation (hours)
                             #   4 h  = fast recovery (~95% in 12 h)
                             #  24 h  = gradual (~63% in 1 day, ~95% in 3 days)
                             #  48 h  = slow   (~63% in 2 days, ~95% in 6 days)
-P_MIN_MPA = 8            # Absolute minimum cavern pressure (MPa)
+P_MIN_MPA = 8.5            # Absolute minimum cavern pressure (MPa)
                             # Prevents event stacking from driving pressure too low
 
-# ── VARIABLE TIME-STEPPING (only used when PRESSURE_SCENARIO = "power_generation") ──
+# ── VARIABLE TIME-STEPPING (power_generation and csv) ─────────────────────────
 # Adaptive dt: small steps during sharp pressure drops, coarse steps elsewhere.
 # MAX_DP_MPA controls refinement: steps are halved until |Δp| ≤ MAX_DP_MPA per step.
-USE_VARIABLE_DT = True             # True = adaptive dt for power_generation
+USE_VARIABLE_DT = True             # True = adaptive dt for power_generation/csv
 DT_FINE_HOURS   = 0.1              # Minimum dt (12 min) during sharp events
 DT_COARSE_HOURS = 2.0              # Maximum dt away from events (same as dt_hours)
 MAX_DP_MPA      = 0.2              # Max pressure change per step (MPa)
@@ -147,7 +147,7 @@ MAX_DP_MPA      = 0.2              # Max pressure change per step (MPa)
 SCHEDULE_MODE = "stretch"
 
 # OPERATION_DAYS: Total simulation duration in days (operation phase only)
-OPERATION_DAYS = 50
+OPERATION_DAYS = 365
 
 # N_CYCLES: Number of pressure cycles (industry: sinusoidal; transport: 2-day cycles)
 N_CYCLES = 20
@@ -166,7 +166,7 @@ RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
 MATERIAL_SCENARIO = "B"             # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
-USE_MUNSON_DAWSON = False           # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
+USE_MUNSON_DAWSON = False          # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
 USE_THERMAL = False
@@ -1624,7 +1624,7 @@ def main():
     # Create tc_operation with full duration (including debrining)
     total_operation_hours = OPERATION_DAYS * 24.0 + extra_hours
 
-    if PRESSURE_SCENARIO == "power_generation" and USE_VARIABLE_DT:
+    if PRESSURE_SCENARIO in ("power_generation", "csv") and USE_VARIABLE_DT:
         # Adaptive time-stepping: fine dt during sharp events, coarse elsewhere
         t_arr = np.array(t_pressure, dtype=float)
         p_arr = np.array(p_pressure, dtype=float)

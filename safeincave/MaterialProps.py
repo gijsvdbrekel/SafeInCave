@@ -1157,16 +1157,20 @@ class ViscoplasticDesai(NonElasticElement):
         I3 = s_xx*s_yy*s_zz + 2*s_xy*s_yz*s_xz - s_zz*s_xy**2 - s_xx*s_yz**2 - s_yy*s_xz**2
         J2 = (1/3)*I1**2 - I2
         J3 = (2/27)*I1**3 - (1/3)*I1*I2 + I3
-        Sr = -(J3*np.sqrt(27))/(2*J2**1.5)
 
-        # Check where J2 <= 0.0
-        ind_J2_leq_0 = to.where(J2 <= 0.0)[0]
+        # Guard against near-zero J2: small positive J2 causes huge
+        # derivatives (1/J2^1.5, 1/J2^2.5) that blow up the Desai model.
+        J2_MIN = 1e-6  # MPa^2 floor — stress is in MPa in Desai space
+        ind_J2_leq_0 = to.where(J2 <= J2_MIN)[0]
+        J2_safe = to.clamp(J2, min=J2_MIN)
 
-        # Sr will be nan if, J2=0.0. So, replace it by 0.0
+        Sr = -(J3*np.sqrt(27))/(2*J2_safe**1.5)
+
+        # Sr will be nan/huge if J2 ~ 0. Replace by 0.0
         Sr[ind_J2_leq_0] = 0.0
 
         I1_star = I1 + self.sigma_t
-        return I1, I2, I3, J2, J3, Sr, I1_star, ind_J2_leq_0
+        return I1, I2, I3, J2_safe, J3, Sr, I1_star, ind_J2_leq_0
 
     def extract_stress_components(self, stress: to.Tensor) -> to.Tensor:
         """
