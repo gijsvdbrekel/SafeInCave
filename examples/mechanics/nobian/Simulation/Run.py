@@ -60,7 +60,7 @@ CAVERN_TYPE = "fastleached"
 # CAVERN_SIZE: Volume in thousands of m³ (ignored for A5)
 #   600  - 600,000 m³ volume
 #   1200 - 1,200,000 m³ volume
-CAVERN_SIZE = 1200
+CAVERN_SIZE = 600
 
 # ── LEACHING PHASE SETTINGS ──────────────────────────────────────────────────────
 # LEACHING_MODE: How pressure decreases during leaching:
@@ -166,7 +166,7 @@ RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
 MATERIAL_SCENARIO = "B"             # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
-USE_MUNSON_DAWSON = True         # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
+USE_MUNSON_DAWSON = False         # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
 USE_THERMAL = False

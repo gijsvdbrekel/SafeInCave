@@ -57,10 +57,10 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["regular1200", "regular600", "fastleached1200", "fastleached600"],
-    "pressure": ["csv", "power_generation"],
-    "scenario": ["B_MD", "B_SIC", "A_SIC", "A_MD"],
-    "n_cycles": 20,
+    "caverns": ["regular1200", "fastleached1200"],
+    "pressure": ["power_generation"],
+    "scenario": ["B_SIC", "B_MD"],
+    "n_cycles": None,
     "operation_days": 365,
     "case_contains": None,
 }
@@ -93,11 +93,11 @@ SELECT = {
 PLOT_MODE = "compare_scenarios"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
 
 FIGURES = {
-    "convergence": True,          # Figure 1: volume convergence
-    "stress_state": True,         # Figure 2: p-q stress paths
-    "fos": True,                  # Figure 3: FOS over time
+    "convergence": False,          # Figure 1: volume convergence
+    "stress_state": False,         # Figure 2: p-q stress paths
+    "fos": False,                  # Figure 3: FOS over time
     "fracture_propagation": True, # Figure 4: dilatancy zone analysis
-    "fos_summary": True,          # Figure 5: global min FOS + 4 pressure profiles
+    "fos_summary": False,          # Figure 5: global min FOS + 4 pressure profiles
 }
 
 # Stress state options
@@ -143,30 +143,30 @@ HOUR = 3600.0
 DAY = 24.0 * HOUR
 
 CAVERN_COLORS = {
-    "Asymmetric":              "#1f77b4",
+    "Asymmetric":              "#ff7f0e",
     "Direct-circulation":      "#2ca02c",
-    "IrregularFine":           "#d62728",
-    "Regular":                 "#9467bd",
+    "IrregularFine":           "#9467bd",
+    "Regular":                 "#1f77b4",
     "Reversed-circulation":    "#8c564b",
     "Tilt":                    "#e377c2",
-    "Fast-leached":            "#17becf",
+    "Fast-leached":            "#d62728",
     "Tube-failure":            "#bcbd22",
     # Size-specific variants (solid = 1200k, lighter = 600k)
-    "Asymmetric (1200k)":          "#1f77b4",
+    "Asymmetric (1200k)":          "#ff7f0e",
     "Direct-circulation (1200k)":  "#2ca02c",
-    "IrregularFine (1200k)":       "#d62728",
-    "Regular (1200k)":             "#9467bd",
+    "IrregularFine (1200k)":       "#9467bd",
+    "Regular (1200k)":             "#1f77b4",
     "Reversed-circulation (1200k)":"#8c564b",
     "Tilt (1200k)":                "#e377c2",
-    "Fast-leached (1200k)":        "#17becf",
+    "Fast-leached (1200k)":        "#d62728",
     "Tube-failure (1200k)":        "#bcbd22",
-    "Asymmetric (600k)":           "#aec7e8",
+    "Asymmetric (600k)":           "#ffbb78",
     "Direct-circulation (600k)":   "#98df8a",
-    "IrregularFine (600k)":        "#ff9896",
-    "Regular (600k)":              "#c5b0d5",
+    "IrregularFine (600k)":        "#c5b0d5",
+    "Regular (600k)":              "#aec7e8",
     "Reversed-circulation (600k)": "#c49c94",
     "Tilt (600k)":                 "#f7b6d2",
-    "Fast-leached (600k)":         "#9edae5",
+    "Fast-leached (600k)":         "#ff9896",
     "Tube-failure (600k)":         "#dbdb8d",
 }
 
@@ -1415,7 +1415,7 @@ def plot_stress_combined(cases, stress_by_series):
 
         ax.set_title(STRESS_PROBE_TITLES.get(ptype, ptype), fontsize=20, fontweight='bold', pad=6)
         ax.set_xlabel("Mean stress p (MPa)", fontsize=18)
-        ax.set_ylabel("Von Mises q (MPa)", fontsize=18)
+        ax.set_ylabel("Differential stress q (MPa)", fontsize=18)
         ax.tick_params(axis='both', labelsize=16)
         ax.grid(True, alpha=0.3)
 
@@ -1498,7 +1498,7 @@ def plot_stress_separate(cases, stress_by_series):
 
             ax.set_title(f"p-q stress path: {ptype}")
             ax.set_xlabel("Mean stress p (MPa)")
-            ax.set_ylabel("Von Mises q (MPa)")
+            ax.set_ylabel("Differential stress q (MPa)")
             ax.grid(True, alpha=0.3)
             if i == 0:
                 ax.legend(loc="upper left", fontsize=20, frameon=True)
@@ -1579,7 +1579,7 @@ def plot_stress_per_cavern(cases, group_fn=None):
 
             ax.set_title(f"p-q stress path: {ptype}")
             ax.set_xlabel("Mean stress p (MPa)")
-            ax.set_ylabel("Von Mises q (MPa)")
+            ax.set_ylabel("Differential stress q (MPa)")
             ax.grid(True, alpha=0.3)
 
         # Pressure subplot — overlay all distinct pressure schedules
@@ -1720,7 +1720,13 @@ def _plot_fos_on_axes(axes, fos_by_case, title_prefix=""):
     ax_sum.set_xlabel("Time (days)")
     ax_sum.set_ylabel("Factor of Safety")
     ax_sum.grid(True, alpha=0.3)
-    ax_sum.legend(fontsize=20, frameon=True, loc="best")
+
+    # Add legend at top of figure (works for all callers)
+    handles, labels = ax_sum.get_legend_handles_labels()
+    if handles:
+        fig = ax_sum.get_figure()
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
+                   ncol=min(4, len(labels)), frameon=True, fontsize=14)
 
 
 def plot_fos_combined(cases):
@@ -1750,8 +1756,7 @@ def plot_fos_combined(cases):
         return
 
     _plot_fos_on_axes(axes, fos_by_case)
-    fig.suptitle(f"Factor of Safety | pressure={SELECT.get('pressure')}", fontsize=20, fontweight='bold')
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
 
     outname = f"fos_combined_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
     outpath = os.path.join(OUT_DIR, outname.replace(" ", ""))
@@ -1781,8 +1786,7 @@ def plot_fos_separate(cases):
         fig, axes = plt.subplots(2, 3, figsize=(20, 11))
         axes = axes.flatten()
         _plot_fos_on_axes(axes, [(label, col, "-", t_days, fos_probes)])
-        fig.suptitle(f"Factor of Safety: {label}", fontsize=20, fontweight='bold')
-        fig.tight_layout(rect=[0, 0, 1, 0.95])
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
 
         safe_name = c.get("case_name", "unknown").replace(" ", "_")
         outname = f"fos_{safe_name}.png"
@@ -1824,8 +1828,7 @@ def plot_fos_per_cavern(cases, group_fn=None):
             continue
 
         _plot_fos_on_axes(axes, fos_by_case)
-        fig.suptitle(f"Factor of Safety — {cav_label}", fontsize=20, fontweight='bold')
-        fig.tight_layout(rect=[0, 0, 1, 0.95])
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
 
         safe_cav = cav_label.replace(" ", "_")
         outname = f"fos_{safe_cav}.png"
@@ -1914,7 +1917,8 @@ def plot_fos_summary(cases):
     ax_fos.set_xlabel("Time (days)")
     ax_fos.set_ylabel("Factor of Safety")
     ax_fos.grid(True, alpha=0.3)
-    ax_fos.legend(fontsize=20, frameon=True, loc="best")
+    ax_fos.legend(fontsize=11, frameon=True, loc="upper center",
+                   bbox_to_anchor=(0.5, 1.15), ncol=4)
 
     # Right: one pressure subplot per scenario
     _pressure_plotted = set()
@@ -2075,11 +2079,15 @@ def plot_fracture_propagation_grouped(frac_cases):
     tightly packed.
     """
     # Build lookup: cavern_label -> case_meta
+    # Strip volume suffix (e.g. " (1200k)") so bare names like "Regular" match
     case_by_label = {}
     for c in frac_cases:
-        cav = c.get("cavern_label")
+        cav = c.get("cavern_label", "")
         if cav not in case_by_label:
             case_by_label[cav] = c
+        bare = cav.split(" (")[0] if " (" in cav else cav
+        if bare not in case_by_label:
+            case_by_label[bare] = c
 
     for group in FRACTURE_GROUPS:
         shapes = group["shapes"]
