@@ -24,6 +24,19 @@ from mpi4py import MPI
 import safeincave.PostProcessingTools as post
 from case_index import detect_layout_and_collect_cases, filter_cases
 
+# =============================================================================
+# POSTER-FRIENDLY GLOBAL STYLE
+# =============================================================================
+plt.rcParams.update({
+    'font.size':        16,
+    'axes.titlesize':   20,
+    'axes.labelsize':   18,
+    'xtick.labelsize':  14,
+    'ytick.labelsize':  14,
+    'legend.fontsize':  14,
+    'figure.titlesize': 22,
+    'lines.linewidth':  2.0,
+})
 
 # =============================================================================
 # USER CONFIGURATION
@@ -44,9 +57,9 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["regular1200", "regular600"],
-    "pressure": None,
-    "scenario": ["A_MD", "A_SIC"],
+    "caverns": ["regular1200", "regular600", "fastleached1200", "fastleached600"],
+    "pressure": ["csv", "power_generation"],
+    "scenario": ["B_MD", "B_SIC", "A_SIC", "A_MD"],
     "n_cycles": 20,
     "operation_days": 365,
     "case_contains": None,
@@ -70,8 +83,14 @@ SELECT = {
 #                         Use when comparing pressure schedules for the same
 #                         cavern and scenario (e.g. industry vs power_generation).
 #                         Color = pressure scheme, linestyle = pressure scheme.
+#
+#   "compare_sizes"     - One figure PER BASE SHAPE (e.g. "Regular"), with
+#                         600k and 1200k overlaid on the same axes.
+#                         Color = scenario (A_SIC, B_MD, etc.).
+#                         Linestyle = solid for 1200k, dashed for 600k.
+#                         Label = "B_SIC (1200k)", "B_MD (600k)", etc.
 
-PLOT_MODE = "compare_scenarios"    # "compare_shapes", "compare_scenarios", or "compare_pressures"
+PLOT_MODE = "compare_scenarios"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
 
 FIGURES = {
     "convergence": True,          # Figure 1: volume convergence
@@ -107,7 +126,7 @@ XDMF_FILENAME = "fos.xdmf"
 
 OUT_DIR = os.path.join(ROOT, "_figures")
 SHOW = False
-DPI = 180
+DPI = 300
 CAVERN_PHYS_TAG = 29
 
 # =============================================================================
@@ -323,6 +342,22 @@ def read_pressure_schedule(case_folder: str):
 # 3. CASE HELPERS
 # =============================================================================
 
+SIZE_LINESTYLES = {"1200k": "-", "600k": "--"}
+
+
+def _extract_size_tag(cavern_label):
+    """Extract '600k' or '1200k' from a cavern label like 'Regular (1200k)'."""
+    import re
+    m = re.search(r"\((\d+k)\)", cavern_label or "")
+    return m.group(1) if m else None
+
+
+def _strip_size(cavern_label):
+    """Strip volume suffix: 'Regular (1200k)' -> 'Regular'."""
+    import re
+    return re.sub(r"\s*\(\d+k\)\s*$", "", cavern_label or "").strip()
+
+
 def get_case_color_and_style(cavern_label, scenario_preset, pressure_scenario=None, mode=None):
     """Return (color, linestyle) based on the active PLOT_MODE."""
     if mode is None:
@@ -330,6 +365,10 @@ def get_case_color_and_style(cavern_label, scenario_preset, pressure_scenario=No
     if mode == "compare_pressures":
         color = PRESSURE_COLORS.get(pressure_scenario, "#333333")
         linestyle = PRESSURE_LINESTYLES.get(pressure_scenario, "-")
+    elif mode == "compare_sizes":
+        color = SCENARIO_COLORS.get(scenario_preset, "#333333")
+        size_tag = _extract_size_tag(cavern_label)
+        linestyle = SIZE_LINESTYLES.get(size_tag, "-")
     elif mode == "compare_scenarios":
         if scenario_preset is not None:
             color = SCENARIO_COLORS.get(scenario_preset, "#333333")
@@ -351,6 +390,9 @@ def get_case_label(meta, mode=None):
     ps = meta.get("pressure_scenario")
     if mode == "compare_pressures":
         return PRESSURE_LABELS.get(ps, ps or "unknown")
+    elif mode == "compare_sizes":
+        size_tag = _extract_size_tag(cav) or ""
+        return f"{sc} ({size_tag})" if sc else f"{cav}"
     elif mode == "compare_scenarios":
         return f"{sc}" if sc is not None else meta.get("case_name", "")
     else:  # compare_shapes
@@ -378,6 +420,16 @@ def group_cases_by_cavern(cases):
     for c in cases:
         cav = c.get("cavern_label", "unknown")
         groups.setdefault(cav, []).append(c)
+    return groups
+
+
+def group_cases_by_base_shape(cases):
+    """Group cases by base shape (without volume suffix).
+    Returns dict: base_shape -> [cases], e.g. 'Regular' -> [600k cases, 1200k cases]."""
+    groups = {}
+    for c in cases:
+        base = _strip_size(c.get("cavern_label", "unknown"))
+        groups.setdefault(base, []).append(c)
     return groups
 
 
@@ -1163,9 +1215,9 @@ def compute_FOS_data(time_days, stress_data):
 # =============================================================================
 
 def plot_convergence_combined(cases):
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 7), sharex=True,
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 9), sharex=True,
                                    gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
-    ax1.set_title("Cavern convergence", fontsize=14, fontweight='bold', pad=8)
+    ax1.set_title("Cavern convergence", fontsize=20, fontweight='bold', pad=8)
 
     for c in cases:
         cav = c.get("cavern_label")
@@ -1180,8 +1232,8 @@ def plot_convergence_combined(cases):
             continue
         ax1.plot(t_days, conv, linewidth=2.0, color=col, linestyle=ls, alpha=0.95, label=label)
 
-    ax1.set_ylabel("Convergence (ΔV/V₀) (%)", fontsize=12)
-    ax1.tick_params(axis='both', labelsize=11)
+    ax1.set_ylabel("Convergence (ΔV/V₀) (%)", fontsize=20)
+    ax1.tick_params(axis='both', labelsize=16)
     ax1.grid(True, alpha=0.3)
 
     h, l = ax1.get_legend_handles_labels()
@@ -1190,7 +1242,7 @@ def plot_convergence_combined(cases):
         if ll not in uniq:
             uniq[ll] = hh
     if uniq:
-        ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=10, frameon=True)
+        ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=16, frameon=True)
 
     # Plot pressure schedule(s) — overlay all distinct schedules in compare_pressures
     _plotted_pressures = set()
@@ -1206,10 +1258,10 @@ def plot_convergence_combined(cases):
     if not _plotted_pressures:
         ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
     if len(_plotted_pressures) > 1:
-        ax2.legend(fontsize=9, frameon=True, loc="best")
-    ax2.set_ylabel("Pressure (MPa)", fontsize=12)
-    ax2.set_xlabel("Time (days)", fontsize=12)
-    ax2.tick_params(axis='both', labelsize=11)
+        ax2.legend(fontsize=20, frameon=True, loc="best")
+    ax2.set_ylabel("Pressure (MPa)", fontsize=20)
+    ax2.set_xlabel("Time (days)", fontsize=20)
+    ax2.tick_params(axis='both', labelsize=16)
     ax2.grid(True, alpha=0.3)
 
     fig.tight_layout()
@@ -1238,14 +1290,14 @@ def plot_convergence_separate(cases):
             print(f"[SKIP] {cav}/{sc}: {e}")
             continue
 
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True,
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(20, 10), sharex=True,
                                        gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
         fig.suptitle(f"Convergence: {label}")
 
         ax1.plot(t_days, conv, linewidth=2.0, color=col, alpha=0.95, label=label)
         ax1.set_ylabel("Convergence (ΔV/V0) (%)")
         ax1.grid(True, alpha=0.3)
-        ax1.legend(loc="best", fontsize=9, frameon=True)
+        ax1.legend(loc="best", fontsize=20, frameon=True)
 
         tH, pMPa = read_pressure_schedule(c["case_path"])
         if tH is None:
@@ -1267,18 +1319,19 @@ def plot_convergence_separate(cases):
         plt.close(fig)
 
 
-def plot_convergence_per_cavern(cases):
+def plot_convergence_per_cavern(cases, group_fn=None):
     """One convergence figure per cavern, scenarios/pressures overlaid."""
-    groups = group_cases_by_cavern(cases)
+    groups = (group_fn or group_cases_by_cavern)(cases)
     for cav_label, cav_cases in groups.items():
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 7), sharex=True,
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 9), sharex=True,
                                        gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
         fig.suptitle(f"3D cavern volume convergence — {cav_label}")
 
         for c in cav_cases:
+            cav_full = c.get("cavern_label", cav_label)
             sc = c.get("scenario_preset")
             ps = c.get("pressure_scenario")
-            col, ls = get_case_color_and_style(cav_label, sc, ps)
+            col, ls = get_case_color_and_style(cav_full, sc, ps)
             label = get_case_label(c)
             try:
                 t_days, conv = compute_convergence_3d_percent(c["case_path"], cavern_phys_tag=CAVERN_PHYS_TAG)
@@ -1295,7 +1348,7 @@ def plot_convergence_per_cavern(cases):
             if ll not in uniq:
                 uniq[ll] = hh
         if uniq:
-            ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=9, frameon=True)
+            ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=20, frameon=True)
 
         # Plot pressure schedule(s) — overlay all distinct schedules
         _plotted_pressures = set()
@@ -1312,7 +1365,7 @@ def plot_convergence_per_cavern(cases):
         if not _plotted_pressures:
             ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
         if len(_plotted_pressures) > 1:
-            ax2.legend(fontsize=8, frameon=True, loc="best")
+            ax2.legend(fontsize=20, frameon=True, loc="best")
         ax2.set_ylabel("Pressure (MPa)")
         ax2.set_xlabel("Time (days)")
         ax2.grid(True, alpha=0.3)
@@ -1344,7 +1397,7 @@ STRESS_PROBE_TITLES = {
 def plot_stress_combined(cases, stress_by_series):
     probe_types = ["top", "quarter", "mid", "threequarter", "bottom"]
 
-    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+    fig, axes = plt.subplots(2, 3, figsize=(20, 11))
     axes = axes.flatten()
 
     for i, ptype in enumerate(probe_types):
@@ -1360,10 +1413,10 @@ def plot_stress_combined(cases, stress_by_series):
             ax.scatter(p[-1], q[-1], s=30, edgecolors="black", linewidths=0.6,
                        color=color, zorder=5)
 
-        ax.set_title(STRESS_PROBE_TITLES.get(ptype, ptype), fontsize=12, fontweight='bold', pad=6)
-        ax.set_xlabel("Mean stress p (MPa)", fontsize=11)
-        ax.set_ylabel("Von Mises q (MPa)", fontsize=11)
-        ax.tick_params(axis='both', labelsize=10)
+        ax.set_title(STRESS_PROBE_TITLES.get(ptype, ptype), fontsize=20, fontweight='bold', pad=6)
+        ax.set_xlabel("Mean stress p (MPa)", fontsize=18)
+        ax.set_ylabel("Von Mises q (MPa)", fontsize=18)
+        ax.tick_params(axis='both', labelsize=16)
         ax.grid(True, alpha=0.3)
 
     axp = axes[5]
@@ -1382,13 +1435,13 @@ def plot_stress_combined(cases, stress_by_series):
                  ha="center", va="center", transform=axp.transAxes)
         axp.axis("off")
     else:
-        axp.set_title("Pressure schedule", fontsize=12, fontweight='bold', pad=6)
-        axp.set_xlabel("Time (days)", fontsize=11)
-        axp.set_ylabel("Pressure (MPa)", fontsize=11)
-        axp.tick_params(axis='both', labelsize=10)
+        axp.set_title("Pressure schedule", fontsize=20, fontweight='bold', pad=6)
+        axp.set_xlabel("Time (days)", fontsize=18)
+        axp.set_ylabel("Pressure (MPa)", fontsize=18)
+        axp.tick_params(axis='both', labelsize=16)
         axp.grid(True, alpha=0.3)
         if len(_plotted_pressures) > 1:
-            axp.legend(fontsize=9, frameon=True)
+            axp.legend(fontsize=20, frameon=True)
 
     # Build separate legend entries for dilatancy boundaries and cavern shapes
     boundary_handles, boundary_labels = [], []
@@ -1410,7 +1463,7 @@ def plot_stress_combined(cases, stress_by_series):
     all_handles = shape_handles + boundary_handles
     all_labels = shape_labels + boundary_labels
     fig.legend(all_handles, all_labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
-               ncol=min(5, len(all_labels)), frameon=True, fontsize=9)
+               ncol=min(5, len(all_labels)), frameon=True, fontsize=20)
 
     fig.tight_layout(rect=[0, 0, 1, 0.92])
 
@@ -1428,7 +1481,7 @@ def plot_stress_separate(cases, stress_by_series):
     probe_types = ["top", "quarter", "mid", "threequarter", "bottom"]
 
     for (cav, sc, ps), d in stress_by_series.items():
-        fig, axes = plt.subplots(2, 3, figsize=(14, 8))
+        fig, axes = plt.subplots(2, 3, figsize=(18, 10))
         axes = axes.flatten()
 
         case_label = get_case_label({"cavern_label": cav, "scenario_preset": sc, "pressure_scenario": ps})
@@ -1448,7 +1501,7 @@ def plot_stress_separate(cases, stress_by_series):
             ax.set_ylabel("Von Mises q (MPa)")
             ax.grid(True, alpha=0.3)
             if i == 0:
-                ax.legend(loc="upper left", fontsize=9, frameon=True)
+                ax.legend(loc="upper left", fontsize=20, frameon=True)
 
         axp = axes[5]
         case_path = None
@@ -1471,7 +1524,7 @@ def plot_stress_separate(cases, stress_by_series):
         else:
             axp.axis("off")
 
-        fig.suptitle(f"Stress State: {case_label}", fontsize=12, fontweight="bold")
+        fig.suptitle(f"Stress State: {case_label}", fontsize=20, fontweight="bold")
         fig.tight_layout(rect=[0, 0, 1, 0.96])
 
         safe_name = f"{cav}_{sc}_{ps}".replace(" ", "_").replace("/", "_").replace("None", "")
@@ -1485,10 +1538,10 @@ def plot_stress_separate(cases, stress_by_series):
         plt.close(fig)
 
 
-def plot_stress_per_cavern(cases):
+def plot_stress_per_cavern(cases, group_fn=None):
     """One stress-state figure per cavern, scenarios/pressures overlaid."""
     probe_types = ["top", "quarter", "mid", "threequarter", "bottom"]
-    groups = group_cases_by_cavern(cases)
+    groups = (group_fn or group_cases_by_cavern)(cases)
 
     for cav_label, cav_cases in groups.items():
         # Build stress paths for all cases of this cavern
@@ -1508,7 +1561,7 @@ def plot_stress_per_cavern(cases):
             print(f"[STRESS STATE] No valid data for {cav_label}")
             continue
 
-        fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+        fig, axes = plt.subplots(2, 3, figsize=(20, 11))
         axes = axes.flatten()
 
         for i, ptype in enumerate(probe_types):
@@ -1552,7 +1605,7 @@ def plot_stress_per_cavern(cases):
             axp.set_ylabel("Pressure (MPa)")
             axp.grid(True, alpha=0.3)
             if len(_plotted_pressures) > 1:
-                axp.legend(fontsize=8, frameon=True)
+                axp.legend(fontsize=20, frameon=True)
 
         handles, labels = axes[0].get_legend_handles_labels()
         uniq = {}
@@ -1560,9 +1613,9 @@ def plot_stress_per_cavern(cases):
             if l not in uniq:
                 uniq[l] = h
         fig.legend(uniq.values(), uniq.keys(), loc="upper center", bbox_to_anchor=(0.5, 0.96),
-                   ncol=min(5, len(uniq)), frameon=True, fontsize=9)
+                   ncol=min(5, len(uniq)), frameon=True, fontsize=20)
 
-        fig.suptitle(f"Stress State — {cav_label}", fontsize=12, fontweight="bold", y=0.99)
+        fig.suptitle(f"Stress State — {cav_label}", fontsize=20, fontweight="bold", y=0.99)
         fig.tight_layout(rect=[0, 0, 1, 0.92])
 
         safe_cav = cav_label.replace(" ", "_")
@@ -1667,12 +1720,12 @@ def _plot_fos_on_axes(axes, fos_by_case, title_prefix=""):
     ax_sum.set_xlabel("Time (days)")
     ax_sum.set_ylabel("Factor of Safety")
     ax_sum.grid(True, alpha=0.3)
-    ax_sum.legend(fontsize=8, frameon=True, loc="best")
+    ax_sum.legend(fontsize=20, frameon=True, loc="best")
 
 
 def plot_fos_combined(cases):
     """Single 2x3 figure with all cases overlaid (compare_shapes mode)."""
-    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+    fig, axes = plt.subplots(2, 3, figsize=(20, 11))
     axes = axes.flatten()
 
     fos_by_case = []
@@ -1697,7 +1750,7 @@ def plot_fos_combined(cases):
         return
 
     _plot_fos_on_axes(axes, fos_by_case)
-    fig.suptitle(f"Factor of Safety | pressure={SELECT.get('pressure')}", fontsize=12, fontweight='bold')
+    fig.suptitle(f"Factor of Safety | pressure={SELECT.get('pressure')}", fontsize=20, fontweight='bold')
     fig.tight_layout(rect=[0, 0, 1, 0.95])
 
     outname = f"fos_combined_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
@@ -1725,10 +1778,10 @@ def plot_fos_separate(cases):
             print(f"[SKIP] {cav}/{sc}: {e}")
             continue
 
-        fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+        fig, axes = plt.subplots(2, 3, figsize=(20, 11))
         axes = axes.flatten()
         _plot_fos_on_axes(axes, [(label, col, "-", t_days, fos_probes)])
-        fig.suptitle(f"Factor of Safety: {label}", fontsize=12, fontweight='bold')
+        fig.suptitle(f"Factor of Safety: {label}", fontsize=20, fontweight='bold')
         fig.tight_layout(rect=[0, 0, 1, 0.95])
 
         safe_name = c.get("case_name", "unknown").replace(" ", "_")
@@ -1742,18 +1795,19 @@ def plot_fos_separate(cases):
         plt.close(fig)
 
 
-def plot_fos_per_cavern(cases):
+def plot_fos_per_cavern(cases, group_fn=None):
     """One 2x3 FOS figure per cavern, scenarios/pressures overlaid."""
-    groups = group_cases_by_cavern(cases)
+    groups = (group_fn or group_cases_by_cavern)(cases)
     for cav_label, cav_cases in groups.items():
-        fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+        fig, axes = plt.subplots(2, 3, figsize=(20, 11))
         axes = axes.flatten()
 
         fos_by_case = []
         for c in cav_cases:
+            cav_full = c.get("cavern_label", cav_label)
             sc = c.get("scenario_preset")
             ps = c.get("pressure_scenario")
-            col, ls = get_case_color_and_style(cav_label, sc, ps)
+            col, ls = get_case_color_and_style(cav_full, sc, ps)
             label = get_case_label(c)
 
             try:
@@ -1770,7 +1824,7 @@ def plot_fos_per_cavern(cases):
             continue
 
         _plot_fos_on_axes(axes, fos_by_case)
-        fig.suptitle(f"Factor of Safety — {cav_label}", fontsize=12, fontweight='bold')
+        fig.suptitle(f"Factor of Safety — {cav_label}", fontsize=20, fontweight='bold')
         fig.tight_layout(rect=[0, 0, 1, 0.95])
 
         safe_cav = cav_label.replace(" ", "_")
@@ -1832,7 +1886,7 @@ def plot_fos_summary(cases):
     n_pressures = max(len(ordered), 1)
 
     # --- Create figure with gridspec ---
-    fig = plt.figure(figsize=(16, max(6, 2.2 * n_pressures)))
+    fig = plt.figure(figsize=(20, max(8, 2.8 * n_pressures)))
     gs = gridspec.GridSpec(n_pressures, 2, width_ratios=[3, 2],
                            hspace=0.40, wspace=0.30)
 
@@ -1856,11 +1910,11 @@ def plot_fos_summary(cases):
             ax_fos.plot(tx, my, linewidth=2.0, linestyle=ls, color=col, label=label)
 
     ax_fos.axhline(y=1.0, color='red', linestyle=':', linewidth=1.5, alpha=0.8)
-    ax_fos.set_title("Global min FOS (all cells)", fontsize=11, fontweight='bold')
+    ax_fos.set_title("Global min FOS (all cells)", fontsize=18, fontweight='bold')
     ax_fos.set_xlabel("Time (days)")
     ax_fos.set_ylabel("Factor of Safety")
     ax_fos.grid(True, alpha=0.3)
-    ax_fos.legend(fontsize=8, frameon=True, loc="best")
+    ax_fos.legend(fontsize=20, frameon=True, loc="best")
 
     # Right: one pressure subplot per scenario
     _pressure_plotted = set()
@@ -1877,13 +1931,13 @@ def plot_fos_summary(cases):
                 _pressure_plotted.add(ps_key)
                 break
 
-        ax_p.set_title(PRESSURE_LABELS.get(ps_key, ps_key), fontsize=10)
+        ax_p.set_title(PRESSURE_LABELS.get(ps_key, ps_key), fontsize=16)
         ax_p.set_ylabel("Pressure (MPa)")
         ax_p.grid(True, alpha=0.3)
         if row == len(ordered) - 1:
             ax_p.set_xlabel("Time (days)")
 
-    fig.suptitle("FOS Summary & Pressure Profiles", fontsize=12, fontweight='bold')
+    fig.suptitle("FOS Summary & Pressure Profiles", fontsize=20, fontweight='bold')
     fig.tight_layout(rect=[0, 0, 1, 0.95])
 
     outname = f"fos_summary_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
@@ -1920,7 +1974,7 @@ def plot_cavern_with_probes(ax, wall_points, sample_points):
         wall_pt = dist_points[0][1]
         ax.annotate(probe_name, (wall_pt[0], wall_pt[2]),
                    textcoords="offset points", xytext=(10, 0),
-                   fontsize=9, color=color, fontweight='bold')
+                   fontsize=20, color=color, fontweight='bold')
 
     ax.set_xlabel('Radial distance (m)')
     ax.set_ylabel('Height z (m)')
@@ -1948,7 +2002,7 @@ def plot_propagation_depth(ax, time_days, fos_data, radial_distances, threshold=
     ax.set_ylabel('FOS<1 penetration depth (m)')
     ax.set_title('Connected dilating zone size')
     ax.grid(True, alpha=0.3)
-    ax.legend(loc='upper left', fontsize=9)
+    ax.legend(loc='upper left', fontsize=20)
 
 
 def plot_fracture_propagation(case_meta):
@@ -1974,14 +2028,14 @@ def plot_fracture_propagation(case_meta):
         time_days, stress_data = read_stress_at_points(folder, sample_points)
         fos_data = compute_FOS_data(time_days, stress_data)
 
-        fig, (ax_cavern, ax_depth) = plt.subplots(1, 2, figsize=(16, 8))
+        fig, (ax_cavern, ax_depth) = plt.subplots(1, 2, figsize=(20, 10))
 
         plot_cavern_with_probes(ax_cavern, wall_points, sample_points)
         plot_propagation_depth(ax_depth, time_days, fos_data, RADIAL_DISTANCES, FOS_THRESHOLD)
 
         fig.suptitle(f'Dilatancy Zone Analysis: {case_label}\n'
                      f'(De Vries criterion, radial distances: {RADIAL_DISTANCES} m)',
-                     fontsize=12, fontweight='bold')
+                     fontsize=20, fontweight='bold')
         fig.tight_layout(rect=[0, 0, 1, 0.93])
 
         safe_name = f"{cav}_{sc}_{ps}".replace(" ", "_").replace("/", "_").replace("None", "none")
@@ -2060,7 +2114,7 @@ def plot_fracture_propagation_grouped(frac_cases):
 
         n_shapes = len(group_data)
         # 2 subplots per shape (cavern profile + dilating zone), arranged in columns
-        fig, axes = plt.subplots(1, n_shapes * 2, figsize=(6.0 * n_shapes, 7),
+        fig, axes = plt.subplots(1, n_shapes * 2, figsize=(7.0 * n_shapes, 9),
                                  gridspec_kw={"width_ratios": [0.8, 1.0] * n_shapes,
                                               "wspace": 0.15})
         if n_shapes * 2 == 2:
@@ -2071,27 +2125,27 @@ def plot_fracture_propagation_grouped(frac_cases):
             ax_dep = axes[idx * 2 + 1]
 
             plot_cavern_with_probes(ax_cav, wall_pts, samp_pts)
-            ax_cav.set_title(shape_name, fontsize=12, fontweight='bold', pad=6)
-            ax_cav.set_xlabel("Radial distance (m)", fontsize=11)
-            ax_cav.set_ylabel("Height z (m)", fontsize=11)
-            ax_cav.tick_params(axis='both', labelsize=10)
+            ax_cav.set_title(shape_name, fontsize=20, fontweight='bold', pad=6)
+            ax_cav.set_xlabel("Radial distance (m)", fontsize=18)
+            ax_cav.set_ylabel("Height z (m)", fontsize=18)
+            ax_cav.tick_params(axis='both', labelsize=16)
             leg = ax_cav.get_legend()
             if leg is not None:
                 leg.remove()
 
             plot_propagation_depth(ax_dep, t_days, fos_d, RADIAL_DISTANCES, FOS_THRESHOLD)
             ax_dep.set_title("", fontsize=1)  # clear sub-title
-            ax_dep.set_xlabel("Time (days)", fontsize=11)
-            ax_dep.set_ylabel("FOS<1 penetration (m)", fontsize=11)
-            ax_dep.tick_params(axis='both', labelsize=10)
+            ax_dep.set_xlabel("Time (days)", fontsize=18)
+            ax_dep.set_ylabel("FOS<1 penetration (m)", fontsize=18)
+            ax_dep.tick_params(axis='both', labelsize=16)
             # Move legend to top-right, only show once (last column)
             leg_dep = ax_dep.get_legend()
             if idx == n_shapes - 1:
-                ax_dep.legend(loc='upper right', fontsize=9, frameon=True)
+                ax_dep.legend(loc='upper right', fontsize=20, frameon=True)
             elif leg_dep is not None:
                 leg_dep.remove()
 
-        fig.suptitle("Dilatancy zone", fontsize=14, fontweight='bold')
+        fig.suptitle("Dilatancy zone", fontsize=20, fontweight='bold')
         fig.tight_layout(rect=[0, 0, 1, 0.95])
 
         outname = f"dilatancy_zone_{group_label}.png"
@@ -2152,6 +2206,8 @@ def main():
             print(f"\n[CONVERGENCE] {len(conv_cases)} case(s) with required files")
             if mode == "compare_shapes":
                 plot_convergence_combined(conv_cases)
+            elif mode == "compare_sizes":
+                plot_convergence_per_cavern(conv_cases, group_fn=group_cases_by_base_shape)
             elif mode in ("compare_scenarios", "compare_pressures"):
                 plot_convergence_per_cavern(conv_cases)
             else:
@@ -2180,6 +2236,8 @@ def main():
                     plot_stress_combined(stress_cases, stress_by_series)
                 else:
                     print("[STRESS STATE] No valid stress data could be loaded.")
+            elif mode == "compare_sizes":
+                plot_stress_per_cavern(stress_cases, group_fn=group_cases_by_base_shape)
             elif mode in ("compare_scenarios", "compare_pressures"):
                 plot_stress_per_cavern(stress_cases)
             else:
@@ -2194,6 +2252,8 @@ def main():
             print(f"\n[FOS] {len(fos_cases)} case(s) with required files")
             if mode == "compare_shapes":
                 plot_fos_combined(fos_cases)
+            elif mode == "compare_sizes":
+                plot_fos_per_cavern(fos_cases, group_fn=group_cases_by_base_shape)
             elif mode in ("compare_scenarios", "compare_pressures"):
                 plot_fos_per_cavern(fos_cases)
             else:
@@ -2218,6 +2278,11 @@ def main():
             print(f"\n[FRACTURE PROPAGATION] {len(frac_cases)} case(s) with required files")
             if mode == "compare_shapes":
                 plot_fracture_propagation_grouped(frac_cases)
+            elif mode == "compare_sizes":
+                # One figure per base shape with sizes overlaid
+                for base, grp in group_cases_by_base_shape(frac_cases).items():
+                    for case_meta in grp:
+                        plot_fracture_propagation(case_meta)
             else:
                 for case_meta in frac_cases:
                     plot_fracture_propagation(case_meta)

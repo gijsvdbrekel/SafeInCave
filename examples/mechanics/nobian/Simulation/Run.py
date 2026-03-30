@@ -14,7 +14,7 @@ import csv
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║                           USER CONFIGURATION                                  ║
+# ║                           USER CONFIGURATION                                 ║
 # ╠══════════════════════════════════════════════════════════════════════════════╣
 # ║  This script supports homogeneous salt caverns with optional leaching phase.  ║
 # ║  Combines functionality of Run.py and Run_leaching.py.                        ║
@@ -26,8 +26,8 @@ import csv
 # ║  CAVERN SELECTION:                                                            ║
 # ║  - Standard shapes: regular, tilted, directcirculation, asymmetric,           ║
 # ║                     reversedcirculation, fastleached, tubefailure             ║
-# ║                     (sizes: 600k or 1200k m³)                                ║
-# ║  - Zuidwending A5: ~1.000.000k m³, real depth 1140-1510m                            ║
+# ║                     (sizes: 600k or 1200k m³)                                 ║
+# ║  - Zuidwending A5: ~1.000.000k m³, real depth 1140-1510m                      ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 # ── INITIALIZATION MODE ───────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ EQUILIBRIUM_DT_HOURS = 0.5
 #   Special caverns (CAVERN_SIZE is ignored):
 #     "A5"           - Zuidwending cavern A5 (~1.000.000k m³, depth 1140-1510m)
 
-CAVERN_TYPE = "regular"
+CAVERN_TYPE = "fastleached"
 
 # CAVERN_SIZE: Volume in thousands of m³ (ignored for A5)
 #   600  - 600,000 m³ volume
@@ -166,7 +166,7 @@ RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
 MATERIAL_SCENARIO = "B"             # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
-USE_MUNSON_DAWSON = False          # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
+USE_MUNSON_DAWSON = True         # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
 USE_THERMAL = False

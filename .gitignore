@@ -197,3 +197,4 @@ cython_debug/
 **/output/
 **/jit*/
 *.pyc
+thesis

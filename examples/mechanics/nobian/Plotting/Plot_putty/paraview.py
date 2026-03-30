@@ -8,8 +8,8 @@ Generates multiple XDMF files for Paraview visualization:
   2. cross_section.xdmf   — vertical slice with principal stress arrows
   3. convergence.xdmf     — displacement vectors on cross-section (wall movement)
 
-Edit CASE_FOLDER and TIMESTEPS below, then run:
-    python compute_principal_stress.py
+Usage:
+    python paraview.py
 """
 
 import os
@@ -23,12 +23,35 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "..", ".."))
 sys.path.insert(0, PROJECT_ROOT)
 
+from case_index import detect_layout_and_collect_cases, filter_cases
+
 # =============================================================================
 # USER CONFIGURATION — edit these settings before running
 # =============================================================================
 
-# Case folder: path to simulation output (relative to this script or absolute)
-CASE_FOLDER = "../../Simulation/output/case_leaching_linear_industry(36)_365days_SA_SIC_regular1200"
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "output"))
+
+# ── CASE SELECTION ─────────────────────────────────────────────────────────────
+# SELECT: Filter which cases to process (same format as plot_results.py)
+#   Set to None to include all cases.
+#
+# Available filters:
+#   "caverns"        - Cavern shapes to include (e.g. "regular1200", "tilted1200")
+#   "pressure"       - Pressure scenario: "industry", "transport", "power_generation", "csv", or None
+#   "scenario"       - Material scenario(s): "A_SIC", "A_MD", "B_SIC", "B_MD" or None
+#   "n_cycles"       - Number of cycles (int) or None
+#   "operation_days" - Operation duration (int) or None
+#   "case_contains"  - Substring match in case name or None
+
+SELECT = {
+    "caverns": ["regular1200"],
+    "pressure": ["csv"],
+    "scenario": ["B_SIC"],
+    "n_cycles": None,
+    "operation_days": 365,
+    "case_contains": None,
+}
 
 # Phase: which phase to read from ("operation" or leaching phase name)
 PHASE = "operation"
@@ -374,23 +397,8 @@ def write_convergence_xdmf(output_path, points, cells_tetra, cell_mask,
 # MAIN
 # =============================================================================
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Generate Paraview visualizations from simulation output."
-    )
-    parser.add_argument("case_folder", nargs="?", default=None)
-    parser.add_argument("--phase", default=None)
-    parser.add_argument("--timesteps", nargs="*", type=int, default=None)
-    args = parser.parse_args()
-
-    case_raw = args.case_folder or CASE_FOLDER
-    phase = args.phase or PHASE
-    timestep_sel = args.timesteps if args.timesteps is not None else TIMESTEPS
-
-    if not os.path.isabs(case_raw):
-        case_folder = os.path.normpath(os.path.join(SCRIPT_DIR, case_raw))
-    else:
-        case_folder = os.path.abspath(case_raw)
+def process_case(case_folder, phase, timestep_sel):
+    """Process a single case folder: extract Paraview XDMF files."""
 
     # ---- Verify paths ----
     sig_path = os.path.join(case_folder, phase, "sig", "sig.xdmf")
@@ -692,6 +700,59 @@ def main():
        At t=0 arrows are zero; they grow as creep progresses.
        Larger arrows = more displacement = more creep.
 """)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate Paraview visualizations from simulation output."
+    )
+    parser.add_argument("case_folder", nargs="?", default=None,
+                        help="Single case folder (overrides SELECT filter)")
+    parser.add_argument("--phase", default=None)
+    parser.add_argument("--timesteps", nargs="*", type=int, default=None)
+    args = parser.parse_args()
+
+    phase = args.phase or PHASE
+    timestep_sel = args.timesteps if args.timesteps is not None else TIMESTEPS
+
+    # If a specific case folder is given on the command line, use only that
+    if args.case_folder:
+        case_raw = args.case_folder
+        if not os.path.isabs(case_raw):
+            case_folder = os.path.normpath(os.path.join(SCRIPT_DIR, case_raw))
+        else:
+            case_folder = os.path.abspath(case_raw)
+        print(f"[INFO] Processing single case: {case_folder}")
+        process_case(case_folder, phase, timestep_sel)
+        return
+
+    # Otherwise, use SELECT filter to discover cases (same as plot_results.py)
+    all_cases = detect_layout_and_collect_cases(ROOT)
+    cases = filter_cases(all_cases, SELECT)
+
+    if not cases:
+        print(f"[ERROR] No cases matched SELECT filter in {ROOT}")
+        print(f"[INFO]  SELECT = {SELECT}")
+        print(f"[INFO]  Total cases found: {len(all_cases)}")
+        for m in all_cases[:10]:
+            print(f"         {m.get('case_name')}")
+        return
+
+    print(f"[INFO] Found {len(cases)} case(s) matching SELECT filter:")
+    for m in cases:
+        print(f"  - {m['case_name']}")
+    print()
+
+    for i, meta in enumerate(cases):
+        case_folder = meta["case_path"]
+        print(f"\n{'='*70}")
+        print(f"  CASE {i+1}/{len(cases)}: {meta['case_name']}")
+        print(f"{'='*70}")
+        try:
+            process_case(case_folder, phase, timestep_sel)
+        except Exception as e:
+            print(f"[ERROR] Failed: {e}")
+            continue
 
 
 if __name__ == "__main__":

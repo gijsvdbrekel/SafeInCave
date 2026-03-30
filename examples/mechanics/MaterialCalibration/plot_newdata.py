@@ -24,7 +24,7 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "output")
 FIG_DIR  = os.path.join(os.path.dirname(__file__), "figures")
 
 SHOW_COMPONENTS = True
-DPI = 180
+DPI = 300
 SHOW = False
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -148,7 +148,7 @@ def plot_newdata(data, fig_dir, thesis=False):
     # ── Figure layout ────────────────────────────────────────────────────────
     if thesis:
         fig, (ax_sig, ax_ax) = plt.subplots(
-            2, 1, figsize=(12, 8), height_ratios=[1, 3],
+            2, 1, figsize=(16, 10), height_ratios=[1, 3],
             sharex=True, gridspec_kw={"hspace": 0.08}
         )
         ax_par = None
@@ -164,24 +164,28 @@ def plot_newdata(data, fig_dir, thesis=False):
 
     # ── Top panel: stress schedule ───────────────────────────────────────────
     t_days = t_lab / 24
-    ax_sig.plot(t_days, sig1_lab, "r-", linewidth=1.5, label="$\\sigma_1$")
-    ax_sig.plot(t_days, sig3_lab, "b-", linewidth=1.5, label="$\\sigma_3$")
-    ax_sig.plot(t_days, sig_diff_lab, "k--", linewidth=1, alpha=0.7,
+    ax_sig.plot(t_days, sig1_lab, "r-", linewidth=2.0, label="$\\sigma_1$")
+    ax_sig.plot(t_days, sig3_lab, "b-", linewidth=2.0, label="$\\sigma_3$")
+    ax_sig.plot(t_days, sig_diff_lab, "k--", linewidth=1.5, alpha=0.7,
                 label="$\\sigma_{diff}$")
-    ax_sig.set_ylabel("Stress (MPa)")
     if thesis:
+        ax_sig.set_ylabel("Stress (MPa)", fontsize=20)
         ax_sig.set_title(f"Cyclic triaxial creep test — "
                          f"$T = {T_C:.0f}$ °C, "
-                         f"$\\sigma_3 \\approx {s3_mean:.0f}$ MPa")
+                         f"$\\sigma_3 \\approx {s3_mean:.0f}$ MPa",
+                         fontsize=22)
+        ax_sig.tick_params(labelsize=16)
+        ax_sig.legend(loc="upper right", fontsize=16)
     else:
+        ax_sig.set_ylabel("Stress (MPa)")
         ax_sig.set_title(f"Cyclic Triaxial Creep Test  |  T = {T_C} C  |  "
                          f"$\\sigma_3$ ~ {s3_mean:.0f} MPa")
+        ax_sig.legend(loc="upper right", fontsize=9)
     ax_sig.grid(True, alpha=0.3)
-    ax_sig.legend(loc="upper right", fontsize=9)
     plt.setp(ax_sig.get_xticklabels(), visible=False)
 
     # ── Bottom panel: axial strain ───────────────────────────────────────────
-    ax_ax.plot(t_days, e_ax_lab, "ko", markersize=1.5, alpha=0.5,
+    ax_ax.plot(t_days, e_ax_lab, "ko", markersize=2.5, alpha=0.5,
                label="Lab data", zorder=5)
 
     metrics_text = []
@@ -190,20 +194,20 @@ def plot_newdata(data, fig_dir, thesis=False):
         sic = data["safeincave"]
         t_sic = np.array(sic["time_hours"])
         eps_sic = np.array(sic["strain_axial_pct"])
-        ax_ax.plot(t_sic / 24, eps_sic, "-", color="#1f77b4", linewidth=2,
+        ax_ax.plot(t_sic / 24, eps_sic, "-", color="#1f77b4", linewidth=2.5,
                    label="SafeInCave (total)")
 
         if SHOW_COMPONENTS:
             eps_dc = np.array(sic["strain_disloc_pct"])
             eps_kv = np.array(sic["strain_kelvin_pct"])
             eps_de = np.array(sic["strain_desai_pct"])
-            ax_ax.plot(t_sic / 24, eps_dc, "--", color="#1f77b4", linewidth=1,
+            ax_ax.plot(t_sic / 24, eps_dc, "--", color="#1f77b4", linewidth=1.5,
                        alpha=0.5, label="  dislocation")
-            ax_ax.plot(t_sic / 24, eps_kv, "-.", color="#1f77b4", linewidth=1,
+            ax_ax.plot(t_sic / 24, eps_kv, "-.", color="#1f77b4", linewidth=1.5,
                        alpha=0.5, label="  Kelvin")
             if np.max(np.abs(eps_de)) > 1e-4:
                 ax_ax.plot(t_sic / 24, eps_de, ":", color="#1f77b4",
-                           linewidth=1, alpha=0.5, label="  Desai")
+                           linewidth=1.5, alpha=0.5, label="  Desai")
 
         # Per-stage metrics for SIC
         stg_metrics = compute_stage_metrics(
@@ -221,15 +225,15 @@ def plot_newdata(data, fig_dir, thesis=False):
         md = data["munsondawson"]
         t_md = np.array(md["time_hours"])
         eps_md = np.array(md["strain_axial_pct"])
-        ax_ax.plot(t_md / 24, eps_md, "-", color="#d62728", linewidth=2,
+        ax_ax.plot(t_md / 24, eps_md, "-", color="#d62728", linewidth=2.5,
                    label="Munson-Dawson (total)")
 
         if SHOW_COMPONENTS:
             eps_ss = np.array(md["strain_steady_pct"])
             eps_tr = np.array(md["strain_transient_pct"])
-            ax_ax.plot(t_md / 24, eps_ss, "--", color="#d62728", linewidth=1,
+            ax_ax.plot(t_md / 24, eps_ss, "--", color="#d62728", linewidth=1.5,
                        alpha=0.5, label="  steady-state")
-            ax_ax.plot(t_md / 24, eps_tr, ":", color="#d62728", linewidth=1,
+            ax_ax.plot(t_md / 24, eps_tr, ":", color="#d62728", linewidth=1.5,
                        alpha=0.5, label="  transient")
 
         # Per-stage metrics for MD
@@ -244,10 +248,16 @@ def plot_newdata(data, fig_dir, thesis=False):
                     f"RMSE={m['rmse']:.3f}% MAPE={m['mape']:.0f}%"
                 )
 
-    ax_ax.set_xlabel("Time (days)")
-    ax_ax.set_ylabel("Axial strain (%)")
+    if thesis:
+        ax_ax.set_xlabel("Time (days)", fontsize=20)
+        ax_ax.set_ylabel("Axial strain (%)", fontsize=20)
+        ax_ax.tick_params(labelsize=16)
+        ax_ax.legend(loc="upper left", fontsize=14, ncol=2)
+    else:
+        ax_ax.set_xlabel("Time (days)")
+        ax_ax.set_ylabel("Axial strain (%)")
+        ax_ax.legend(loc="upper left", fontsize=8, ncol=2)
     ax_ax.grid(True, alpha=0.3)
-    ax_ax.legend(loc="upper left", fontsize=8, ncol=2)
 
     # Add metrics annotation (skip in thesis mode)
     if metrics_text and not thesis:

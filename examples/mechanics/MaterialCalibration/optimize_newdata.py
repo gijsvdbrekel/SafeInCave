@@ -496,19 +496,12 @@ def run_phase2(model, A_mpa_yr, N_disloc, QR_disloc,
     _best = [np.inf]
     _best_params_opt = [None]
 
-    _MIN_TAU_S = 43200.0  # Kelvin tau >= 12 hours
-
     def objective(x):
         try:
             if model == "sic":
                 log_eta, log_E1, log_mu1, N1, log_a1, eta_vp, log_alpha0 = x
                 eta = 10.0 ** log_eta
                 E1 = 10.0 ** log_E1
-
-                # Enforce Kelvin tau >= 2 hours
-                tau = eta / E1
-                if tau < _MIN_TAU_S:
-                    return 1e6
 
                 mu1 = 10.0 ** log_mu1
                 a1 = 10.0 ** log_a1

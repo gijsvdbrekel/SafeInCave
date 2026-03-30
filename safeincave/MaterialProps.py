@@ -1217,6 +1217,7 @@ class ViscoplasticDesai(NonElasticElement):
         """
         F1 = (alpha*I1**self.n - self.gamma*I1**2)
         F2 = (to.exp(self.beta_1*I1) - self.beta*Sr)
+        F2 = to.clamp(F2, min=1e-6)
         Fvp = J2 + F1*F2**self.m
         return Fvp
 
@@ -1241,7 +1242,21 @@ class ViscoplasticDesai(NonElasticElement):
         """
         s_xx, s_yy, s_zz, s_xy, s_xz, s_yz = self.extract_stress_components(stress)
         I1, I2, I3, J2, J3, Sr, I1_star, _ = self.compute_stress_invariants(s_xx, s_yy, s_zz, s_xy, s_xz, s_yz)
-        self.alpha_0 =  self.gamma*I1_star**(2-self.n) + (Fvp_0 - J2)*I1_star**(-self.n)*(to.exp(self.beta_1*I1_star) - self.beta*Sr)**(-self.m)
+        F2_init = to.exp(self.beta_1*I1_star) - self.beta*Sr
+        F2_init = to.clamp(F2_init, min=1e-6)
+        self.alpha_0 =  self.gamma*I1_star**(2-self.n) + (Fvp_0 - J2)*I1_star**(-self.n)*F2_init**(-self.m)
+
+        # Guard: alpha_0 must be positive for the hardening law.
+        # Negative/tiny values arise at extreme stress concentrations.
+        ALPHA_MIN = 1e-6
+        self.ind_desai_disabled = to.where(self.alpha_0 <= ALPHA_MIN)[0]
+        n_disabled = len(self.ind_desai_disabled)
+        if n_disabled > 0:
+            import sys
+            print(f"[DESAI INIT] Clamped alpha_0 for {n_disabled}/{self.n_elems} elements "
+                  f"(alpha_0 min={self.alpha_0.min().item():.3e})",
+                  file=sys.stderr)
+        self.alpha_0 = to.clamp(self.alpha_0, min=ALPHA_MIN)
         self.alpha = self.alpha_0.clone()
 
         s_xx, s_yy, s_zz, s_xy, s_xz, s_yz = self.extract_stress_components(stress)
@@ -1290,6 +1305,14 @@ class ViscoplasticDesai(NonElasticElement):
         # Compute flow direction, i.e. d(Fvp)/d(stress)
         F1 = (-alpha*I1**self.n + self.gamma*I1**2)
         F2 = (to.exp(self.beta_1*I1) - self.beta*Sr)
+
+        # Guard: F2 can go negative when I1 < 0 (tensile mean stress),
+        # because exp(beta_1*I1) -> 0.  Negative F2 causes NaN in
+        # F2**(m-1) with fractional m.  Clamp and track affected elements.
+        F2_MIN = 1e-6
+        ind_F2_neg = to.where(F2 < F2_MIN)[0]
+        F2 = to.clamp(F2, min=F2_MIN)
+
         dF1_dI1 = 2*self.gamma*I1 - self.n*alpha*I1**(self.n-1)
         dF2m_dI1 = self.beta_1*self.m*to.exp(self.beta_1*I1)*F2**(self.m-1)
         dF_dI1 = -(dF1_dI1*F2**self.m + F1*dF2m_dI1)
@@ -1357,8 +1380,9 @@ class ViscoplasticDesai(NonElasticElement):
         dQdS[:,2,0] = dQdS[:,0,2] = dQdS_02
         dQdS[:,2,1] = dQdS[:,1,2] = dQdS_12
 
-        # Wherever J2=0, make viscoplasticity to be zero
+        # Wherever J2=0 or F2 was negative, make viscoplasticity zero
         dQdS[ind_J2_leq_0,:,:] = 0.0
+        dQdS[ind_F2_neg,:,:] = 0.0
 
         # Calculate strain rate
         ramp_idx = to.where(Fvp > 0)[0]

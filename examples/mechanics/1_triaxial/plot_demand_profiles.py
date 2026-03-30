@@ -220,40 +220,41 @@ OP_START_DAY = LEACHING_DAYS + DEBRINING_DAYS          # 121
 
 def _annotate_phases(ax, y_frac=0.96):
     """Add phase labels and vertical dividers."""
-    ax.axvline(LEACHING_DAYS, color="grey", ls="--", lw=0.8, alpha=0.6)
-    ax.axvline(OP_START_DAY, color="grey", ls="--", lw=0.8, alpha=0.6)
+    ax.axvline(LEACHING_DAYS, color="grey", ls="--", lw=1.2, alpha=0.6)
+    ax.axvline(OP_START_DAY, color="grey", ls="--", lw=1.2, alpha=0.6)
     # transition end (fade-in)
     trans_end = OP_START_DAY + RAMP_UP_HOURS / 24.0
-    ax.axvline(trans_end, color="grey", ls=":", lw=0.7, alpha=0.5)
+    ax.axvline(trans_end, color="grey", ls=":", lw=1.0, alpha=0.5)
 
     yl, yh = ax.get_ylim()
     yt = yl + y_frac * (yh - yl)
-    kw = dict(ha="center", va="top", fontsize=10, color="grey")
+    kw = dict(ha="center", va="top", fontsize=18, color="grey")
     ax.text(LEACHING_DAYS / 2,              yt, "Leaching",   **kw)
-    ax.text(LEACHING_DAYS + DEBRINING_DAYS / 2, yt, "Debrining",  **kw)
-    ax.text(OP_START_DAY + RAMP_UP_HOURS / 24 / 2, yt, "Transition", **kw)
+    # Debrining + Transition share a narrow region — combine label
+    mid_region = (LEACHING_DAYS + trans_end) / 2
+    ax.text(mid_region, yt, "Debr. / Trans.", **kw)
     ax.text((trans_end + TOTAL_DAYS) / 2,    yt, "Operation",  **kw)
 
 
 def plot_overview(scenarios):
     """Figure 1: all scenarios overlaid, full timeline."""
-    fig, ax = plt.subplots(figsize=(14, 5))
+    fig, ax = plt.subplots(figsize=(18, 7))
 
     for key, (t_h, p) in scenarios.items():
-        ax.plot(t_h / 24.0, p, lw=1.2, color=COLORS[key],
+        ax.plot(t_h / 24.0, p, lw=2.0, color=COLORS[key],
                 label=LABELS[key], alpha=0.85)
 
     ax.set_xlim(0, TOTAL_DAYS)
-    ax.set_xlabel("Time (days)", fontsize=12)
-    ax.set_ylabel("Cavern pressure (MPa)", fontsize=12)
-    ax.tick_params(labelsize=11)
-    ax.legend(loc="upper right", fontsize=11, framealpha=0.9)
+    ax.set_xlabel("Time (days)", fontsize=20)
+    ax.set_ylabel("Cavern pressure (MPa)", fontsize=20)
+    ax.tick_params(labelsize=16)
+    ax.legend(loc="upper right", fontsize=18, framealpha=0.9)
     ax.grid(True, alpha=0.25)
     _annotate_phases(ax)
 
     fig.tight_layout()
     path = os.path.join(OUT_DIR, "pressure_overview.png")
-    fig.savefig(path, dpi=250)
+    fig.savefig(path, dpi=300)
     print(f"[SAVED] {path}")
     plt.close(fig)
 
@@ -274,7 +275,7 @@ def plot_ops_zoom(scenarios):
     y_lo -= pad
     y_hi += pad
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 4.2), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(20, 6), sharey=True)
 
     panel_labels = ["(a)", "(b)", "(c)"]
 
@@ -285,17 +286,18 @@ def plot_ops_zoom(scenarios):
         t_op = t_days[mask] - OP_START_DAY
         p_op = p[mask]
 
-        ax.plot(t_op, p_op, lw=0.9, color=COLORS[key])
+        ax.plot(t_op, p_op, lw=1.5, color=COLORS[key])
         ax.set_xlim(0, OPERATION_DAYS)
         ax.set_ylim(y_lo, y_hi)
-        ax.set_xlabel("Operation time (days)")
-        ax.set_title(f"{pl}  {LABELS[key]}", fontsize=10)
+        ax.set_xlabel("Operation time (days)", fontsize=18)
+        ax.set_title(f"{pl}  {LABELS[key]}", fontsize=20)
+        ax.tick_params(labelsize=14)
         ax.grid(True, alpha=0.25)
 
-    axes[0].set_ylabel("Cavern pressure (MPa)")
+    axes[0].set_ylabel("Cavern pressure (MPa)", fontsize=18)
     fig.tight_layout()
     path = os.path.join(OUT_DIR, "pressure_ops_zoom.png")
-    fig.savefig(path, dpi=250)
+    fig.savefig(path, dpi=300)
     print(f"[SAVED] {path}")
     plt.close(fig)
 
