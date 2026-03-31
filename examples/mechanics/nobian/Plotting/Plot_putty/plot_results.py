@@ -57,7 +57,7 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["regular1200", "fastleached1200"],
+    "caverns": ["regular1200", "fastleached1200", "regular600", "fastleached600"],
     "pressure": ["power_generation"],
     "scenario": ["B_SIC", "B_MD"],
     "n_cycles": None,
@@ -90,13 +90,13 @@ SELECT = {
 #                         Linestyle = solid for 1200k, dashed for 600k.
 #                         Label = "B_SIC (1200k)", "B_MD (600k)", etc.
 
-PLOT_MODE = "compare_scenarios"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
+PLOT_MODE = "compare_sizes"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
 
 FIGURES = {
-    "convergence": False,          # Figure 1: volume convergence
-    "stress_state": False,         # Figure 2: p-q stress paths
-    "fos": False,                  # Figure 3: FOS over time
-    "fracture_propagation": True, # Figure 4: dilatancy zone analysis
+    "convergence": True,          # Figure 1: volume convergence
+    "stress_state": True,         # Figure 2: p-q stress paths
+    "fos": True,                  # Figure 3: FOS over time
+    "fracture_propagation": False, # Figure 4: dilatancy zone analysis
     "fos_summary": False,          # Figure 5: global min FOS + 4 pressure profiles
 }
 
@@ -1232,8 +1232,7 @@ def plot_convergence_combined(cases):
             continue
         ax1.plot(t_days, conv, linewidth=2.0, color=col, linestyle=ls, alpha=0.95, label=label)
 
-    ax1.set_ylabel("Convergence (ΔV/V₀) (%)", fontsize=20)
-    ax1.tick_params(axis='both', labelsize=16)
+    ax1.set_ylabel("Convergence (ΔV/V₀) (%)")
     ax1.grid(True, alpha=0.3)
 
     h, l = ax1.get_legend_handles_labels()
@@ -1242,7 +1241,9 @@ def plot_convergence_combined(cases):
         if ll not in uniq:
             uniq[ll] = hh
     if uniq:
-        ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=16, frameon=True)
+        ax1.legend(uniq.values(), uniq.keys(), loc="upper center",
+                   bbox_to_anchor=(0.5, 1.0), ncol=min(3, len(uniq)),
+                   fontsize=14, frameon=True)
 
     # Plot pressure schedule(s) — overlay all distinct schedules in compare_pressures
     _plotted_pressures = set()
@@ -1258,10 +1259,9 @@ def plot_convergence_combined(cases):
     if not _plotted_pressures:
         ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
     if len(_plotted_pressures) > 1:
-        ax2.legend(fontsize=20, frameon=True, loc="best")
-    ax2.set_ylabel("Pressure (MPa)", fontsize=20)
-    ax2.set_xlabel("Time (days)", fontsize=20)
-    ax2.tick_params(axis='both', labelsize=16)
+        ax2.legend(fontsize=14, frameon=True, loc="upper right")
+    ax2.set_ylabel("Pressure (MPa)")
+    ax2.set_xlabel("Time (days)")
     ax2.grid(True, alpha=0.3)
 
     fig.tight_layout()
@@ -1297,7 +1297,7 @@ def plot_convergence_separate(cases):
         ax1.plot(t_days, conv, linewidth=2.0, color=col, alpha=0.95, label=label)
         ax1.set_ylabel("Convergence (ΔV/V0) (%)")
         ax1.grid(True, alpha=0.3)
-        ax1.legend(loc="best", fontsize=20, frameon=True)
+        ax1.legend(loc="upper left", fontsize=14, frameon=True)
 
         tH, pMPa = read_pressure_schedule(c["case_path"])
         if tH is None:
@@ -1348,7 +1348,9 @@ def plot_convergence_per_cavern(cases, group_fn=None):
             if ll not in uniq:
                 uniq[ll] = hh
         if uniq:
-            ax1.legend(uniq.values(), uniq.keys(), loc="best", fontsize=20, frameon=True)
+            ax1.legend(uniq.values(), uniq.keys(), loc="upper center",
+                       bbox_to_anchor=(0.5, 1.0), ncol=min(3, len(uniq)),
+                       fontsize=14, frameon=True)
 
         # Plot pressure schedule(s) — overlay all distinct schedules
         _plotted_pressures = set()
@@ -1365,7 +1367,7 @@ def plot_convergence_per_cavern(cases, group_fn=None):
         if not _plotted_pressures:
             ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
         if len(_plotted_pressures) > 1:
-            ax2.legend(fontsize=20, frameon=True, loc="best")
+            ax2.legend(fontsize=14, frameon=True, loc="upper right")
         ax2.set_ylabel("Pressure (MPa)")
         ax2.set_xlabel("Time (days)")
         ax2.grid(True, alpha=0.3)
@@ -1441,7 +1443,7 @@ def plot_stress_combined(cases, stress_by_series):
         axp.tick_params(axis='both', labelsize=16)
         axp.grid(True, alpha=0.3)
         if len(_plotted_pressures) > 1:
-            axp.legend(fontsize=20, frameon=True)
+            axp.legend(fontsize=14, frameon=True)
 
     # Build separate legend entries for dilatancy boundaries and cavern shapes
     boundary_handles, boundary_labels = [], []
@@ -1463,7 +1465,7 @@ def plot_stress_combined(cases, stress_by_series):
     all_handles = shape_handles + boundary_handles
     all_labels = shape_labels + boundary_labels
     fig.legend(all_handles, all_labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
-               ncol=min(5, len(all_labels)), frameon=True, fontsize=20)
+               ncol=min(5, len(all_labels)), frameon=True, fontsize=14)
 
     fig.tight_layout(rect=[0, 0, 1, 0.92])
 
@@ -1501,7 +1503,7 @@ def plot_stress_separate(cases, stress_by_series):
             ax.set_ylabel("Differential stress q (MPa)")
             ax.grid(True, alpha=0.3)
             if i == 0:
-                ax.legend(loc="upper left", fontsize=20, frameon=True)
+                ax.legend(loc="upper left", fontsize=14, frameon=True)
 
         axp = axes[5]
         case_path = None
@@ -1605,7 +1607,7 @@ def plot_stress_per_cavern(cases, group_fn=None):
             axp.set_ylabel("Pressure (MPa)")
             axp.grid(True, alpha=0.3)
             if len(_plotted_pressures) > 1:
-                axp.legend(fontsize=20, frameon=True)
+                axp.legend(fontsize=14, frameon=True)
 
         handles, labels = axes[0].get_legend_handles_labels()
         uniq = {}
@@ -1613,7 +1615,7 @@ def plot_stress_per_cavern(cases, group_fn=None):
             if l not in uniq:
                 uniq[l] = h
         fig.legend(uniq.values(), uniq.keys(), loc="upper center", bbox_to_anchor=(0.5, 0.96),
-                   ncol=min(5, len(uniq)), frameon=True, fontsize=20)
+                   ncol=min(5, len(uniq)), frameon=True, fontsize=14)
 
         fig.suptitle(f"Stress State — {cav_label}", fontsize=20, fontweight="bold", y=0.99)
         fig.tight_layout(rect=[0, 0, 1, 0.92])
@@ -1917,7 +1919,7 @@ def plot_fos_summary(cases):
     ax_fos.set_xlabel("Time (days)")
     ax_fos.set_ylabel("Factor of Safety")
     ax_fos.grid(True, alpha=0.3)
-    ax_fos.legend(fontsize=11, frameon=True, loc="upper center",
+    ax_fos.legend(fontsize=14, frameon=True, loc="upper center",
                    bbox_to_anchor=(0.5, 1.15), ncol=4)
 
     # Right: one pressure subplot per scenario
@@ -2006,7 +2008,7 @@ def plot_propagation_depth(ax, time_days, fos_data, radial_distances, threshold=
     ax.set_ylabel('FOS<1 penetration depth (m)')
     ax.set_title('Connected dilating zone size')
     ax.grid(True, alpha=0.3)
-    ax.legend(loc='upper left', fontsize=20)
+    ax.legend(loc='upper left', fontsize=14)
 
 
 def plot_fracture_propagation(case_meta):
@@ -2149,7 +2151,7 @@ def plot_fracture_propagation_grouped(frac_cases):
             # Move legend to top-right, only show once (last column)
             leg_dep = ax_dep.get_legend()
             if idx == n_shapes - 1:
-                ax_dep.legend(loc='upper right', fontsize=20, frameon=True)
+                ax_dep.legend(loc='upper right', fontsize=14, frameon=True)
             elif leg_dep is not None:
                 leg_dep.remove()
 

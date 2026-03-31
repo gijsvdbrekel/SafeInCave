@@ -129,10 +129,10 @@ def main():
     x_total = max_x_range + 2 * x_pad
 
     # Figure size: 3 columns, 2 rows, matching the data aspect ratio
-    col_width = 3.0  # inches per column
+    col_width = 5.0  # inches per column
     row_height = col_width * (z_range / x_total)
-    fig_w = col_width * 3 + 1.5  # extra for labels/margins
-    fig_h = row_height * 2 + 2.0  # extra for legend/titles/labels
+    fig_w = col_width * 3 + 3.0  # extra for labels/margins
+    fig_h = row_height * 2 + 4.0  # extra for legend/titles/labels
 
     fig, axes = plt.subplots(2, 3, figsize=(fig_w, fig_h))
     axes = axes.flatten()
@@ -143,18 +143,18 @@ def main():
         if wp is None:
             ax.text(0.5, 0.5, f"Missing", ha="center", va="center",
                     transform=ax.transAxes, fontsize=9)
-            ax.set_title(label, fontsize=10, fontweight='bold')
+            ax.set_title(label, fontsize=22, fontweight='bold')
             continue
 
         # Plot wall profile
-        ax.plot(wp[:, 0], wp[:, 2], 'k-', linewidth=1.5)
+        ax.plot(wp[:, 0], wp[:, 2], 'k-', linewidth=2.5)
 
         # Plot probe points
         for pname in probe_order:
             pt = probes[pname]
             color = PROBE_COLORS[pname]
-            ax.scatter(pt[0], pt[2], c=color, s=50, marker='o',
-                       edgecolors='black', linewidths=0.5, zorder=5, label=pname)
+            ax.scatter(pt[0], pt[2], c=color, s=150, marker='o',
+                       edgecolors='black', linewidths=1.0, zorder=5, label=pname)
 
         # Tight x-limits centered on profile, uniform width
         x_center = 0.5 * (wp[:, 0].min() + wp[:, 0].max())
@@ -163,17 +163,17 @@ def main():
         # Shared z-limits
         ax.set_ylim(all_z_min - z_pad, all_z_max + z_pad)
 
-        ax.set_title(label, fontsize=10, fontweight='bold')
-        ax.set_xlabel('x (m)', fontsize=8)
-        ax.set_ylabel('z (m)', fontsize=8)
-        ax.tick_params(labelsize=7)
+        ax.set_title(label, fontsize=22, fontweight='bold')
+        ax.set_xlabel('x (m)', fontsize=18)
+        ax.set_ylabel('z (m)', fontsize=18)
+        ax.tick_params(labelsize=14)
         ax.set_aspect('equal')
         ax.grid(True, alpha=0.3)
 
     # Shared legend on top of figure
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='upper center', ncol=5, fontsize=9,
-           frameon=True, bbox_to_anchor=(0.5, 0.965))
+    fig.legend(handles, labels, loc='upper center', ncol=5, fontsize=16,
+           frameon=True, bbox_to_anchor=(0.5, 0.965), markerscale=1.5)
 
     fig.subplots_adjust(left=0.05, right=0.98, bottom=0.04, top=0.93,
                     wspace=0.25, hspace=0.25)
