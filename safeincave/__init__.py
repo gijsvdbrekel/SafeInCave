@@ -19,6 +19,7 @@ from .OutputHandler import SaveFields
 from .Simulators import Simulator_TM, Simulator_T, Simulator_M, Simulator_GUI
 from .ScreenOutput import ScreenPrinter
 from .TimeHandler import TimeControllerBase, TimeController, TimeControllerParabolic
+from . import CavernBC
 from . import MomentumBC
 from . import HeatBC
 from . import PostProcessingTools
@@ -27,7 +28,6 @@ from . import Utils
 
 __all__ = [
     "GridHandlerGMSH",
-    "HeatBC",
     "HeatDiffusion",
     "LinearMomentumBase",
     "LinearMomentum",
@@ -51,6 +51,7 @@ __all__ = [
     "TimeControllerParabolic",
     "MomentumBC",
     "HeatBC",
+    "CavernBC",
     "PostProcessingTools",
     "Utils",
 ]
