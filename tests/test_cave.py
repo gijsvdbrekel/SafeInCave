@@ -1,0 +1,51 @@
+from safeincave.CavernBC import CavernHandler, Cavern_PT
+import CoolProp.CoolProp as CP
+import torch as to
+import numpy as np
+import unittest
+
+class Test_PT(unittest.TestCase):
+    def setUp(self):
+        self.fluid_1 = "Water"
+        self.cave_name_1 = "Cavern_1"
+        self.cave_1 = Cavern_PT(self.cave_name_1, self.fluid_1, [1e5, 1e5], [303, 400.0], [0.0, 10.0])
+        
+        self.fluid_2 = "Methane"
+        self.cave_name_2 = "Cavern_2"
+        self.cave_2 = Cavern_PT(self.cave_name_2, self.fluid_2, [1e5, 1e5], [303, 400.0], [0.0, 10.0])
+
+        self.cavern_set = CavernHandler()
+        self.cavern_set.add_cavern(self.cave_1)
+        self.cavern_set.add_cavern(self.cave_2)
+
+    def test_initialize(self):
+        self.assertEqual(self.cave_1.AS.phase(), 0)  # CP.iphase_liquid
+        self.assertEqual(self.cave_1.cavern_name, self.cave_name_1)
+        self.assertEqual(self.cave_1.fluid, self.fluid_1)
+        self.assertEqual(self.cave_1.AS.phase(), CP.get_phase_index("phase_liquid"))
+        self.assertEqual(self.cave_1.rho, 995.6940736483174)
+        
+        self.assertEqual(self.cave_2.AS.phase(), 2)  # CP.iphase_liquid
+        self.assertEqual(self.cave_2.cavern_name, self.cave_name_2)
+        self.assertEqual(self.cave_2.fluid, self.fluid_2)
+        self.assertEqual(self.cave_2.AS.phase(), CP.get_phase_index("phase_supercritical_gas"))
+        self.assertEqual(self.cave_2.rho, 0.6378365378697821)
+
+    def test_update_cavern(self):
+        self.cave_1.update_cavern(5.0)
+        self.assertEqual(self.cave_1.AS.phase(), CP.get_phase_index("phase_liquid"))
+        self.assertEqual(self.cave_1.rho, 972.8112951044953)
+        
+        self.cave_1.update_cavern(10.0)
+        self.assertEqual(self.cave_1.AS.phase(), CP.get_phase_index("phase_gas"))
+        self.assertEqual(self.cave_1.rho, 0.5476054152259427)
+
+    def test_cavern_handler(self):
+        self.assertEqual(len(self.cavern_set.caverns), 2)
+        self.cavern_set.update_caverns(2.0)
+        
+        self.assertEqual(self.cavern_set.caverns[0].AS.phase(), CP.get_phase_index("phase_liquid"))
+        self.assertEqual(self.cavern_set.caverns[0].rho, 988.3718407745588)
+        
+        self.assertEqual(self.cavern_set.caverns[1].AS.phase(), CP.get_phase_index("phase_supercritical_gas"))
+        self.assertEqual(self.cavern_set.caverns[1].rho, 0.5992487366380541)
