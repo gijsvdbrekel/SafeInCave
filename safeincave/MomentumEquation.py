@@ -965,7 +965,7 @@ class LinearMomentum(LinearMomentumBase):
 
         # Build linear form
         b_rhs = ufl.inner(dotdot_ufl(self.CT, self.eps_rhs), epsilon(self.u_))*self.dx
-        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + b_rhs)
+        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + sum(self.bc.cavern_bcs) + b_rhs)
         b = fem_petsc.assemble_vector(linear_form)
         fem_petsc.apply_lifting(b, [bilinear_form], [self.bc.dirichlet_bcs])
         b.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)

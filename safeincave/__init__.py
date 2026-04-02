@@ -18,6 +18,7 @@ from .MaterialProps import Material, NonElasticElement, Spring, Thermoelastic, V
 from .OutputHandler import SaveFields
 from .Simulators import Simulator_TM, Simulator_T, Simulator_M, Simulator_GUI
 from .ScreenOutput import ScreenPrinter
+from .Thermodynamics import CavernThermodynamics
 from .TimeHandler import TimeControllerBase, TimeController, TimeControllerParabolic
 from . import CavernBC
 from . import MomentumBC
@@ -52,6 +53,7 @@ __all__ = [
     "MomentumBC",
     "HeatBC",
     "CavernBC",
+    "CavernThermodynamics",
     "PostProcessingTools",
     "Utils",
 ]

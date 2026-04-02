@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .MomentumEquation import LinearMomentum
+    from .CavernBC import CavernHandler
     
 from abc import ABC
 import numpy as np
@@ -275,4 +276,16 @@ class BcHandler():
 			p = -np.interp(t, bc.time_values, bc.values)
 			value_neumann = p + rho*bc.gravity*(H - self.x[i])
 			self.neumann_bcs.append(value_neumann*self.eq.normal*self.eq.ds(self.eq.grid.get_boundary_tag(bc.boundary_name)))
+	
+	def update_cavern_bcs(self, cavern_handler: CavernHandler):
+		self.cavern_bcs = []
+		for cavern in cavern_handler.caverns_PT:
+			i = cavern.direction
+			rho = cavern.density
+			H = cavern.ref_pos
+			p = -cavern.P
+			load = p + rho*cavern.gravity*(H - self.x[i])
+			self.cavern_bcs.append(load*self.eq.normal*self.eq.ds(self.eq.grid.get_boundary_tag(cavern.cavern_name)))
+			
+	
 

@@ -32,6 +32,7 @@ from .Grid import GridHandlerGMSH
 from .MaterialProps import *
 # from .MomentumBC import BcHandler, NeumannBC, DirichletBC
 from . import MomentumBC as momBC
+from . import CavernBC as CavernHandler
 from petsc4py import PETSc
 
 class Simulator(ABC):
@@ -297,11 +298,16 @@ class Simulator_M(Simulator):
 	def __init__(self, eq_mom: LinearMomentum, 
 					   t_control: TimeControllerBase,
 					   outputs: list[SaveFields],
+					   caverns: CavernHandler=None,
 					   compute_elastic_response: bool=True):
 		self.eq_mom = eq_mom
 		self.t_control = t_control
 		self.outputs = outputs
+		self.caverns = caverns
 		self.compute_elastic_response = compute_elastic_response
+
+		if caverns == None:
+			self.caverns = CavernHandler()
 		
 		ScreenPrinter.reset_instance()
 		self.screen = ScreenPrinter(self.eq_mom.grid, self.eq_mom.solver, self.eq_mom.mat, self.outputs, t_control.time_unit)
@@ -392,6 +398,10 @@ class Simulator_M(Simulator):
 			maxiter = 40
 
 			while error > tol and ite < maxiter:
+
+				# Update cavern boundary conditions
+				self.caverns.update_caverns(t)
+				self.eq_mom.bc.update_cavern_bcs(self.caverns)
 
 				# Update total strain of previous iteration (eps_tot_k <-- eps_tot)
 				eps_tot_k_to = eps_tot_to.clone()
