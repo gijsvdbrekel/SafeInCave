@@ -111,7 +111,7 @@ MC_N_1  = 5.0     # Rate exponent — higher = more rate-independent (plastic-li
 #   "linear"  - Linear decrease from lithostatic to operational pressure
 #   "stepped" - Stepped decrease with plateaus (more realistic)
 
-LEACHING_MODE = "stepped"
+LEACHING_MODE = "linear"
 
 # LEACHING_DAYS: Duration of leaching phase in days (default ~0.25 year = 91 days)
 LEACHING_DAYS = 91
@@ -128,7 +128,7 @@ STEPPED_N_STEPS = 6
 #   - When USE_LEACHING = False: Equilibrium pressure is set to this fraction of lithostatic pressure
 #   All operational pressure schemes (including CSV) use this as the minimum pressure.
 #   Example: 0.40 means minimum operational pressure = 40% of lithostatic pressure.
-LEACHING_END_FRACTION = 0.30
+LEACHING_END_FRACTION = 0.3
 
 # ── DEBRINING PHASE SETTINGS (only used when USE_LEACHING = True) ────────────
 # After leaching, the cavern undergoes debrining where brine is displaced.
@@ -195,7 +195,7 @@ P_MIN_MPA          = 10.0    # Absolute minimum cavern pressure (MPa)
 #   "repeat"  - Daily pattern repeated each day (N_CYCLES ignored)
 #   "direct"  - (CSV only) Use hourly CSV values directly, periodic over CSV length
 
-SCHEDULE_MODE = "stretch"
+SCHEDULE_MODE = "direct"
 
 # OPERATION_DAYS: Total simulation duration in days (operation phase only)
 OPERATION_DAYS = 365 
@@ -231,10 +231,19 @@ RESCALE_MAX_MPA = 20.0   # Maximum pressure after rescaling (MPa)
 RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
-MATERIAL_SCENARIO = "B_freecalibr"  # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
+MATERIAL_SCENARIO = "A"  # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
+# USE_MUNSON_DAWSON: Use the Munson-Dawson constitutive model instead of
+#   the SafeInCave stack (Kelvin-Voigt + DislocationCreep + Desai).  When
+#   True the Kelvin and Desai elements are NOT added — MD handles its own
+#   transient + steady-state response internally.  Currently wired for
+#   MATERIAL_SCENARIO "B" and "B_freecalibr".  MD is applied to SALT only;
+#   interlayers get A_md = 0 so they remain purely elastic (+ PS creep for
+#   anhydrite).
+USE_MUNSON_DAWSON = True
 # USE_DESAI: Enable Desai viscoplastic model during operation phase
 #   Note: Desai is NEVER enabled during leaching/equilibrium phase
 #   Note: Desai is only applied to SALT regions, not to interlayers
+#   Note: Ignored when USE_MUNSON_DAWSON = True
 USE_DESAI = True
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
@@ -1160,6 +1169,59 @@ class SparseSaveFields(sf.SaveFields):
 # MATERIAL SETUP FOR INTERLAYER HETEROGENEITY
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _build_munson_dawson(n_elems, E0_field, nu0_field, interlayer_cells=None):
+    """Build a MunsonDawsonCreep element for the current scenario.
+
+    Parameters
+    ----------
+    n_elems : int
+    E0_field, nu0_field : torch tensors of elastic params (used for mu = G)
+    interlayer_cells : np.ndarray of ints or None
+        If provided, A_md is zeroed on these cells so the interlayers do
+        not develop MD creep (they remain elastic + optional PS creep).
+    """
+    sec_per_year = 365.25 * 24 * 3600
+
+    if MATERIAL_SCENARIO == "A":
+        nmd   = 4.99
+        A_val = 18.31 * (1e-6)**nmd / sec_per_year
+        Q_val = 6356.0 * 8.32
+        K0_v, c_v, m_v, aw_v, bw_v, d_v = 7.0e-7, 9.02e-3, 3.0, -13.2, -7.738, 0.58
+    elif MATERIAL_SCENARIO == "B":
+        nmd   = 5.6897
+        A_val = 17.28 * (1e-6)**nmd / sec_per_year
+        Q_val = 6495.0 * 8.32
+        K0_v, c_v, m_v, aw_v, bw_v, d_v = 2253.87, 9.02e-3, 2.466, 179.70, 60.00, 299.95
+    elif MATERIAL_SCENARIO == "B_freecalibr":
+        nmd   = 7.6122
+        A_val = 971.27 * (1e-6)**nmd / sec_per_year
+        Q_val = 9250.0 * 8.314
+        K0_v, c_v, m_v, aw_v, bw_v, d_v = 0.1410, 0.03421, 2.103, 180.21, 60.00, 299.47
+    else:
+        raise ValueError(
+            f"USE_MUNSON_DAWSON=True is only supported for MATERIAL_SCENARIO "
+            f"'A', 'B' or 'B_freecalibr' (got '{MATERIAL_SCENARIO}')"
+        )
+
+    A_md  = A_val * to.ones(n_elems, dtype=to.float64)
+    if interlayer_cells is not None and len(interlayer_cells) > 0:
+        A_md[interlayer_cells] = 0.0  # no MD creep in interlayers
+    Q_md  = Q_val   * to.ones(n_elems)
+    n_md  = nmd     * to.ones(n_elems)
+    K0_md = K0_v    * to.ones(n_elems)
+    c_md  = c_v     * to.ones(n_elems)
+    m_md  = m_v     * to.ones(n_elems)
+    aw_md = aw_v    * to.ones(n_elems)
+    bw_md = bw_v    * to.ones(n_elems)
+    d_md  = d_v     * to.ones(n_elems)
+    mu_md = E0_field / (2.0 * (1.0 + nu0_field))
+
+    return sf.MunsonDawsonCreep(A=A_md, Q=Q_md, n=n_md,
+                                K0=K0_md, c=c_md, m=m_md,
+                                alpha_w=aw_md, beta_w=bw_md, delta=d_md,
+                                mu=mu_md, name="munson_dawson")
+
+
 def setup_material_homogeneous(mat, n_elems):
     """Setup homogeneous salt material (no interlayers)."""
     sec_per_year = 365.25 * 24 * 3600
@@ -1168,45 +1230,48 @@ def setup_material_homogeneous(mat, n_elems):
     E0 = 20.425 * ut.GPa * to.ones(n_elems)
     nu0 = 0.25 * to.ones(n_elems)
     spring_0 = sf.Spring(E0, nu0, "spring")
+    mat.add_to_elastic(spring_0)
 
-    # Kelvin-Voigt (Viscoelastic) + Dislocation creep — scenario-dependent
-    if MATERIAL_SCENARIO == "A":
-        eta = 2.5e5 * ut.GPa * to.ones(n_elems)  # 2.5e5 GPa·s
-        E1 = 42.0 * ut.GPa * to.ones(n_elems)
-        nu1 = 0.32 * to.ones(n_elems)
-        ndc = 4.6
-        A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems, dtype=to.float64)
-        Q_dc = (6495.0 * 8.32) * to.ones(n_elems)
-    elif MATERIAL_SCENARIO == "B":
-        eta = 1.0e15 * to.ones(n_elems)
-        E1 = 1.0e11 * to.ones(n_elems)
-        nu1 = 0.25 * to.ones(n_elems)
-        ndc = 5.6897
-        A_dc = (25.92 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems, dtype=to.float64)  # 1.5 × A_MD
-        Q_dc = (6495.0 * 8.32) * to.ones(n_elems)
-    elif MATERIAL_SCENARIO == "B_freecalibr":
-        eta = 1.0e15 * to.ones(n_elems)
-        E1 = 1.0e11 * to.ones(n_elems)
-        nu1 = 0.25 * to.ones(n_elems)
-        ndc = 7.6122
-        A_dc = (1456.91 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems, dtype=to.float64)
-        Q_dc = (9250.0 * 8.314) * to.ones(n_elems)
+    if USE_MUNSON_DAWSON:
+        md = _build_munson_dawson(n_elems, E0, nu0, interlayer_cells=None)
+        mat.add_to_non_elastic(md)
     else:
-        raise ValueError(f"Unknown MATERIAL_SCENARIO: {MATERIAL_SCENARIO}")
+        # Kelvin-Voigt (Viscoelastic) + Dislocation creep — scenario-dependent
+        if MATERIAL_SCENARIO == "A":
+            eta = 2.5e5 * ut.GPa * to.ones(n_elems)  # 2.5e5 GPa·s
+            E1 = 42.0 * ut.GPa * to.ones(n_elems)
+            nu1 = 0.32 * to.ones(n_elems)
+            ndc = 4.6
+            A_dc = (40.0 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems, dtype=to.float64)
+            Q_dc = (6495.0 * 8.32) * to.ones(n_elems)
+        elif MATERIAL_SCENARIO == "B":
+            eta = 1.0e15 * to.ones(n_elems)
+            E1 = 1.0e11 * to.ones(n_elems)
+            nu1 = 0.25 * to.ones(n_elems)
+            ndc = 5.6897
+            A_dc = (25.92 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems, dtype=to.float64)  # 1.5 × A_MD
+            Q_dc = (6495.0 * 8.32) * to.ones(n_elems)
+        elif MATERIAL_SCENARIO == "B_freecalibr":
+            eta = 1.0e15 * to.ones(n_elems)
+            E1 = 1.0e11 * to.ones(n_elems)
+            nu1 = 0.25 * to.ones(n_elems)
+            ndc = 7.6122
+            A_dc = (1456.91 * (1e-6)**ndc / sec_per_year) * to.ones(n_elems, dtype=to.float64)
+            Q_dc = (9250.0 * 8.314) * to.ones(n_elems)
+        else:
+            raise ValueError(f"Unknown MATERIAL_SCENARIO: {MATERIAL_SCENARIO}")
 
-    kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
-    n_dc = ndc * to.ones(n_elems)
-    creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
+        kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
+        n_dc = ndc * to.ones(n_elems)
+        creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
+        mat.add_to_non_elastic(kelvin)
+        mat.add_to_non_elastic(creep_0)
 
-    # Pressure-solution creep
+    # Pressure-solution creep (same for both constitutive choices)
     A_ps = (14176.0 * 1e-9 / 1e6 / sec_per_year) * to.ones(n_elems)
     d_ps = 5.25e-3 * to.ones(n_elems)
     Q_ps = (3252.0 * 8.32) * to.ones(n_elems)
     creep_pressure = sf.PressureSolutionCreep(A_ps, d_ps, Q_ps, "creep_pressure")
-
-    mat.add_to_elastic(spring_0)
-    mat.add_to_non_elastic(kelvin)
-    mat.add_to_non_elastic(creep_0)
     mat.add_to_non_elastic(creep_pressure)
 
     return mat
@@ -1298,74 +1363,79 @@ def setup_material_heterogeneous(mat, n_elems, grid, config):
     spring_0 = sf.Spring(E0, nu0, "spring")
     mat.add_to_elastic(spring_0)
 
-    # ── VISCOELASTIC (Kelvin-Voigt) ───────────────────────────────────────────
-    # Only for salt regions; interlayers have eta -> infinity (or very high)
-    # To disable viscoelastic behavior in interlayers, set eta to very high value
+    if USE_MUNSON_DAWSON:
+        # ── MUNSON-DAWSON (salt only; A=0 on interlayers) ─────────────────
+        md = _build_munson_dawson(n_elems, E0, nu0, interlayer_cells=all_interlayer_cells)
+        mat.add_to_non_elastic(md)
+    else:
+        # ── VISCOELASTIC (Kelvin-Voigt) ───────────────────────────────────
+        # Only for salt regions; interlayers have eta -> infinity (or very high)
+        # To disable viscoelastic behavior in interlayers, set eta to very high value
 
-    eta = to.zeros(n_elems, dtype=to.float64)
-    E1 = to.zeros(n_elems, dtype=to.float64)
-    nu1 = to.zeros(n_elems, dtype=to.float64)
+        eta = to.zeros(n_elems, dtype=to.float64)
+        E1 = to.zeros(n_elems, dtype=to.float64)
+        nu1 = to.zeros(n_elems, dtype=to.float64)
 
-    # Salt: viscoelastic — scenario-dependent
-    if MATERIAL_SCENARIO == "A":
-        eta[:] = 2.5e5 * ut.GPa  # 2.5e5 GPa·s
-        E1[:] = 42.0 * ut.GPa
-        nu1[:] = 0.32
-    elif MATERIAL_SCENARIO == "B":
-        eta[:] = 1.0e15
-        E1[:] = 1.0e11
-        nu1[:] = 0.25
-    elif MATERIAL_SCENARIO == "B_freecalibr":
-        eta[:] = 1.0e15
-        E1[:] = 1.0e11
-        nu1[:] = 0.25
+        # Salt: viscoelastic — scenario-dependent
+        if MATERIAL_SCENARIO == "A":
+            eta[:] = 2.5e5 * ut.GPa  # 2.5e5 GPa·s
+            E1[:] = 42.0 * ut.GPa
+            nu1[:] = 0.32
+        elif MATERIAL_SCENARIO == "B":
+            eta[:] = 1.0e15
+            E1[:] = 1.0e11
+            nu1[:] = 0.25
+        elif MATERIAL_SCENARIO == "B_freecalibr":
+            eta[:] = 1.0e15
+            E1[:] = 1.0e11
+            nu1[:] = 0.25
 
-    # Interlayers: very high viscosity (effectively rigid viscoelastic)
-    # This effectively disables viscoelastic strain in interlayers
-    if len(interlayer_1_cells) > 0:
-        eta[interlayer_1_cells] = 1e30  # Very high -> no viscoelastic strain
-        E1[interlayer_1_cells] = il1_E * ut.GPa
-        nu1[interlayer_1_cells] = il1_nu
-    if len(interlayer_2_cells) > 0:
-        eta[interlayer_2_cells] = 1e30
-        E1[interlayer_2_cells] = il2_E * ut.GPa
-        nu1[interlayer_2_cells] = il2_nu
-    if len(interlayer_3_cells) > 0:
-        eta[interlayer_3_cells] = 1e30
-        E1[interlayer_3_cells] = il3_E * ut.GPa
-        nu1[interlayer_3_cells] = il3_nu
+        # Interlayers: very high viscosity (effectively rigid viscoelastic)
+        # This effectively disables viscoelastic strain in interlayers
+        if len(interlayer_1_cells) > 0:
+            eta[interlayer_1_cells] = 1e30  # Very high -> no viscoelastic strain
+            E1[interlayer_1_cells] = il1_E * ut.GPa
+            nu1[interlayer_1_cells] = il1_nu
+        if len(interlayer_2_cells) > 0:
+            eta[interlayer_2_cells] = 1e30
+            E1[interlayer_2_cells] = il2_E * ut.GPa
+            nu1[interlayer_2_cells] = il2_nu
+        if len(interlayer_3_cells) > 0:
+            eta[interlayer_3_cells] = 1e30
+            E1[interlayer_3_cells] = il3_E * ut.GPa
+            nu1[interlayer_3_cells] = il3_nu
 
-    kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
-    mat.add_to_non_elastic(kelvin)
+        kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
+        mat.add_to_non_elastic(kelvin)
 
-    # ── DISLOCATION CREEP ─────────────────────────────────────────────────────
-    # Only for salt; interlayers have A = 0 (no creep)
+        # ── DISLOCATION CREEP ─────────────────────────────────────────────
+        # Only for salt; interlayers have A = 0 (no creep)
 
-    A_dc = to.zeros(n_elems, dtype=to.float64)
-    Q_dc = to.zeros(n_elems, dtype=to.float64)
-    n_dc = to.zeros(n_elems, dtype=to.float64)
+        A_dc = to.zeros(n_elems, dtype=to.float64)
+        Q_dc = to.zeros(n_elems, dtype=to.float64)
+        n_dc = to.zeros(n_elems, dtype=to.float64)
 
-    # Salt: dislocation creep — scenario-dependent
-    if MATERIAL_SCENARIO == "A":
-        ndc = 4.6
-        A_dc[:] = 40.0 * (1e-6)**ndc / sec_per_year
-        Q_dc[:] = 6495.0 * 8.32
-    elif MATERIAL_SCENARIO == "B":
-        ndc = 5.6897
-        A_dc[:] = 25.92 * (1e-6)**ndc / sec_per_year  # 1.5 × A_MD
-        Q_dc[:] = 6495.0 * 8.32
-    elif MATERIAL_SCENARIO == "B_freecalibr":
-        ndc = 7.6122
-        A_dc[:] = 1456.91 * (1e-6)**ndc / sec_per_year
-        Q_dc[:] = 9250.0 * 8.314
-    n_dc[:] = ndc
+        # Salt: dislocation creep — scenario-dependent
+        if MATERIAL_SCENARIO == "A":
+            ndc = 4.6
+            A_dc[:] = 40.0 * (1e-6)**ndc / sec_per_year
+            Q_dc[:] = 6495.0 * 8.32
+        elif MATERIAL_SCENARIO == "B":
+            ndc = 5.6897
+            A_dc[:] = 25.92 * (1e-6)**ndc / sec_per_year  # 1.5 × A_MD
+            Q_dc[:] = 6495.0 * 8.32
+        elif MATERIAL_SCENARIO == "B_freecalibr":
+            ndc = 7.6122
+            A_dc[:] = 1456.91 * (1e-6)**ndc / sec_per_year
+            Q_dc[:] = 9250.0 * 8.314
+        n_dc[:] = ndc
 
-    # Interlayers: A = 0 -> no dislocation creep
-    if len(all_interlayer_cells) > 0:
-        A_dc[all_interlayer_cells] = 0.0
+        # Interlayers: A = 0 -> no dislocation creep
+        if len(all_interlayer_cells) > 0:
+            A_dc[all_interlayer_cells] = 0.0
 
-    creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
-    mat.add_to_non_elastic(creep_0)
+        creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
+        mat.add_to_non_elastic(creep_0)
 
     # ── PRESSURE-SOLUTION CREEP ───────────────────────────────────────────────
     # Active for salt and anhydrite interlayers (KEM-28 report).
@@ -1720,7 +1790,8 @@ def main():
         print("  OPERATION PHASE:")
         print(f"    Scenario:       {PRESSURE_SCENARIO}")
         print(f"    Days:           {OPERATION_DAYS}")
-        print(f"    Desai:          {'enabled' if USE_DESAI else 'disabled'}")
+        print(f"    Constitutive:   {'Munson-Dawson' if USE_MUNSON_DAWSON else 'SafeInCave (Kelvin+Desai)'}")
+        print(f"    Desai:          {'enabled' if (USE_DESAI and not USE_MUNSON_DAWSON) else 'disabled'}")
         print(f"    Thermal:        {'enabled' if USE_THERMAL else 'disabled'}")
         if config["n_interlayers"] > 0:
             print("-" * 70)
@@ -1742,7 +1813,7 @@ def main():
     # Output folder
     output_folder = os.path.join(
         "output",
-        f"case_{config['cavern_type']}_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_S{MATERIAL_SCENARIO}_SIC"
+        f"case_{config['cavern_type']}_{PRESSURE_SCENARIO}({N_CYCLES})_{OPERATION_DAYS}days_S{MATERIAL_SCENARIO}_{'MD' if USE_MUNSON_DAWSON else 'SIC'}"
     )
 
     side_burden = p_ref
@@ -1974,7 +2045,9 @@ def main():
             print("[EQUILIBRIUM] Complete.")
 
     # ===== OPERATION PHASE =====
-    if USE_DESAI:
+    # Desai is part of the SafeInCave model only — Munson-Dawson handles
+    # its own transient/viscoplastic response internally.
+    if USE_DESAI and not USE_MUNSON_DAWSON:
         if n_interlayers > 0:
             mat = add_desai_heterogeneous(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
             if INTERLAYER_MODEL == "drucker_prager":
@@ -2185,8 +2258,8 @@ def main():
         "n_cycles": N_CYCLES,
         "operation_days": OPERATION_DAYS,
         "material_scenario": MATERIAL_SCENARIO,
-        "model": "safeincave",
-        "use_desai": USE_DESAI,
+        "model": "munson_dawson" if USE_MUNSON_DAWSON else "safeincave",
+        "use_desai": USE_DESAI and not USE_MUNSON_DAWSON,
         "t_hours": [float(t / ut.hour) for t in t_pressure],
         "p_MPa": [float(p / ut.MPa) for p in p_pressure],
     }
@@ -2202,9 +2275,11 @@ def main():
     output_mom_op.set_output_folder(output_folder_operation)
     output_mom_op.add_output_field("u", "Displacement (m)")
     output_mom_op.add_output_field("eps_tot", "Total strain (-)")
-    output_mom_op.add_output_field("eps_vp", "Viscoplastic strain (-)")
-    output_mom_op.add_output_field("alpha", "Hardening parameter (-)")
-    output_mom_op.add_output_field("Fvp", "Yield function (-)")
+    if not USE_MUNSON_DAWSON:
+        # Desai-specific fields — skipped when running the Munson-Dawson model.
+        output_mom_op.add_output_field("eps_vp", "Viscoplastic strain (-)")
+        output_mom_op.add_output_field("alpha", "Hardening parameter (-)")
+        output_mom_op.add_output_field("Fvp", "Yield function (-)")
     output_mom_op.add_output_field("p_elems", "Mean stress (Pa)")
     output_mom_op.add_output_field("q_elems", "Von Mises stress (Pa)")
     output_mom_op.add_output_field("sig", "Stress (Pa)")

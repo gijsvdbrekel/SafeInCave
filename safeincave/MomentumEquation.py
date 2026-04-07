@@ -453,6 +453,46 @@ class LinearMomentumBase(ABC):
         for elem_ne in self.mat.elems_ne:
         	elem_ne.update_internal_variables()
 
+    def save_internal_state(self) -> None:
+        """Save internal state of all non-elastic elements for dt-retry."""
+        self._saved_state = []
+        for elem_ne in self.mat.elems_ne:
+            state = {
+                'eps_ne_rate': elem_ne.eps_ne_rate.clone(),
+                'eps_ne_rate_old': elem_ne.eps_ne_rate_old.clone(),
+                'eps_ne_old': elem_ne.eps_ne_old.clone(),
+                'eps_ne_k': elem_ne.eps_ne_k.clone(),
+            }
+            # Desai-specific state
+            if hasattr(elem_ne, 'alpha'):
+                state['alpha'] = elem_ne.alpha.clone()
+                state['qsi'] = elem_ne.qsi.clone()
+                state['qsi_old'] = elem_ne.qsi_old.clone()
+                state['Fvp'] = elem_ne.Fvp.clone()
+            # MunsonDawson-specific state
+            if hasattr(elem_ne, 'zeta'):
+                state['zeta'] = elem_ne.zeta.clone()
+            if hasattr(elem_ne, 'zeta_old'):
+                state['zeta_old'] = elem_ne.zeta_old.clone()
+            self._saved_state.append(state)
+
+    def restore_internal_state(self) -> None:
+        """Restore internal state of all non-elastic elements for dt-retry."""
+        for elem_ne, state in zip(self.mat.elems_ne, self._saved_state):
+            elem_ne.eps_ne_rate = state['eps_ne_rate']
+            elem_ne.eps_ne_rate_old = state['eps_ne_rate_old']
+            elem_ne.eps_ne_old = state['eps_ne_old']
+            elem_ne.eps_ne_k = state['eps_ne_k']
+            if 'alpha' in state:
+                elem_ne.alpha = state['alpha']
+                elem_ne.qsi = state['qsi']
+                elem_ne.qsi_old = state['qsi_old']
+                elem_ne.Fvp = state['Fvp']
+            if 'zeta' in state:
+                elem_ne.zeta = state['zeta']
+            if 'zeta_old' in state:
+                elem_ne.zeta_old = state['zeta_old']
+
     def create_solution_vector(self) -> None:
         """
         Allocate the solution function `X` in the primary space.

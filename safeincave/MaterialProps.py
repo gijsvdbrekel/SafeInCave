@@ -289,7 +289,24 @@ class Material():
         ------------
         Sets `self.CT` (N, 6, 6).
         """
-		self.CT = to.linalg.inv(self.C_inv + dt*(1-theta)*self.G)
+		mat = self.C_inv + dt*(1-theta)*self.G
+		try:
+			self.CT = to.linalg.inv(mat)
+		except to.linalg.LinAlgError:
+			# Singular tangent for some elements (extreme Desai G from
+			# stress evolution at sharp geometry features).  Fall back to
+			# elastic tangent for those elements only.
+			import sys
+			CT_elastic = to.linalg.inv(self.C_inv)
+			self.CT = CT_elastic.clone()
+			n_singular = 0
+			for i in range(mat.shape[0]):
+				try:
+					self.CT[i] = to.linalg.inv(mat[i])
+				except to.linalg.LinAlgError:
+					n_singular += 1
+			print(f"[CT] Singular tangent for {n_singular} elements — used elastic fallback",
+				  file=sys.stderr)
 
 	def compute_CT_tilde(self, dt: float, theta: float) -> None:
 		"""
@@ -1131,7 +1148,14 @@ class ViscoplasticDesai(NonElasticElement):
         Updates `self.alpha`.
         """
         delta_alpha = -(self.r + to.einsum('bij,bij->b', self.P, stress - stress_k))/self.h
+        # Zero delta_alpha for h~0 elements (P already zeroed in
+        # compute_B_and_H_over_h, but guard the division too).
+        if hasattr(self, 'ind_h_small') and len(self.ind_h_small) > 0:
+            delta_alpha[self.ind_h_small] = 0.0
         self.alpha += delta_alpha
+        # Guard: alpha must stay positive — negative alpha causes NaN in
+        # compute_residue via (a_1/alpha)^(1/eta) with fractional eta.
+        self.alpha = to.clamp(self.alpha, min=1e-10)
 
     def compute_stress_invariants(self, s_xx: to.Tensor,
 										s_yy: to.Tensor,
@@ -1302,19 +1326,21 @@ class ViscoplasticDesai(NonElasticElement):
         	self.Fvp = Fvp.clone()
 
 
-        # Compute flow direction, i.e. d(Fvp)/d(stress)
-        F1 = (-alpha*I1**self.n + self.gamma*I1**2)
-        F2 = (to.exp(self.beta_1*I1) - self.beta*Sr)
+        # Compute flow direction, i.e. d(Fvp)/d(stress).  Fvp is built on the
+        # shifted invariant I1_star = I1 + sigma_t, so its gradient must be
+        # too (dI1_star/dS = dI1/dS, so the chain rule to stress is unchanged).
+        F1 = (-alpha*I1_star**self.n + self.gamma*I1_star**2)
+        F2 = (to.exp(self.beta_1*I1_star) - self.beta*Sr)
 
-        # Guard: F2 can go negative when I1 < 0 (tensile mean stress),
-        # because exp(beta_1*I1) -> 0.  Negative F2 causes NaN in
+        # Guard: F2 can go negative when I1_star < 0 (tensile mean stress),
+        # because exp(beta_1*I1_star) -> 0.  Negative F2 causes NaN in
         # F2**(m-1) with fractional m.  Clamp and track affected elements.
         F2_MIN = 1e-6
         ind_F2_neg = to.where(F2 < F2_MIN)[0]
         F2 = to.clamp(F2, min=F2_MIN)
 
-        dF1_dI1 = 2*self.gamma*I1 - self.n*alpha*I1**(self.n-1)
-        dF2m_dI1 = self.beta_1*self.m*to.exp(self.beta_1*I1)*F2**(self.m-1)
+        dF1_dI1 = 2*self.gamma*I1_star - self.n*alpha*I1_star**(self.n-1)
+        dF2m_dI1 = self.beta_1*self.m*to.exp(self.beta_1*I1_star)*F2**(self.m-1)
         dF_dI1 = -(dF1_dI1*F2**self.m + F1*dF2m_dI1)
 
         dF2_dJ2 = -(3*self.beta*J3*27**0.5)/(4*J2**(5/2))
@@ -1380,9 +1406,15 @@ class ViscoplasticDesai(NonElasticElement):
         dQdS[:,2,0] = dQdS[:,0,2] = dQdS_02
         dQdS[:,2,1] = dQdS[:,1,2] = dQdS_12
 
-        # Wherever J2=0 or F2 was negative, make viscoplasticity zero
+        # Wherever J2=0, F2 was negative, or alpha has fully softened,
+        # make viscoplasticity zero.  Fully softened elements (alpha near
+        # its floor) have a collapsed yield surface producing runaway
+        # strain rates — their transient creep is physically exhausted.
+        ALPHA_SOFT = 0.01 * self.alpha_0  # 1% of initial value
+        ind_softened = to.where(alpha <= ALPHA_SOFT)[0]
         dQdS[ind_J2_leq_0,:,:] = 0.0
         dQdS[ind_F2_neg,:,:] = 0.0
+        dQdS[ind_softened,:,:] = 0.0
 
         # Calculate strain rate
         ramp_idx = to.where(Fvp > 0)[0]
@@ -1434,6 +1466,15 @@ class ViscoplasticDesai(NonElasticElement):
         r_eps = self.compute_residue(eps_ne_rate_eps, alpha_eps, dt)
         self.h = (r_eps - self.r) / EPSILON_ALPHA
         Q = (eps_ne_rate_eps - self.eps_ne_rate) / EPSILON_ALPHA[:,None,None]
+
+        # Guard: when |h| ~ 0 the finite-difference is noise-dominated
+        # (stress singularity at sharp geometry).  Set h=1 to prevent
+        # div-by-zero; B and H_over_h are zeroed below for these elements.
+        H_MIN = 1e-6
+        self.ind_h_small = to.where(to.abs(self.h) < H_MIN)[0]
+        if len(self.ind_h_small) > 0:
+            self.h[self.ind_h_small] = 1.0
+
         B = (self.r / self.h)[:,None,None] * Q
 
         self.P = to.zeros_like(stress)
@@ -1448,6 +1489,13 @@ class ViscoplasticDesai(NonElasticElement):
 
         H = self.compute_H(Q, self.P)
         H_over_h = H/self.h[:,None,None]
+
+        # Zero B, H_over_h, and P for h~0 elements so G = E (uncorrected
+        # tangent) and no extreme values propagate to update_eps_ne_old.
+        if len(self.ind_h_small) > 0:
+            B[self.ind_h_small] = 0.0
+            H_over_h[self.ind_h_small] = 0.0
+            self.P[self.ind_h_small] = 0.0
 
         return B, H_over_h
 

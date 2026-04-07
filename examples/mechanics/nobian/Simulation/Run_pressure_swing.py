@@ -44,17 +44,18 @@ OPERATION_DAYS = 365
 DT_HOURS = 2
 
 # Material flags
-MATERIAL_SCENARIO = "B_freecalibr"  # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
-USE_DESAI = True
+MATERIAL_SCENARIO = "A"  # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
+USE_DESAI = True         # ignored when USE_MUNSON_DAWSON = True
+USE_MUNSON_DAWSON = True # False = SafeInCave (Kelvin+Desai), True = Munson-Dawson constitutive model
 USE_THERMAL = False
 
 # ── SWING SELECTION ──────────────────────────────────────────────────────────
 # Set the swing value in bar for this run. Change this before each run.
-# Valid values: 10, 12, 14, 16, 18, 20, 30
 SWING_BAR = 10
 
 # All swing values for reference (used only when running all sequentially via --all)
-SWING_VALUES_MPA = [1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 3.0]
+SWING_VALUES_MPA = [1.0, 1.4, 1.8, 3.0]
+MAX_SWING_MPA = max(SWING_VALUES_MPA)  # common mean for fair comparison
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -342,7 +343,13 @@ def run_single_swing(swing_mpa):
     p_leach_end_mpa = LEACHING_END_FRACTION * p_lithostatic_mpa
     p_leach_end = p_leach_end_mpa * ut.MPa
 
-    output_folder = os.path.join("output", f"case_swing_{swing_bar}bar_S{MATERIAL_SCENARIO}_SIC_regular1200")
+    model_tag = "MD" if USE_MUNSON_DAWSON else "SIC"
+    output_folder = os.path.join("output", f"case_swing_{swing_bar}bar_S{MATERIAL_SCENARIO}_{model_tag}_regular1200")
+
+    # Fair-comparison pressure centering: all swings share a common mean
+    p_mean_mpa = p_leach_end_mpa + MAX_SWING_MPA / 2.0
+    p_min_fair_mpa = p_mean_mpa - swing_mpa / 2.0
+    p_max_fair_mpa = p_mean_mpa + swing_mpa / 2.0
 
     if MPI.COMM_WORLD.rank == 0:
         print("=" * 70)
@@ -356,8 +363,10 @@ def run_single_swing(swing_mpa):
         print(f"  P_leach_end:      {p_leach_end_mpa:.2f} MPa ({LEACHING_END_FRACTION*100:.0f}%)")
         print(f"  Swing:            {swing_mpa:.1f} MPa = {swing_bar} bar")
         print(f"  Profile:          48h triangle (24h up, 24h down)")
-        print(f"  P_min:            {p_leach_end_mpa:.2f} MPa")
-        print(f"  P_max:            {p_leach_end_mpa + swing_mpa:.2f} MPa")
+        print(f"  Constitutive:     {'Munson-Dawson' if USE_MUNSON_DAWSON else 'SafeInCave (Kelvin+Desai)'}  /  Scenario {MATERIAL_SCENARIO}")
+        print(f"  P_mean (fair):    {p_mean_mpa:.2f} MPa (common across all swings)")
+        print(f"  P_min:            {p_min_fair_mpa:.2f} MPa")
+        print(f"  P_max:            {p_max_fair_mpa:.2f} MPa")
         print(f"  dt:               {dt_hours:.1f} hours")
         print(f"  Output:           {output_folder}")
         print("=" * 70)
@@ -393,7 +402,57 @@ def run_single_swing(swing_mpa):
 
     sec_per_year = 365.25 * 24 * 3600
 
-    if MATERIAL_SCENARIO == "A":
+    if USE_MUNSON_DAWSON:
+        # ── Munson-Dawson constitutive model ─────────────────────────────────
+        if MATERIAL_SCENARIO == "A":
+            nmd   = 4.99
+            A_md  = (18.31 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)
+            Q_md  = (6356.0 * 8.32) * to.ones(mom_eq.n_elems)
+            n_md  = nmd  * to.ones(mom_eq.n_elems)
+            K0_md = 7.0e-7 * to.ones(mom_eq.n_elems)
+            c_md  = 9.02e-3 * to.ones(mom_eq.n_elems)
+            m_md  = 3.0    * to.ones(mom_eq.n_elems)
+            aw_md = -13.2  * to.ones(mom_eq.n_elems)
+            bw_md = -7.738 * to.ones(mom_eq.n_elems)
+            d_md  = 0.58   * to.ones(mom_eq.n_elems)
+        elif MATERIAL_SCENARIO == "B":
+            nmd   = 5.6897
+            A_md  = (17.28 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)
+            Q_md  = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
+            n_md  = nmd  * to.ones(mom_eq.n_elems)
+            K0_md = 2253.87  * to.ones(mom_eq.n_elems)
+            c_md  = 9.02e-3  * to.ones(mom_eq.n_elems)
+            m_md  = 2.466    * to.ones(mom_eq.n_elems)
+            aw_md = 179.70   * to.ones(mom_eq.n_elems)
+            bw_md = 60.00    * to.ones(mom_eq.n_elems)
+            d_md  = 299.95   * to.ones(mom_eq.n_elems)
+        elif MATERIAL_SCENARIO == "B_freecalibr":
+            nmd   = 7.6122
+            A_md  = (971.27 * (1e-6)**nmd / sec_per_year) * to.ones(mom_eq.n_elems, dtype=to.float64)
+            Q_md  = (9250.0 * 8.314) * to.ones(mom_eq.n_elems)
+            n_md  = nmd  * to.ones(mom_eq.n_elems)
+            K0_md = 0.1410  * to.ones(mom_eq.n_elems)
+            c_md  = 0.03421 * to.ones(mom_eq.n_elems)
+            m_md  = 2.103   * to.ones(mom_eq.n_elems)
+            aw_md = 180.21  * to.ones(mom_eq.n_elems)
+            bw_md = 60.00   * to.ones(mom_eq.n_elems)
+            d_md  = 299.47  * to.ones(mom_eq.n_elems)
+        else:
+            raise ValueError(f"USE_MUNSON_DAWSON=True requires MATERIAL_SCENARIO 'A', 'B' or 'B_freecalibr' (got '{MATERIAL_SCENARIO}')")
+        mu_md = E0 / (2.0 * (1.0 + nu0))
+        md = sf.MunsonDawsonCreep(A=A_md, Q=Q_md, n=n_md,
+                                  K0=K0_md, c=c_md, m=m_md,
+                                  alpha_w=aw_md, beta_w=bw_md, delta=d_md,
+                                  mu=mu_md, name="munson_dawson")
+        A_ps = (14176.0 * 1e-9 / 1e6 / sec_per_year) * to.ones(mom_eq.n_elems)
+        d_ps = 5.25e-3 * to.ones(mom_eq.n_elems)
+        Q_ps = (3252.0 * 8.32) * to.ones(mom_eq.n_elems)
+        creep_pressure = sf.PressureSolutionCreep(A_ps, d_ps, Q_ps, "creep_pressure")
+
+        mat.add_to_elastic(spring_0)
+        mat.add_to_non_elastic(md)
+        mat.add_to_non_elastic(creep_pressure)
+    elif MATERIAL_SCENARIO == "A":
         # Scenario A: CCC Zuidwending
         eta = 2.5e5 * ut.GPa * to.ones(mom_eq.n_elems)  # 2.5e5 GPa·s
         E1 = 42.0 * ut.GPa * to.ones(mom_eq.n_elems)
@@ -417,23 +476,24 @@ def run_single_swing(swing_mpa):
     else:
         raise ValueError(f"Unknown MATERIAL_SCENARIO: {MATERIAL_SCENARIO}")
 
-    kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
-    if MATERIAL_SCENARIO == "B_freecalibr":
-        Q_dc = (9250.0 * 8.314) * to.ones(mom_eq.n_elems)
-    else:
-        Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
-    n_dc = ndc * to.ones(mom_eq.n_elems)
-    creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
+    if not USE_MUNSON_DAWSON:
+        kelvin = sf.Viscoelastic(eta, E1, nu1, "kelvin")
+        if MATERIAL_SCENARIO == "B_freecalibr":
+            Q_dc = (9250.0 * 8.314) * to.ones(mom_eq.n_elems)
+        else:
+            Q_dc = (6495.0 * 8.32) * to.ones(mom_eq.n_elems)
+        n_dc = ndc * to.ones(mom_eq.n_elems)
+        creep_0 = sf.DislocationCreep(A_dc, Q_dc, n_dc, "creep_dislocation")
 
-    A_ps = (14176.0 * 1e-9 / 1e6 / sec_per_year) * to.ones(mom_eq.n_elems)
-    d_ps = 5.25e-3 * to.ones(mom_eq.n_elems)
-    Q_ps = (3252.0 * 8.32) * to.ones(mom_eq.n_elems)
-    creep_pressure = sf.PressureSolutionCreep(A_ps, d_ps, Q_ps, "creep_pressure")
+        A_ps = (14176.0 * 1e-9 / 1e6 / sec_per_year) * to.ones(mom_eq.n_elems)
+        d_ps = 5.25e-3 * to.ones(mom_eq.n_elems)
+        Q_ps = (3252.0 * 8.32) * to.ones(mom_eq.n_elems)
+        creep_pressure = sf.PressureSolutionCreep(A_ps, d_ps, Q_ps, "creep_pressure")
 
-    mat.add_to_elastic(spring_0)
-    mat.add_to_non_elastic(kelvin)
-    mat.add_to_non_elastic(creep_0)
-    mat.add_to_non_elastic(creep_pressure)
+        mat.add_to_elastic(spring_0)
+        mat.add_to_non_elastic(kelvin)
+        mat.add_to_non_elastic(creep_0)
+        mat.add_to_non_elastic(creep_pressure)
 
     mom_eq.set_material(mat)
     mom_eq.build_body_force(g_vec)
@@ -501,7 +561,7 @@ def run_single_swing(swing_mpa):
         print("[LEACHING] Complete.")
 
     # ═════ ADD DESAI ═════
-    if USE_DESAI:
+    if USE_DESAI and not USE_MUNSON_DAWSON:
         if MATERIAL_SCENARIO == "A":
             mu_1    = 6.89e-12 * to.ones(mom_eq.n_elems)
             N_1     = 3.0 * to.ones(mom_eq.n_elems)
@@ -545,9 +605,9 @@ def run_single_swing(swing_mpa):
         mom_eq.expect_vp_state = False
 
     # ═════ BUILD TRIANGULAR WAVE PRESSURE ═════
-    # 48h-period symmetric triangle: 24h ramp UP, 24h ramp DOWN
-    p_min_mpa = p_leach_end_mpa
-    p_max_mpa = p_min_mpa + swing_mpa
+    # 48h-period symmetric triangle centered on a common mean (fair comparison)
+    p_min_mpa = p_min_fair_mpa
+    p_max_mpa = p_max_fair_mpa
 
     tc_cycling = sf.TimeController(
         dt=dt_hours,
@@ -658,12 +718,13 @@ def run_single_swing(swing_mpa):
         "operation_days": OPERATION_DAYS,
         "dt_hours": dt_hours,
         "material_scenario": MATERIAL_SCENARIO,
-        "model": "safeincave",
-        "use_desai": USE_DESAI,
+        "model": "munson_dawson" if USE_MUNSON_DAWSON else "safeincave",
+        "use_desai": USE_DESAI and not USE_MUNSON_DAWSON,
         "p_lithostatic_mpa": p_lithostatic_mpa,
         "p_leach_end_mpa": p_leach_end_mpa,
+        "p_mean_mpa": p_mean_mpa,
         "p_min_mpa": p_min_mpa,
-        "p_max_mpa": p_min_mpa + swing_mpa,
+        "p_max_mpa": p_max_mpa,
         "units": {"t_raw": "s", "p_raw": "Pa", "t": "hour", "p": "MPa"},
         "t_values_s": [float(t) for t in t_pressure],
         "p_values_Pa": [float(p) for p in p_pressure],
@@ -683,9 +744,10 @@ def run_single_swing(swing_mpa):
     output_mom_op.set_output_folder(output_folder_operation)
     output_mom_op.add_output_field("u", "Displacement (m)")
     output_mom_op.add_output_field("eps_tot", "Total strain (-)")
-    output_mom_op.add_output_field("eps_vp", "Viscoplastic strain (-)")
-    output_mom_op.add_output_field("alpha", "Hardening parameter (-)")
-    output_mom_op.add_output_field("Fvp", "Yield function (-)")
+    if not USE_MUNSON_DAWSON:
+        output_mom_op.add_output_field("eps_vp", "Viscoplastic strain (-)")
+        output_mom_op.add_output_field("alpha", "Hardening parameter (-)")
+        output_mom_op.add_output_field("Fvp", "Yield function (-)")
     output_mom_op.add_output_field("p_elems", "Mean stress (Pa)")
     output_mom_op.add_output_field("q_elems", "Von Mises stress (Pa)")
     output_mom_op.add_output_field("sig", "Stress (Pa)")

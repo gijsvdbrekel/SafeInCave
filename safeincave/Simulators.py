@@ -379,60 +379,142 @@ class Simulator_M(Simulator):
 			t = self.t_control.t
 			dt = self.t_control.dt
 
-			# Update boundary conditions
-			self.eq_mom.bc.update_dirichlet(t)
-			self.eq_mom.bc.update_neumann(t)
+			# Save state before step for dt-retry on divergence
+			stress_to_backup = stress_to.clone()
+			eps_tot_to_backup = eps_tot_to.clone()
+			self.eq_mom.save_internal_state()
 
-			# Iterative loop settings
-			tol = 1e-8
-			error = 2*tol
-			ite = 0
-			maxiter = 40
+			dt_current = dt
+			max_dt_cuts = 3
+			dt_cut = 0
+			step_converged = False
 
-			while error > tol and ite < maxiter:
+			while not step_converged and dt_cut <= max_dt_cuts:
 
-				# Update total strain of previous iteration (eps_tot_k <-- eps_tot)
-				eps_tot_k_to = eps_tot_to.clone()
+				# Update boundary conditions
+				self.eq_mom.bc.update_dirichlet(t)
+				self.eq_mom.bc.update_neumann(t)
 
-				# Update stress
-				stress_k_to = stress_to.clone()
+				# Iterative loop settings
+				tol = 1e-8
+				error = 2*tol
+				ite = 0
+				maxiter = 40
 
-				# Build bi-linear form
-				self.eq_mom.solve(stress_k_to, t, dt)
+				while error > tol and ite < maxiter:
 
-				# Compute total strain
-				eps_tot_to = self.eq_mom.compute_total_strain()
+					# Update total strain of previous iteration (eps_tot_k <-- eps_tot)
+					eps_tot_k_to = eps_tot_to.clone()
 
-				# Compute stress
-				stress_to = self.eq_mom.compute_stress(eps_tot_to)
+					# Update stress
+					stress_k_to = stress_to.clone()
 
-				# Increment internal variables
-				self.eq_mom.increment_internal_variables(stress_to, stress_k_to, dt)
+					# Build bi-linear form
+					self.eq_mom.solve(stress_k_to, t, dt_current)
 
-				# Compute inelastic strain rates
-				self.eq_mom.compute_eps_ne_rate(stress_to, dt)
+					# Compute total strain
+					eps_tot_to = self.eq_mom.compute_total_strain()
 
-				# Compute error
-				if self.eq_mom.theta == 1.0:
-					error = 0.0
-				elif len(self.eq_mom.mat.elems_ne) == 0:
-					error = 0.0
+					# Compute stress
+					stress_to = self.eq_mom.compute_stress(eps_tot_to)
+
+					# Increment internal variables
+					self.eq_mom.increment_internal_variables(stress_to, stress_k_to, dt_current)
+
+					# Compute inelastic strain rates
+					self.eq_mom.compute_eps_ne_rate(stress_to, dt_current)
+
+					# Compute error
+					if self.eq_mom.theta == 1.0:
+						error = 0.0
+					elif len(self.eq_mom.mat.elems_ne) == 0:
+						error = 0.0
+					else:
+						eps_tot_k_flat = to.flatten(eps_tot_k_to)
+						eps_tot_flat = to.flatten(eps_tot_to)
+						local_error =  np.linalg.norm(eps_tot_k_flat - eps_tot_flat) / np.linalg.norm(eps_tot_flat)
+						error = self.eq_mom.grid.mesh.comm.allreduce(local_error, op=MPI.SUM)
+
+					ite += 1
+
+					# Early exit on NaN
+					if np.isnan(error):
+						break
+
+				# Check convergence
+				if not np.isnan(error) and error <= tol:
+					step_converged = True
 				else:
-					eps_tot_k_flat = to.flatten(eps_tot_k_to)
-					eps_tot_flat = to.flatten(eps_tot_to)
-					local_error =  np.linalg.norm(eps_tot_k_flat - eps_tot_flat) / np.linalg.norm(eps_tot_flat)
-					error = self.eq_mom.grid.mesh.comm.allreduce(local_error, op=MPI.SUM)
+					# Restore state and retry with halved dt
+					dt_cut += 1
+					if dt_cut <= max_dt_cuts:
+						import sys
+						print(f"[SOLVER] Step {self.t_control.step_counter}: "
+							  f"{'NaN' if np.isnan(error) else 'no convergence'} "
+							  f"after {ite} iters — halving dt "
+							  f"({dt_current/self.t_control.time_conversion:.4f} -> "
+							  f"{dt_current/2/self.t_control.time_conversion:.4f} hours), "
+							  f"retry {dt_cut}/{max_dt_cuts}",
+							  file=sys.stderr)
+						dt_current = dt_current / 2
+						stress_to = stress_to_backup.clone()
+						eps_tot_to = eps_tot_to_backup.clone()
+						self.eq_mom.restore_internal_state()
+					else:
+						# All retries exhausted — restore backup, skip commit,
+						# and dump diagnostic state.  We must NOT call
+						# update_internal_variables / update_eps_ne_rate_old /
+						# update_eps_ne_old below, otherwise the corrupted
+						# (NaN) state becomes the new "old" state and poisons
+						# every subsequent step.
+						stress_to = stress_to_backup.clone()
+						eps_tot_to = eps_tot_to_backup.clone()
+						stress_k_to = stress_to_backup.clone()
+						self.eq_mom.restore_internal_state()
+						import sys, os
+						dump_path = os.path.join(os.getcwd(), "nan_diagnostic.pt")
+						diag = {
+							'step': self.t_control.step_counter,
+							't': t,
+							'dt': dt_current,
+							'stress': stress_to.clone(),
+							'stress_backup': stress_to_backup.clone(),
+							'eps_tot': eps_tot_to.clone(),
+						}
+						for idx, elem_ne in enumerate(self.eq_mom.mat.elems_ne):
+							prefix = f"elem_{idx}_{elem_ne.name}"
+							diag[f"{prefix}_eps_ne_rate"] = elem_ne.eps_ne_rate.clone()
+							diag[f"{prefix}_G"] = elem_ne.G.clone()
+							diag[f"{prefix}_B"] = elem_ne.B.clone()
+							if hasattr(elem_ne, 'alpha'):
+								diag[f"{prefix}_alpha"] = elem_ne.alpha.clone()
+								diag[f"{prefix}_alpha_0"] = elem_ne.alpha_0.clone()
+								diag[f"{prefix}_h"] = elem_ne.h.clone()
+								diag[f"{prefix}_r"] = elem_ne.r.clone()
+								diag[f"{prefix}_Fvp"] = elem_ne.Fvp.clone()
+								diag[f"{prefix}_qsi"] = elem_ne.qsi.clone()
+						# Also save C_inv and total G for CT diagnosis
+						diag['C_inv'] = self.eq_mom.mat.C_inv.clone()
+						diag['G_total'] = self.eq_mom.mat.G.clone()
+						to.save(diag, dump_path)
+						print(f"[SOLVER] All {max_dt_cuts} retries failed at step "
+							  f"{self.t_control.step_counter} (t={t/self.t_control.time_conversion:.1f}h). "
+							  f"Diagnostic saved to {dump_path}",
+							  file=sys.stderr)
 
-				ite += 1
+			# Only commit internal variables if the step actually converged.
+			# If all dt-retries failed, the backup state has already been
+			# restored above; committing here would overwrite "old" with
+			# corrupted/NaN values and poison every subsequent step.
+			if step_converged:
+				# Update internal variables
+				self.eq_mom.update_internal_variables()
 
-			# Update internal variables
-			self.eq_mom.update_internal_variables()
+				# Update strain rates
+				self.eq_mom.update_eps_ne_rate_old()
 
-			# Update strain rates
-			self.eq_mom.update_eps_ne_rate_old()
-
-			# Update strain
-			self.eq_mom.update_eps_ne_old(stress_to, stress_k_to, dt)
+				# Update strain
+				self.eq_mom.update_eps_ne_old(stress_to, stress_k_to, dt_current)
 
 			# Save fields
 			self.eq_mom.compute_p_elems()
@@ -445,7 +527,7 @@ class Simulator_M(Simulator):
 			# Print stuff
 			current_time = "%.3f"%(t/self.t_control.time_conversion)
 			screen_output_row = [
-									self.t_control.step_counter, 
+									self.t_control.step_counter,
 									self.t_control.dt/self.t_control.time_conversion,
 									f"{current_time} / {self.t_control.t_final/self.t_control.time_conversion}",
 									ite,

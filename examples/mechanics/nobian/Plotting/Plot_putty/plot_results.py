@@ -57,10 +57,10 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["regular1200", "fastleached1200", "regular600", "fastleached600"],
-    "pressure": ["power_generation"],
-    "scenario": ["B_SIC", "B_MD"],
-    "n_cycles": None,
+    "caverns": ["regular1200", "tilted1200", "fastleached1200"],
+    "pressure": ["industry"],
+    "scenario": ["B_SIC"],
+    "n_cycles": 22,
     "operation_days": 365,
     "case_contains": None,
 }
@@ -90,13 +90,13 @@ SELECT = {
 #                         Linestyle = solid for 1200k, dashed for 600k.
 #                         Label = "B_SIC (1200k)", "B_MD (600k)", etc.
 
-PLOT_MODE = "compare_sizes"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
+PLOT_MODE = "compare_shapes"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
 
 FIGURES = {
     "convergence": True,          # Figure 1: volume convergence
     "stress_state": True,         # Figure 2: p-q stress paths
     "fos": True,                  # Figure 3: FOS over time
-    "fracture_propagation": False, # Figure 4: dilatancy zone analysis
+    "fracture_propagation": True, # Figure 4: dilatancy zone analysis
     "fos_summary": False,          # Figure 5: global min FOS + 4 pressure profiles
 }
 

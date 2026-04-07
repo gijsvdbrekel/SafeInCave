@@ -198,3 +198,4 @@ cython_debug/
 **/jit*/
 *.pyc
 thesis
+examples/mechanics/nobian/Simulation/nan_diagnostic.pt

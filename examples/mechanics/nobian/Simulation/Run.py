@@ -60,7 +60,7 @@ CAVERN_TYPE = "fastleached"
 # CAVERN_SIZE: Volume in thousands of m³ (ignored for A5)
 #   600  - 600,000 m³ volume
 #   1200 - 1,200,000 m³ volume
-CAVERN_SIZE = 600
+CAVERN_SIZE = 1200
 
 # ── LEACHING PHASE SETTINGS ──────────────────────────────────────────────────────
 # LEACHING_MODE: How pressure decreases during leaching:
@@ -105,7 +105,7 @@ RAMP_UP_HOURS = 336 # 2 weeks
 #   "transport"        - Trapezoidal 2-day cycle (nighttime high → daytime low)
 #   "power_generation" - Abrupt withdrawal events with gradual re-pressurisation
 #   "csv"              - Load pressure profile from CSV file
-PRESSURE_SCENARIO = "power_generation"
+PRESSURE_SCENARIO = "industry"
 
 # ── INDUSTRY SETTINGS (only used when PRESSURE_SCENARIO = "industry") ──────────
 # Sinusoidal schedule. With leaching: oscillates around p_leach_end + P_AMPLITUDE_MPA.
@@ -150,7 +150,7 @@ SCHEDULE_MODE = "stretch"
 OPERATION_DAYS = 365
 
 # N_CYCLES: Number of pressure cycles (industry: sinusoidal; transport: 2-day cycles)
-N_CYCLES = 20
+N_CYCLES = 22
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
 dt_hours = 2
