@@ -151,7 +151,5 @@ class Cavern_MassFlux(Cavern):
 
     def update_cavern(self, t: float) -> None:
         self.Mflux = np.interp(t, self.time_values, self.Mflux_values)
-        if self.Mflux < 0.0:
-            raise ValueError(f"Mass flux must be >= 0, got {self.Mflux}")
 
     
