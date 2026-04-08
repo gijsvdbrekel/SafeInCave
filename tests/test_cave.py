@@ -1,6 +1,8 @@
 from safeincave.CavernBC import CavernHandler, Cavern_PT, Cavern_T, CavernVolumeComputer
+from safeincave.Utils import create_field_nodes
 import CoolProp.CoolProp as CP
 from safeincave import GridHandlerGMSH
+import dolfinx as do
 import numpy as np
 import os
 import unittest
@@ -81,14 +83,6 @@ class Test_CavernVolumeComputer(unittest.TestCase):
                 [ 0.,  0., -1.]
         ])
 
-    # def test_initialize(self):
-    #     # cvc = CavernVolumeComputer(self.grid, "Cavern_full", [110.0, 1000.0, -100.0], sym_scale=1)
-    #     # cvc = CavernVolumeComputer(self.grid, "Cavern_half", [10.0, 2.0, -780.0], sym_scale=2)
-    #     cvc = CavernVolumeComputer(self.grid, "Cavern_quarter", [0.0, 0.0, 0.5], sym_scale=4)
-    #     volume = cvc.compute()
-    #     print(f"Computed cavern volume: {volume} m^3")
-    #     # print(cvc.internal_point)
-
     def test_compute_volume(self):
         cvc = CavernVolumeComputer(self.grid, "Cavern_full")
         volume_full = cvc.compute()
@@ -105,7 +99,6 @@ class Test_CavernVolumeComputer(unittest.TestCase):
     def test_normals(self):
         cvc = CavernVolumeComputer(self.grid, "Cavern_full")
         normals = cvc.calculate_normals()
-        # Compare normals to expected_normals
         np.testing.assert_allclose(normals, self.normals_full, rtol=1e-3)
         
         cvc = CavernVolumeComputer(self.grid, "Cavern_half")
@@ -115,6 +108,28 @@ class Test_CavernVolumeComputer(unittest.TestCase):
         cvc = CavernVolumeComputer(self.grid, "Cavern_quarter")
         normals = cvc.calculate_normals()
         np.testing.assert_allclose(normals, self.normals_quarter, rtol=1e-3)
+
+    def test_compute_volume_with_displacement(self):
+        cvc = CavernVolumeComputer(self.grid, "Cavern_full")
+        CG1_3x1 = do.fem.functionspace(cvc.grid.mesh, ("Lagrange", 1, (self.grid.domain_dim, )))
+        u = do.fem.Function(CG1_3x1)
+        u_array = u.x.array.reshape(-1, 3).copy()
+
+        fun_ux = lambda x, y, z: 0.5 - x*0.2
+        u_array[:, 0] = create_field_nodes(cvc.grid, fun_ux)
+        u.x.array[:] = u_array.flatten()
+        volume_computed = cvc.compute(u)
+
+        R = 0.15
+        p1 = 0.5 - R
+        p2 = 0.5 + R
+        u1 = 0.5 - p1*0.2
+        u2 = 0.5 - p2*0.2
+        D = (p2 + u2) - (p1 + u1)
+        height = 0.75 - 0.25
+        V_expected = D*2*R*height
+        
+        self.assertAlmostEqual(volume_computed, V_expected, delta=1e-8)
 
 
 

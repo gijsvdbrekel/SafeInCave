@@ -28,6 +28,7 @@ class CavernVolumeComputer:
         self.coords_wall, self.conn_wall, self.ids_wall = cavern_data
         if internal_point is None:
             self.internal_point = self.__surface_centroid(self.coords_wall, self.conn_wall)
+        self.gather_cells_for_wall_vertices()
 
     def validate_sym_scale(self, sym_scale):
         '''
@@ -46,14 +47,31 @@ class CavernVolumeComputer:
             normal = np.cross(p1 - p0, p2 - p0)
             normals[i] = normal / np.linalg.norm(normal)
         return normals
+    
+
+    def gather_cells_for_wall_vertices(self):
+        tdim = self.grid.mesh.topology.dim
+        self.grid.mesh.topology.create_connectivity(0, tdim)
+        v2c = self.grid.mesh.topology.connectivity(0, tdim)
+        self.wall_cells = np.empty(len(self.ids_wall), dtype=np.int32)
+        for k, v in enumerate(self.ids_wall):
+            links = v2c.links(v)
+            if len(links) == 0:
+                raise RuntimeError(f"Vertex {v} has no incident cell.")
+            self.wall_cells[k] = links[0]
 
 
-    def compute(self):
+    def compute(self, u=None):
+        if u is None:
+            coords = self.coords_wall
+        else:
+            disp_wall = u.eval(self.coords_wall, self.wall_cells)
+            coords = self.coords_wall + disp_wall
         volume = 0.0
         for tri in self.conn_wall:
-            v0 = self.coords_wall[tri][0] - self.internal_point
-            v1 = self.coords_wall[tri][1] - self.internal_point
-            v2 = self.coords_wall[tri][2] - self.internal_point
+            v0 = coords[tri][0] - self.internal_point
+            v1 = coords[tri][1] - self.internal_point
+            v2 = coords[tri][2] - self.internal_point
             volume += np.dot(v0, np.cross(v1, v2)) / 6.0
         return abs(volume) * self.sym_scale
 
