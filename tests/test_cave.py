@@ -1,8 +1,122 @@
-from safeincave.CavernBC import CavernHandler, Cavern_PT, Cavern_T
+from safeincave.CavernBC import CavernHandler, Cavern_PT, Cavern_T, CavernVolumeComputer
 import CoolProp.CoolProp as CP
-import torch as to
+from safeincave import GridHandlerGMSH
 import numpy as np
+import os
 import unittest
+
+
+class Test_CavernVolumeComputer(unittest.TestCase):
+    def setUp(self):
+        self.grid = GridHandlerGMSH("geom", os.path.join("files", "cube_caverns"))
+
+        self.__calculate_expected_volume()
+        self.__expected_normals()
+
+    def __calculate_expected_volume(self):
+        Lz = 1.0
+        Ly = 2.0
+        Lx = 1.0
+        height = Lz/2
+        R = 0.1*(Lx+Ly)/2
+        self.volume_expected = 2*R*2*R*height
+
+    def __expected_normals(self):
+        self.normals_full = np.array([
+                [ 0.00000000e+00, -1.00000000e+00,  0.00000000e+00],
+                [ 0.00000000e+00, -1.00000000e+00,  0.00000000e+00],
+                [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00],
+                [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00],
+                [-1.00000000e+00, -7.40148699e-16,  0.00000000e+00],
+                [-1.00000000e+00,  0.00000000e+00,  4.44089212e-16],
+                [-0.00000000e+00, -1.00000000e+00,  0.00000000e+00],
+                [ 0.00000000e+00, -1.00000000e+00,  0.00000000e+00],
+                [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00],
+                [ 1.00000000e+00,  0.00000000e+00, -0.00000000e+00],
+                [ 1.00000000e+00,  0.00000000e+00,  0.00000000e+00],
+                [ 0.00000000e+00,  0.00000000e+00,  1.00000000e+00],
+                [-0.00000000e+00,  0.00000000e+00, -1.00000000e+00],
+                [-1.00000000e+00, -0.00000000e+00, -4.44089208e-16],
+                [ 0.00000000e+00, -0.00000000e+00, -1.00000000e+00],
+                [ 1.00000000e+00,  0.00000000e+00,  0.00000000e+00],
+                [ 0.00000000e+00,  0.00000000e+00, -1.00000000e+00],
+                [-1.00000000e+00,  7.40148667e-16,  0.00000000e+00],
+                [ 0.00000000e+00,  1.00000000e+00, -4.44089213e-16],
+                [ 7.40148683e-16,  1.00000000e+00, -0.00000000e+00],
+                [ 1.00000000e+00,  0.00000000e+00,  0.00000000e+00],
+                [-7.40148683e-16,  1.00000000e+00,  0.00000000e+00],
+                [ 0.00000000e+00, -0.00000000e+00, -1.00000000e+00],
+                [ 0.00000000e+00,  1.00000000e+00,  4.44089207e-16],
+        ])
+        self.normals_half = np.array([
+                [-0.,  0.,  1.],
+                [ 0.,  0.,  1.],
+                [ 1.,  0., -0.],
+                [ 1.,  0.,  0.],
+                [-0.,  0.,  1.],
+                [ 0.,  0.,  1.],
+                [-1.,  0.,  0.],
+                [-1.,  0.,  0.],
+                [ 0.,  0., -1.],
+                [-0.,  0., -1.],
+                [ 0.,  0., -1.],
+                [ 0., -0., -1.],
+                [ 0.,  1.,  0.],
+                [ 0.,  1., -0.],
+                [ 0.,  1.,  0.],
+                [ 0.,  1.,  0.]
+        ])
+        self.normals_quarter = np.array([
+                [ 0.,  0.,  1.],
+                [ 0.,  0.,  1.],
+                [ 0., -0.,  1.],
+                [-0.,  0.,  1.],
+                [ 0., -1.,  0.],
+                [ 0., -1.,  0.],
+                [-1.,  0.,  0.],
+                [-1.,  0.,  0.],
+                [-0.,  0., -1.],
+                [ 0., -0., -1.],
+                [ 0.,  0., -1.],
+                [ 0.,  0., -1.]
+        ])
+
+    # def test_initialize(self):
+    #     # cvc = CavernVolumeComputer(self.grid, "Cavern_full", [110.0, 1000.0, -100.0], sym_scale=1)
+    #     # cvc = CavernVolumeComputer(self.grid, "Cavern_half", [10.0, 2.0, -780.0], sym_scale=2)
+    #     cvc = CavernVolumeComputer(self.grid, "Cavern_quarter", [0.0, 0.0, 0.5], sym_scale=4)
+    #     volume = cvc.compute()
+    #     print(f"Computed cavern volume: {volume} m^3")
+    #     # print(cvc.internal_point)
+
+    def test_compute_volume(self):
+        cvc = CavernVolumeComputer(self.grid, "Cavern_full")
+        volume_full = cvc.compute()
+        self.assertAlmostEqual(volume_full, self.volume_expected, delta=1e-8)
+        
+        cvc_half = CavernVolumeComputer(self.grid, "Cavern_half", [10.0, 2.0, -780.0], sym_scale=2)
+        volume_half = cvc_half.compute()
+        self.assertAlmostEqual(volume_half, self.volume_expected, delta=1e-8)
+        
+        cvc_quarter = CavernVolumeComputer(self.grid, "Cavern_quarter", [0.0, 0.0, 0.5], sym_scale=4)
+        volume_quarter = cvc_quarter.compute()
+        self.assertAlmostEqual(volume_quarter, self.volume_expected, delta=1e-8)
+
+    def test_normals(self):
+        cvc = CavernVolumeComputer(self.grid, "Cavern_full")
+        normals = cvc.calculate_normals()
+        # Compare normals to expected_normals
+        np.testing.assert_allclose(normals, self.normals_full, rtol=1e-3)
+        
+        cvc = CavernVolumeComputer(self.grid, "Cavern_half")
+        normals = cvc.calculate_normals()
+        np.testing.assert_allclose(normals, self.normals_half, rtol=1e-3)
+        
+        cvc = CavernVolumeComputer(self.grid, "Cavern_quarter")
+        normals = cvc.calculate_normals()
+        np.testing.assert_allclose(normals, self.normals_quarter, rtol=1e-3)
+
+
 
 class Test_T(unittest.TestCase):
     def setUp(self):
