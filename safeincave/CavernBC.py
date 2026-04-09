@@ -15,6 +15,7 @@
 # the License.
 from abc import ABC, abstractmethod
 import CoolProp.CoolProp as CP
+from safeincave import CavernThermodynamics
 import numpy as np
 
 
@@ -186,13 +187,10 @@ class CavernVolumeComputer:
             [[gid2lid[v] for v in tri] for tri in tri_global],
             dtype=np.int32
         )
-
         coords_wall = coords_all[wall_ids]
-
         return coords_wall, tris_local, wall_ids
 
     
-
     def __surface_centroid(self, coordinates, triangles): 
         """Calculate the centroid of a surface defined by triangles."""
         total_area = 0
@@ -206,19 +204,6 @@ class CavernVolumeComputer:
         return weighted_sum / total_area
 
 
-    def __orient_triangles_outward(self, coordinates, triangles, reference_point):
-        """Orient triangles so that their normals point outward from a reference point."""
-        fixed_triangles = []
-        for tri in triangles:
-            p0, p1, p2 = coordinates[tri]
-            normal = np.cross(p1 - p0, p2 - p0)
-            center = (p0 + p1 + p2) / 3.0
-            inward = reference_point - center
-            if np.dot(normal, inward) > 0:
-                fixed_triangles.append([tri[0], tri[2], tri[1]])
-            else:
-                fixed_triangles.append(tri)
-        return np.array(fixed_triangles)
 
 
 
@@ -230,41 +215,68 @@ class Cavern(ABC):
                  fluid: str,
                  h_conv: float = None):
         self.cavern_name = cavern_name
+        self.check_fluid(fluid)
         self.fluid = fluid
         self.h_conv = h_conv
         self.type = None
 
-    def check_fluid(self) -> None:
+    def check_fluid(self, fluid: str) -> None:
         try:
-            CP.AbstractState("HEOS", self.fluid)
+            CP.AbstractState("HEOS", fluid)
         except ValueError:
-            raise ValueError(f"Fluid '{self.fluid}' not recognized by CoolProp.")
+            raise ValueError(f"Fluid '{fluid}' not recognized by CoolProp.")
         
     @abstractmethod
     def update_cavern(self, t: float) -> None:
         pass
 
+    @abstractmethod
+    def record_data(self, t: float) -> None:
+        pass
 
 
 class CavernHandler:
     def __init__(self):
         self.caverns_T = []
         self.caverns_PT = []
+        self.caverns_MFlux = []
 
     def add_cavern(self, cavern: Cavern) -> None:
         if cavern.type == "Cavern_T":
             self.caverns_T.append(cavern)
         elif cavern.type == "Cavern_PT":
             self.caverns_PT.append(cavern)
+        elif cavern.type == "Cavern_MFlux":
+            self.caverns_MFlux.append(cavern)
         else:
             raise ValueError(f"Cavern type {cavern.type} not supported")
+        
+    def calculate_volumes(self, u: any) -> None:
+        for cavern in self.caverns_MFlux:
+            cavern.calculate_volume(u)
 
-    def update_caverns(self, t: float):
+    def update_caverns(self, 
+                       t: float,
+                       dt: float = None,
+                       u: any = None,
+                       T: any = None) -> None:
         for cavern in self.caverns_T:
             cavern.update_cavern(t)
 
         for cavern in self.caverns_PT:
             cavern.update_cavern(t)
+
+    def record_cavern_data(self, t: float) -> None:
+        for cavern in self.caverns_T:
+            cavern.record_data(t)
+
+        for cavern in self.caverns_PT:
+            cavern.record_data(t)
+
+        for cavern in self.caverns_MFlux:
+            cavern.record_data(t)
+
+        
 
 
 class Cavern_T(Cavern):
@@ -275,10 +287,20 @@ class Cavern_T(Cavern):
         self.time_values = time_values
         self.T = self.T_values[0]
 
+        # Initialize histories
+        self.T_hist = [self.T]
+        self.t_hist = [self.time_values[0]]
+
     def update_cavern(self, t: float) -> None:
         self.T = np.interp(t, self.time_values, self.T_values)
         if self.T <= 0.0:
             raise ValueError(f"T must be > 0, got {self.T}")
+    
+    def record_data(self, t: float) -> None:
+        self.T_hist.append(self.T)
+        self.t_hist.append(t)
+
+
 
 class Cavern_PT(Cavern):
     def __init__(self, 
@@ -303,6 +325,12 @@ class Cavern_PT(Cavern):
         self.direction = direction
         self.gravity = g
         self.__initialize()
+        
+        # Initialize histories
+        self.T_hist = [self.T]
+        self.P_hist = [self.P]
+        self.t_hist = [self.time_values[0]]
+        self.density_hist = [self.density]
 
     def __initialize(self) -> None:
         self.AS = CP.AbstractState("HEOS", self.fluid)
@@ -321,14 +349,23 @@ class Cavern_PT(Cavern):
         self.AS.update(CP.PT_INPUTS, self.P + self.P_atm, self.T)
         self.density = self.AS.rhomass()
 
+    def record_data(self, t: float) -> None:
+        self.P_hist.append(self.P)
+        self.T_hist.append(self.T)
+        self.t_hist.append(t)
+        self.density_hist.append(self.density)
+
 
 
 class Cavern_MassFlux(Cavern):
-    def __init__(self, 
+    def __init__(self,
+                 *,
+                 grid: any,
                  cavern_name: str,
                  fluid: str,
-                 P_init: float,        # Initial gauge pressure (Pa)
-                 T_init: float,
+                 P_init: float,         # Initial gauge pressure (Pa)
+                 T_init: float,         # Initial fluid temperature (K)
+                 T_in: float,           # Temperature of injected fluid (K)
                  Mflux_values: list,
                  time_values: list,
                  ref_pos: float = 0.0,
@@ -338,7 +375,7 @@ class Cavern_MassFlux(Cavern):
                  P_atm: float = 101325.0 # Atmospheric pressure in Pa
                  ):
         super().__init__(cavern_name, fluid, h_conv)
-        self.type = "Cavern_MassFlux"
+        self.type = "Cavern_MFlux"
         self.Mflux_values = Mflux_values
         self.time_values = time_values
         self.Mflux = self.Mflux_values[0]
@@ -348,14 +385,64 @@ class Cavern_MassFlux(Cavern):
         self.P_atm = P_atm
         self.P_init = P_init
         self.T_init = T_init
-        self.__initialize()
+        self.T_in = T_in
 
-    def __initialize(self) -> None:
-        self.AS = CP.AbstractState("HEOS", self.fluid)
-        self.AS.update(CP.PT_INPUTS, self.P_init + self.P_atm, self.T_init)
-        self.density = self.AS.rhomass()
+        # Initial absolut pressure and temperature
+        self.P0 = P_init + self.P_atm
+        self.T0 = T_init
 
-    def update_cavern(self, t: float) -> None:
+        # Initialize cavern volume computer
+        self.cvc = CavernVolumeComputer(grid, boundary_name=self.cavern_name)
+
+        # Initialize thermodynamic model
+        self.model = CavernThermodynamics(self.fluid)
+
+        # Calculate initial density and mass
+        AS = CP.AbstractState("HEOS", self.fluid)
+        AS.update(CP.PT_INPUTS, self.P0, self.T0)
+        self.density = AS.rhomass()
+
+        # Compute initial mass
+        self.M0 = self.density * self.V0
+
+        # Initialize histories
+        self.V_hist = []
+        self.M_hist = []
+        self.P_hist = []
+        self.T_hist = []
+        self.density_hist = []
+        self.t_hist = []
+
+    def calculate_volume(self, u: any) -> None:
+        self.V1 = self.cvc.compute(u)
+
+    def update_cavern(self, t: float, dt: float, u: any = None) -> None:
         self.Mflux = np.interp(t, self.time_values, self.Mflux_values)
+        self.M1 = self.M0 + self.Mflux * dt
+        dm = self.M1 - self.M0
+        self.P, self.T, self.density = self.model.solve(
+            dm = dm,
+            Q_in = 0.0,
+            T_in = self.T_in,
+            P0 = self.P0,
+            T0 = self.T0,
+            V0 = self.V0,
+            V1 = self.V1
+        )
+
+    def record_data(self, t: float) -> None:
+        self.V_hist.append(self.V1)
+        self.M_hist.append(self.M1)
+        self.P_hist.append(self.P)
+        self.T_hist.append(self.T)
+        self.t_hist.append(t)
+        self.density_hist.append(self.density)
+
+        # Update for next step
+        self.P0 = self.P
+        self.T0 = self.T
+        self.V0 = self.V1
+
+
 
     

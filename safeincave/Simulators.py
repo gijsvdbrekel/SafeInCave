@@ -365,6 +365,9 @@ class Simulator_M(Simulator):
 			# Retrieve stress
 			stress_to = numpy2torch(self.eq_mom.sig.x.array.reshape((self.eq_mom.n_elems, 3, 3)))
 
+		# Calculate initial cavern volumes
+		self.caverns.calculate_volumes(self.eq_mom.u)
+
 		# Calculate and eps_ie_rate_old
 		self.eq_mom.compute_eps_ne_rate(stress_to, self.t_control.t)
 		self.eq_mom.update_eps_ne_rate_old()
@@ -436,6 +439,9 @@ class Simulator_M(Simulator):
 					error = self.eq_mom.grid.mesh.comm.allreduce(local_error, op=MPI.SUM)
 
 				ite += 1
+
+			# Record thermodynamic data for caverns
+			self.caverns.record_cavern_data(t)
 
 			# Update internal variables
 			self.eq_mom.update_internal_variables()
