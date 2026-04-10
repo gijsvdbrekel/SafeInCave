@@ -16,23 +16,18 @@
 from abc import ABC, abstractmethod
 import torch as to
 import numpy as np
-import sys
 import os
 from mpi4py import MPI
-
-
 from .Utils import numpy2torch
 from .HeatEquation import HeatDiffusion
 from .MomentumEquation import LinearMomentum
 from .TimeHandler import TimeControllerBase, TimeController
 from .OutputHandler import SaveFields
 from .ScreenOutput import ScreenPrinter
-
 from .Grid import GridHandlerGMSH
 from .MaterialProps import *
-# from .MomentumBC import BcHandler, NeumannBC, DirichletBC
 from . import MomentumBC as momBC
-from . import CavernBC as CavernHandler
+from .CavernBC import CavernHandler
 from petsc4py import PETSc
 
 class Simulator(ABC):
@@ -347,6 +342,7 @@ class Simulator_M(Simulator):
 		# Update boundary conditions
 		self.eq_mom.bc.update_dirichlet(self.t_control.t)
 		self.eq_mom.bc.update_neumann(self.t_control.t)
+		self.eq_mom.bc.update_cavern_bcs(self.caverns)
 
 		if self.compute_elastic_response:
 			# Solve elasticity
@@ -367,6 +363,15 @@ class Simulator_M(Simulator):
 
 		# Calculate initial cavern volumes
 		self.caverns.calculate_volumes(self.eq_mom.u)
+
+		# # Calculate initial cavern masses
+		# self.caverns.calculate_mass()
+
+		# Record initial cavern data
+		self.caverns.record_cavern_data(self.t_control.t)
+
+		# # Update caverns P, T, and rho
+		# self.caverns.update_caverns(self.t_control.t)
 
 		# Calculate and eps_ie_rate_old
 		self.eq_mom.compute_eps_ne_rate(stress_to, self.t_control.t)
@@ -403,7 +408,7 @@ class Simulator_M(Simulator):
 			while error > tol and ite < maxiter:
 
 				# Update cavern boundary conditions
-				self.caverns.update_caverns(t)
+				self.caverns.update_caverns(t, dt)
 				self.eq_mom.bc.update_cavern_bcs(self.caverns)
 
 				# Update total strain of previous iteration (eps_tot_k <-- eps_tot)
@@ -426,6 +431,9 @@ class Simulator_M(Simulator):
 
 				# Compute inelastic strain rates
 				self.eq_mom.compute_eps_ne_rate(stress_to, dt)
+
+				# Recalculate volumes of caverns
+				self.caverns.calculate_volumes(self.eq_mom.u)
 
 				# Compute error
 				if self.eq_mom.theta == 1.0:
