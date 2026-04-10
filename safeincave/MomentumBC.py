@@ -279,7 +279,7 @@ class BcHandler():
 	
 	def update_cavern_bcs(self, cavern_handler: CavernHandler):
 		self.cavern_bcs = []
-		for cavern in cavern_handler.caverns_PT:
+		for cavern in cavern_handler.caverns_PT + cavern_handler.caverns_MFlux:
 			i = cavern.direction
 			rho = cavern.density
 			H = cavern.ref_pos
