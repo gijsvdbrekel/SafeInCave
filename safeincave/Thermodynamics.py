@@ -262,6 +262,9 @@ class CavernThermodynamics(object):
             tol=tol,
         )
 
+        if not sol.success:
+            print("Solver failed:", sol.message)
+
         logP1, T1, logPin = sol.x
         rho1 = M1 / V1
         return float(np.exp(logP1)), float(T1), float(rho1)
@@ -274,6 +277,7 @@ class CavernThermodynamics(object):
                 T0: float,
                 V0: float,
                 V1: float):
+        # print(P0, T0, V0, dm)
         if dm > 0.0:
             P1, T1, rho1 = self.solve_injection(
                                             P0 = P0,
