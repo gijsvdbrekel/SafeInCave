@@ -364,14 +364,11 @@ class Simulator_M(Simulator):
 		# Calculate initial cavern volumes
 		self.caverns.calculate_volumes(self.eq_mom.u)
 
-		# # Calculate initial cavern masses
-		# self.caverns.calculate_mass()
+		# Calculate initial cavern masses and volumes
+		self.caverns.calculate_initial_conditions()
 
 		# Record initial cavern data
 		self.caverns.record_cavern_data(self.t_control.t)
-
-		# # Update caverns P, T, and rho
-		# self.caverns.update_caverns(self.t_control.t)
 
 		# Calculate and eps_ie_rate_old
 		self.eq_mom.compute_eps_ne_rate(stress_to, self.t_control.t)
@@ -448,6 +445,9 @@ class Simulator_M(Simulator):
 
 				ite += 1
 
+			# Calculate next cavern masses and volumes
+			self.caverns.calculate_initial_conditions()
+
 			# Record thermodynamic data for caverns
 			self.caverns.record_cavern_data(t)
 
@@ -478,6 +478,8 @@ class Simulator_M(Simulator):
 									error,
 			]
 			self.screen.print_row(screen_output_row)
+
+		self.caverns.save_caverns_data()
 
 		self.screen.close()
 

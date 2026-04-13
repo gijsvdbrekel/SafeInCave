@@ -131,6 +131,19 @@ class Test_CavernVolumeComputer(unittest.TestCase):
         
         self.assertAlmostEqual(volume_computed, V_expected, delta=1e-8)
 
+    def test_midpoint(self):
+        cvc = CavernVolumeComputer(self.grid, "Cavern_full")
+        midpoint = cvc.calculate_cavern_midpoint(2)
+        self.assertEqual(midpoint, 0.5)
+        
+        cvc = CavernVolumeComputer(self.grid, "Cavern_half")
+        midpoint = cvc.calculate_cavern_midpoint(2)
+        self.assertEqual(midpoint, 0.5)
+        
+        cvc = CavernVolumeComputer(self.grid, "Cavern_quarter")
+        midpoint = cvc.calculate_cavern_midpoint(2)
+        self.assertEqual(midpoint, 0.5)
+
 
 
 class Test_T(unittest.TestCase):
@@ -301,7 +314,7 @@ class Test_MFlux(unittest.TestCase):
         self.expected_P_3 = np.array([1.0, 1.038259, 1.114802, 1.229689, 1.383032, 1.575001, 1.767319, 1.960005, 2.15307, 2.346523, 2.540369, 2.695732, 2.812422, 2.890296, 2.929258, 2.929258, 2.929258, 2.929258, 2.929258])
         self.expected_T_3 = np.array([303.0, 305.7095, 310.740987, 317.450249, 325.121802, 333.121655, 339.776256, 345.401757, 350.222219, 354.400945, 358.059806, 360.675718, 362.481451, 363.618494, 364.168332, 364.168332, 364.168332, 364.168332, 364.168332])
 
-    def test_initialize(self):
+    def test_results(self):
         t = 0.0
         dt = 0.5
         for _ in range(1, 20):
@@ -310,7 +323,8 @@ class Test_MFlux(unittest.TestCase):
 
             # Update cavern states at time t
             self.cavern_set.calculate_volumes(self.u)
-            self.cavern_set.record_cavern_data(t=t)
+            self.cavern_set.record_cavern_data(t)
+            self.cavern_set.calculate_initial_conditions()
             self.cavern_set.update_caverns(t=t, dt=dt)
 
         # Assert history values are close to expected (pre-computed with CoolProp)
