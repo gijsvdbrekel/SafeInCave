@@ -16,6 +16,9 @@
 from abc import ABC, abstractmethod
 import CoolProp.CoolProp as CP
 from .Thermodynamics import CavernThermodynamics
+import ufl
+from dolfinx import fem
+from mpi4py import MPI
 from .Utils import save_json
 import numpy as np
 import os
@@ -97,6 +100,7 @@ Additionally, it must be on the intersection of all symmetry planes.
             v2 = coords[tri][2] - self.reference_point
             volume += np.dot(v0, np.cross(v1, v2)) / 6.0
         return abs(volume) * self.sym_scale
+
 
     def __extract_cavern_surface_from_grid(self, boundary_name: str):
         """
@@ -227,6 +231,25 @@ Additionally, it must be on the intersection of all symmetry planes.
 
 
 
+class HeatFluxComputer():
+    def __init__(self, grid, boundary_name: str):
+        self.grid = grid
+        self.boundary_name = boundary_name
+        
+        self.ds = ufl.Measure("ds", domain=self.grid.mesh, subdomain_data=self.grid.get_boundaries())
+        self.n = ufl.FacetNormal(self.grid.mesh)
+
+    
+    def compute(self, T: any=None, kappa: any=None) -> float:
+        if T is None or kappa is None:
+            return 0.0
+        else:
+            Q_form = fem.form(ufl.dot(kappa * ufl.grad(T), self.n) * self.ds(self.grid.get_boundary_tag(self.boundary_name)))
+            Q = fem.assemble_scalar(Q_form)
+            Q = self.grid.mesh.comm.allreduce(Q, op=MPI.SUM)
+            return Q
+
+
 class Cavern(ABC):
     def __init__(self,
                  cavern_name: str,
@@ -265,6 +288,7 @@ class CavernHandler:
         self.caverns_MFlux = []
         self.output_folder = "."
 
+
     def add_cavern(self, cavern: Cavern) -> None:
         if cavern.type == "Cavern_T":
             self.caverns_T.append(cavern)
@@ -275,6 +299,7 @@ class CavernHandler:
         else:
             raise ValueError(f"Cavern type {cavern.type} not supported")
         
+
     def set_output_folder(self, output_folder: str) -> None:
         self.output_folder = output_folder
         
@@ -282,6 +307,10 @@ class CavernHandler:
     def calculate_volumes(self, u: any = None) -> None:
         for cavern in self.caverns_MFlux + self.caverns_PT:
             cavern.calculate_volume(u)
+
+    def compute_heat(self, T: any=None, kappa: any=None) -> None:
+        for cavern in self.caverns_MFlux:
+            cavern.calculate_heat(T, kappa)
 
 
     def update_caverns(self, 
@@ -316,8 +345,14 @@ class CavernHandler:
 
 
     def save_caverns_data(self):
+        cavern_data = {}
         for cavern in self.caverns_T + self.caverns_PT + self.caverns_MFlux:
-            cavern.save_data(self.output_folder)
+            cavern_data[cavern.cavern_name] = {}
+            cavern_data[cavern.cavern_name]["Type"] = cavern.type
+            cavern_data[cavern.cavern_name]["Fluid"] = cavern.fluid
+            cavern_data[cavern.cavern_name]["Data"] = cavern.create_data()
+        save_json(cavern_data, os.path.join(self.output_folder, "cavern_data.json"))
+
 
 
 
@@ -345,7 +380,7 @@ class Cavern_T(Cavern):
         self.t_hist.append(t)
 
     
-    def save_data(self, output_dir: str):
+    def create_data(self, output_dir: str):
         pass
 
 
@@ -427,7 +462,7 @@ class Cavern_PT(Cavern):
         self.t_hist.append(t)
 
     
-    def save_data(self, output_dir: str):
+    def create_data(self):
         data = {}
         data["Time"] = self.t_hist
         data["Pressure"] = self.P_hist
@@ -435,7 +470,7 @@ class Cavern_PT(Cavern):
         data["Density"] = self.density_hist
         data["Volume"] = self.V_hist
         data["Mass"] = self.M_hist
-        save_json(data, os.path.join(output_dir, f"{self.cavern_name}_data.json"))
+        return data
 
 
 
@@ -451,10 +486,9 @@ class Cavern_MassFlux(Cavern):
                  P_init: float,         # Initial gauge pressure (Pa)
                  T_init: float,         # Initial fluid temperature (K)
                  T_in: float,           # Temperature of injected fluid (K)
-                 Q_in: float,           # Heat added to the gas during the step (J)
                  Mflux_values: list,
                  time_values: list,
-                 direction: int = 0,
+                 direction: int = 2,
                  g: float = -9.81,
                  h_conv: float = None,
                  P_atm: float = 101325.0 # Atmospheric pressure in Pa
@@ -470,11 +504,16 @@ class Cavern_MassFlux(Cavern):
         self.P_init = P_init
         self.T_init = T_init
         self.T_in = T_in
-        self.Q_in = Q_in
+        self.Q_in = 0.0
 
         # Initial gauge pressure and temperature
         self.P = P_init
         self.T = T_init
+        self.P0 = P_init
+        self.T0 = T_init
+
+        # Initialize heat flux computer
+        self.heat = HeatFluxComputer(grid=grid, boundary_name=self.cavern_name)
 
         # Initialize cavern volume computer
         self.cvc = CavernVolumeComputer(
@@ -502,13 +541,21 @@ class Cavern_MassFlux(Cavern):
         self.t_hist = []
 
 
-    def calculate_volume(self, u: any = None) -> None:
+    def calculate_volume(self, u: any=None) -> None:
         if u is None:
             self.V = self.cvc.compute()
             self.ref_pos = self.cvc.calculate_cavern_midpoint(direction=self.direction)
         else:
             self.V = self.cvc.compute(u)
             self.ref_pos = self.cvc.calculate_cavern_midpoint(direction=self.direction, u=u)
+
+    
+    def calculate_heat(self, T: any=None, kappa: any=None) -> None:
+        self.Q_in = self.heat.compute(T, kappa)
+
+    
+    def calculate_heat(self, T: any) -> None:
+        pass
 
 
     def update_cavern(self, t: float, dt: float) -> None:
@@ -519,8 +566,8 @@ class Cavern_MassFlux(Cavern):
             dm = dm,
             Q_in = self.Q_in,
             T_in = self.T_in,
-            P0 = self.P + self.P_atm,  # Convert to absolute pressure
-            T0 = self.T,
+            P0 = self.P0 + self.P_atm,  # Convert to absolute pressure
+            T0 = self.T0,
             V0 = self.V0,
             V1 = self.V
         )
@@ -529,8 +576,9 @@ class Cavern_MassFlux(Cavern):
         if self.T <= 0.0:
             raise ValueError(f"T must be > 0, got {self.T}")
         
-        # Convert to gauge pressure 
+        # Convert to gauge pressure
         self.P -= self.P_atm
+        # print(self.P/1e6, self.T, self.density, self.M0, dm, self.V)
 
 
     def record_data(self, t: float) -> None:
@@ -544,11 +592,20 @@ class Cavern_MassFlux(Cavern):
 
     def calculate_initial_condition(self):
         self.V0 = self.V
+        self.P0 = self.P
+        self.T0 = self.T
         self.M0 = self.V * self.density
 
     
-    def save_data(self, output_dir: str):
-        pass
+    def create_data(self):
+        data = {}
+        data["Time"] = self.t_hist
+        data["Pressure"] = self.P_hist
+        data["Temperature"] = self.T_hist
+        data["Density"] = self.density_hist
+        data["Volume"] = self.V_hist
+        data["Mass"] = self.M_hist
+        return data
 
 
 
