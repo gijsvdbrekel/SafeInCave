@@ -55,7 +55,7 @@ EQUILIBRIUM_DT_HOURS = 0.5
 #   Special caverns (CAVERN_SIZE is ignored):
 #     "A5"           - Zuidwending cavern A5 (~1.000.000k m³, depth 1140-1510m)
 
-CAVERN_TYPE = "fastleached"
+CAVERN_TYPE = "reversedcirculation"
 
 # CAVERN_SIZE: Volume in thousands of m³ (ignored for A5)
 #   600  - 600,000 m³ volume

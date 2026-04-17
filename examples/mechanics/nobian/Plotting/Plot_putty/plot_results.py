@@ -57,10 +57,10 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["regular1200", "tilted1200", "fastleached1200"],
-    "pressure": ["industry"],
-    "scenario": ["B_SIC"],
-    "n_cycles": 22,
+    "caverns": ["spike_none", "spike_upper", "spike_lower"],
+    "pressure": ["csv"],
+    "scenario": ["A_MD"],
+    "n_cycles": None,
     "operation_days": 365,
     "case_contains": None,
 }
@@ -94,10 +94,11 @@ PLOT_MODE = "compare_shapes"    # "compare_shapes", "compare_scenarios", "compar
 
 FIGURES = {
     "convergence": True,          # Figure 1: volume convergence
-    "stress_state": True,         # Figure 2: p-q stress paths
-    "fos": True,                  # Figure 3: FOS over time
-    "fracture_propagation": True, # Figure 4: dilatancy zone analysis
+    "stress_state": False,         # Figure 2: p-q stress paths
+    "fos": False,                  # Figure 3: FOS over time
+    "fracture_propagation": False, # Figure 4: dilatancy zone analysis
     "fos_summary": False,          # Figure 5: global min FOS + 4 pressure profiles
+    "mc_failure": True,            # Figure 6: Mohr-Coulomb failure (interlayer cases)
 }
 
 # Stress state options
@@ -151,6 +152,9 @@ CAVERN_COLORS = {
     "Tilt":                    "#e377c2",
     "Fast-leached":            "#d62728",
     "Tube-failure":            "#bcbd22",
+    "Spike-none":              "#17becf",
+    "Spike-upper":             "#7f7f7f",
+    "Spike-lower":             "#aec7e8",
     # Size-specific variants (solid = 1200k, lighter = 600k)
     "Asymmetric (1200k)":          "#ff7f0e",
     "Direct-circulation (1200k)":  "#2ca02c",
@@ -261,6 +265,7 @@ PROBE_COLORS = {
 CAVERN_ORDER = [
     "Asymmetric", "Direct-circulation", "Regular", "Reversed-circulation",
     "Tilt", "Fast-leached", "Tube-failure", "IrregularFine",
+    "Spike-none", "Spike-upper", "Spike-lower",
     "Asymmetric (1200k)", "Direct-circulation (1200k)", "Regular (1200k)",
     "Reversed-circulation (1200k)", "Tilt (1200k)", "Fast-leached (1200k)",
     "Tube-failure (1200k)", "IrregularFine (1200k)",
@@ -2169,6 +2174,196 @@ def plot_fracture_propagation_grouped(frac_cases):
 
 
 # =============================================================================
+# 12b. FIGURE 6 — Mohr-Coulomb failure (interlayer cases)
+# =============================================================================
+
+def _get_interlayer_cell_mask(case_meta, n_cells_xdmf):
+    """Return boolean mask (in XDMF cell order) marking interlayer cells.
+
+    Reads the mesh with dolfinx to get physical tags, then maps dolfinx cell
+    ordering to XDMF cell ordering via centroid matching.
+    Returns None if no interlayer cells are found (e.g. spike_none / homogeneous).
+    """
+    from scipy.spatial import cKDTree
+
+    msh_path = path_geom_msh(case_meta["case_path"])
+    mesh, cell_tags, _ = dfx.io.gmshio.read_from_msh(msh_path, MPI.COMM_WORLD, 0)
+
+    # Known interlayer tags from the spike/heterogeneous grids
+    INTERLAYER_TAGS = {32, 34}  # Interlayer_1=32, Interlayer_2=34
+    il_dfx_cells = np.where(np.isin(cell_tags.values, list(INTERLAYER_TAGS)))[0]
+    if len(il_dfx_cells) == 0:
+        return None
+
+    # Compute dolfinx cell centroids
+    tdim = mesh.topology.dim
+    c2v = mesh.topology.connectivity(tdim, 0)
+    X = mesh.geometry.x
+    n_cells = mesh.topology.index_map(tdim).size_local
+    dfx_centroids = np.zeros((n_cells, 3))
+    for i in range(n_cells):
+        dfx_centroids[i] = X[c2v.links(i)].mean(axis=0)
+
+    # Get XDMF centroids from p_elems
+    p_path = path_p_xdmf(case_meta["case_path"])
+    centroids_xdmf, _, _ = post.read_cell_scalar(p_path)
+
+    # Map dolfinx → XDMF ordering
+    tree = cKDTree(centroids_xdmf)
+    _, xdmf_idx = tree.query(dfx_centroids[il_dfx_cells])
+
+    il_mask = np.zeros(n_cells_xdmf, dtype=bool)
+    il_mask[xdmf_idx] = True
+    print(f"  [MC] {case_meta.get('case_name')}: {il_mask.sum()} interlayer cells identified")
+    return il_mask
+
+
+def _compute_mc_failure_timeseries(case_meta, c_MPa=4.0, phi_deg=35.0):
+    """Compute MC yield function, failed cell count, and FOS for interlayer cells.
+
+    Uses the raw stress tensor (sig.xdmf) instead of the smoothed p/q fields,
+    because the smoother averages thin interlayer cells with surrounding salt
+    and washes out the peak stress.
+
+    Returns
+    -------
+    t_days : ndarray, shape (nt,)
+    f_max_il : ndarray, shape (nt,)
+        Maximum f value across interlayer cells (NaN if no interlayer).
+    n_failed : ndarray, shape (nt,)
+        Number of interlayer cells with f > 0 at each timestep.
+    fos_mc_min_il : ndarray, shape (nt,)
+        Minimum MC FOS across interlayer cells (NaN if no interlayer).
+    has_interlayer : bool
+        Whether this case has interlayer cells.
+    """
+    folder = case_meta["case_path"]
+
+    # Load raw stress tensor — unsmoothed, per-element
+    t_s, sig33, _ = load_sig(folder)
+    t_days = t_s / DAY
+    nt, nc = sig33.shape[0], sig33.shape[1]
+
+    il_mask = _get_interlayer_cell_mask(case_meta, nc)
+    has_interlayer = il_mask is not None and il_mask.any()
+
+    if not has_interlayer:
+        return t_days, np.full(nt, np.nan), np.full(nt, np.nan), np.full(nt, np.nan), False
+
+    # Raw stress for interlayer cells only
+    sig_il = sig33[:, il_mask, :, :]  # (nt, n_il, 3, 3)
+
+    # Compute p and q from raw tensor (SafeInCave: sigma negative in compression)
+    I1 = sig_il[:, :, 0, 0] + sig_il[:, :, 1, 1] + sig_il[:, :, 2, 2]
+    I2 = (sig_il[:, :, 0, 0] * sig_il[:, :, 1, 1]
+        + sig_il[:, :, 1, 1] * sig_il[:, :, 2, 2]
+        + sig_il[:, :, 0, 0] * sig_il[:, :, 2, 2]
+        - sig_il[:, :, 0, 1]**2
+        - sig_il[:, :, 0, 2]**2
+        - sig_il[:, :, 1, 2]**2)
+    J2 = np.maximum((1.0 / 3.0) * I1**2 - I2, 0.0)
+
+    p_MPa = -I1 / (3.0 * MPA)  # compression-positive
+    q_MPa = np.sqrt(3.0 * J2) / MPA
+
+    phi = np.radians(phi_deg)
+    sin_phi = np.sin(phi)
+    cos_phi = np.cos(phi)
+    alpha_F = 6.0 * sin_phi / (3.0 - sin_phi)
+    k_F = 6.0 * c_MPa * cos_phi / (3.0 - sin_phi)
+
+    # Yield function: f = q - alpha_F * p - k_F  (f > 0 means failure)
+    f_il = q_MPa - alpha_F * p_MPa - k_F
+    f_max_il = np.nanmax(f_il, axis=1)
+
+    # Number of cells in MC failure (f > 0)
+    n_failed = np.sum(f_il > 0, axis=1)
+
+    # MC FOS = q_boundary / q
+    q_tol = 1e-3  # MPa
+    q_boundary = np.maximum(alpha_F * p_MPa + k_F, 0.0)
+    fos_mc_il = np.full_like(q_MPa, np.inf)
+    mask_q = q_MPa >= q_tol
+    fos_mc_il[mask_q] = q_boundary[mask_q] / q_MPa[mask_q]
+    fos_mc_min_il = np.nanmin(
+        np.where(np.isfinite(fos_mc_il), fos_mc_il, np.nan), axis=1)
+
+    return t_days, f_max_il, n_failed, fos_mc_min_il, has_interlayer
+
+
+def plot_mc_failure_combined(cases, c_MPa=4.0, phi_deg=35.0):
+    """Plot MC failure: yield function f, failed cell count, pressure, and FOS for interlayer cells."""
+    fig, axes = plt.subplots(4, 1, figsize=(14, 16), sharex=True,
+                             gridspec_kw={"height_ratios": [3, 3, 1, 3]})
+    ax_f, ax_n, ax_p, ax_fos = axes
+
+    pressure_plotted = False
+    for c in cases:
+        label = get_case_label(c)
+        color, _ = get_case_color_and_style(
+            c.get("cavern_label"), c.get("scenario_preset"),
+            c.get("pressure_scenario"))
+        ls = "-"  # always solid for MC failure plot
+
+        try:
+            t_days, f_max_il, n_failed, fos_mc_min_il, has_il = \
+                _compute_mc_failure_timeseries(c, c_MPa, phi_deg)
+        except Exception as e:
+            print(f"[WARN] MC failure skipped for {c.get('case_name')}: {e}")
+            continue
+
+        if not has_il:
+            print(f"  [MC] {c.get('case_name')}: no interlayer — skipped")
+            continue
+
+        ax_f.plot(t_days, f_max_il, color=color, linestyle=ls, label=label)
+        ax_n.plot(t_days, n_failed, color=color, linestyle=ls, label=label)
+        ax_fos.plot(t_days, fos_mc_min_il, color=color, linestyle=ls, label=label)
+
+        # Plot pressure schedule (once — same for all cases with same pressure)
+        if not pressure_plotted:
+            tH, pMPa = read_pressure_schedule(c["case_path"])
+            if tH is not None:
+                ax_p.plot(tH / 24.0, pMPa, color='#555555', linewidth=1.5)
+                pressure_plotted = True
+
+    # Yield function panel (interlayer only)
+    ax_f.axhline(0, color='k', linewidth=0.8, linestyle='--', alpha=0.5)
+    ax_f.set_ylabel("Max $f_{MC}$ (MPa)")
+    ax_f.set_title(f"Mohr-Coulomb yield function — interlayer cells (c={c_MPa} MPa, $\\varphi$={phi_deg}°)",
+                   fontsize=20, fontweight='bold')
+    ax_f.legend(loc='best', fontsize=13)
+    ax_f.text(0.02, 0.95, "$f > 0$: failure", transform=ax_f.transAxes,
+              fontsize=13, va='top', ha='left', style='italic', color='#d62728')
+
+    # Failed cell count panel (interlayer only)
+    ax_n.set_ylabel("Cells with $f > 0$")
+    ax_n.set_title("Number of interlayer cells in Mohr-Coulomb failure", fontsize=18)
+    ax_n.legend(loc='best', fontsize=13)
+
+    # Pressure schedule panel
+    ax_p.set_ylabel("P (MPa)")
+    if not pressure_plotted:
+        ax_p.text(0.5, 0.5, "No pressure schedule", ha="center", va="center",
+                  transform=ax_p.transAxes, fontsize=12)
+
+    # MC FOS panel (interlayer only)
+    ax_fos.axhline(1.0, color='k', linewidth=0.8, linestyle='--', alpha=0.5)
+    ax_fos.set_ylabel("Min MC FOS (interlayer)")
+    ax_fos.set_xlabel("Time (days)")
+    ax_fos.set_title("Mohr-Coulomb factor of safety — interlayer cells only", fontsize=18)
+    ax_fos.legend(loc='best', fontsize=13)
+
+    fig.tight_layout()
+    outpath = os.path.join(OUT_DIR, "mc_failure.png")
+    fig.savefig(outpath, dpi=DPI)
+    print(f"[SAVED] {outpath}")
+    if SHOW:
+        plt.show()
+    plt.close(fig)
+
+
+# =============================================================================
 # 13. MAIN
 # =============================================================================
 
@@ -2298,6 +2493,17 @@ def main():
                     plot_fracture_propagation(case_meta)
         else:
             print("[FRACTURE PROPAGATION] No cases with required files (u.xdmf + geom.msh + p/q_elems + sig.xdmf)")
+
+    # --- Figure 6: MC failure ---
+    if FIGURES.get("mc_failure"):
+        mc_cases = [c for c in cases
+                    if os.path.isfile(path_sig_xdmf(c["case_path"]))
+                    and os.path.isfile(path_geom_msh(c["case_path"]))]
+        if mc_cases:
+            print(f"\n[MC FAILURE] {len(mc_cases)} case(s) with required files")
+            plot_mc_failure_combined(mc_cases)
+        else:
+            print("[MC FAILURE] No cases with required files (sig.xdmf + geom.msh)")
 
     print("\n[DONE]")
 

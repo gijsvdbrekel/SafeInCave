@@ -394,6 +394,12 @@ def generate_mesh(mode, output_dir):
     # mode == "none": no barriers, regular capsule
 
     if barriers:
+        # Snapshot edge IDs before the cut so we can identify the new
+        # (knife-edge) curves where the slab faces meet the curved cavern
+        # wall, and fillet them. Without filleting, those intersections are
+        # geometric stress singularities under any load (~r^(-α)) and the
+        # FE solution at the spike apex is mesh-dependent garbage.
+        edges_before = {e[1] for e in gmsh.model.getEntities(1)}
         cut_result = occ.cut(
             [(3, v) for v in capsule_vols],
             [(3, b) for b in barriers],
@@ -401,6 +407,45 @@ def generate_mesh(mode, output_dir):
         )
         occ.synchronize()
         modified_cavern_vols = [v[1] for v in cut_result[0] if v[0] == 3]
+
+        # Fillet the newly created sharp edges. We restrict to edges that
+        # belong to the modified cavern volumes AND did not exist before
+        # the cut — those are exactly the slab/cavern intersection curves.
+        FILLET_R = 12.0  # m — large blend so the slab/cavern intersection is
+                        # to remove the singularity and keep tet AR sane.
+        new_cavern_edges = []
+        for vol in modified_cavern_vols:
+            _, surfs = gmsh.model.getAdjacencies(3, vol)
+            for surf in surfs:
+                _, e_curves = gmsh.model.getAdjacencies(2, surf)
+                for ec in e_curves:
+                    if ec not in edges_before:
+                        new_cavern_edges.append(ec)
+        new_cavern_edges = sorted(set(new_cavern_edges))
+        all_cavern_edges = []
+        for vol in modified_cavern_vols:
+            _, surfs = gmsh.model.getAdjacencies(3, vol)
+            for surf in surfs:
+                _, e_curves = gmsh.model.getAdjacencies(2, surf)
+                all_cavern_edges.extend(e_curves)
+        all_cavern_edges = sorted(set(all_cavern_edges))
+        print(f"  edges_before={len(edges_before)} cavern_edges_after={len(all_cavern_edges)} new={len(new_cavern_edges)}")
+        # Fallback: if the new-edge filter caught nothing (gmsh re-used IDs),
+        # fillet ALL edges of the modified cavern volumes. Sphere/cylinder
+        # tangent seams are smooth so a small fillet there is harmless.
+        if not new_cavern_edges:
+            new_cavern_edges = all_cavern_edges
+        if new_cavern_edges:
+            try:
+                fillet_result = occ.fillet(
+                    modified_cavern_vols, new_cavern_edges, [FILLET_R],
+                    removeVolume=True
+                )
+                occ.synchronize()
+                modified_cavern_vols = [v[1] for v in fillet_result if v[0] == 3]
+                print(f"  Filleted {len(new_cavern_edges)} knife-edges with R={FILLET_R} m")
+            except Exception as exc:
+                print(f"  WARNING: fillet failed ({exc}); keeping sharp edges")
     else:
         modified_cavern_vols = capsule_vols
 

@@ -25,6 +25,7 @@ KNOWN_SCENARIOS = {
 
 # matches regular600, irregular1200, tilted600, etc.
 _CAVERN_RE = re.compile(r"(regular|irregularfine|irregular|tilted|tilt|directcirculation|reversedcirculation|asymmetric|fastleached|tubefailure)(600|1200)", re.I)
+_SPIKE_RE = re.compile(r"spike_(none|upper|lower)", re.I)
 
 def _safe_read_json(path: str):
     try:
@@ -37,6 +38,10 @@ def _infer_case_name_from_path(case_path: str) -> str:
     return os.path.basename(case_path.rstrip("/"))
 
 def _infer_cavern_type_from_case_name(case_name: str) -> str | None:
+    # Try spike pattern first (no size suffix)
+    ms = _SPIKE_RE.search(case_name)
+    if ms:
+        return f"spike_{ms.group(1).lower()}"
     m = _CAVERN_RE.search(case_name)
     if not m:
         return None
@@ -69,6 +74,12 @@ def _nice_cavern_label(cavern_type_or_group: str) -> str:
         return f"Fast-leached{size_tag}"
     if low.startswith("tubefailure"):
         return f"Tube-failure{size_tag}"
+    if low == "spike_none":
+        return "Spike-none"
+    if low == "spike_upper":
+        return "Spike-upper"
+    if low == "spike_lower":
+        return "Spike-lower"
     return (cavern_type_or_group or "").split("_")[0] if cavern_type_or_group else "Unknown"
 
 def read_case_metadata(case_path: str) -> dict:
@@ -123,6 +134,12 @@ def read_case_metadata(case_path: str) -> dict:
                     meta["scenario_preset"] = vlow
                 elif vlow in KNOWN_PRESSURES and meta["pressure_scenario"] is None:
                     meta["pressure_scenario"] = vlow
+
+        # Fallback: use cavern_type from JSON if regex didn't match
+        if meta["cavern_type"] is None and "cavern_type" in data:
+            ct = str(data["cavern_type"]).lower()
+            meta["cavern_type"] = ct
+            meta["cavern_label"] = _nice_cavern_label(ct)
 
         meta["n_cycles"] = data.get("n_cycles", meta["n_cycles"])
         meta["operation_days"] = data.get("operation_days", meta["operation_days"])

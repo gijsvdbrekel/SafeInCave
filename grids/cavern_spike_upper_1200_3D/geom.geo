@@ -9,11 +9,11 @@ Mesh.MeshSizeFromPoints = 1;
 Mesh.MeshSizeFromCurvature = 0;
 
 // Fine mesh on cavern geometry points
-MeshSize { 9, 10, 11, 12, 21, 22, 23 } = 4.5;
+MeshSize { 9, 10, 11, 12, 21, 22, 23, 24, 25, 26, 27 } = 4.5;
 
 // Distance-based refinement from cavern surfaces
 Field[1] = Distance;
-Field[1].SurfacesList = { 6, 14, 15, 16 };
+Field[1].SurfacesList = { 6, 14, 15, 16, 17, 18, 19, 20 };
 
 Field[2] = Threshold;
 Field[2].InField = 1;

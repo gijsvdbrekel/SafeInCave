@@ -47,7 +47,7 @@ import csv
 # USE_LEACHING: Choose initialization strategy before operation phase:
 #   True  - Leaching phase: pressure decreases from lithostatic to operational
 #   False - Equilibrium phase: short phase at constant equilibrium pressure (like Run.py)
-USE_LEACHING = True
+USE_LEACHING = False
 
 # EQUILIBRIUM_HOURS: Duration of equilibrium phase (only used if USE_LEACHING = False)
 EQUILIBRIUM_HOURS = 10.0
@@ -71,7 +71,7 @@ EQUILIBRIUM_DT_HOURS = 0.5
 #   "A5"                     - Zuidwending cavern A5, homogeneous (~1.000.000 m³, depth 1140-1510m)
 #   "A5_interlayer"          - Zuidwending cavern A5 with 2 interlayers (~1.000.000 m³)
 
-CAVERN_TYPE = "spike_upper"
+CAVERN_TYPE = "spike_lower"
 
 # ── INTERLAYER MATERIAL SELECTION ──────────────────────────────────────────────
 # Choose the material for each interlayer (used for all heterogeneous cavern types)
@@ -103,8 +103,8 @@ INTERLAYER_MODEL = "drucker_prager"  # Options: "elastic", "drucker_prager", "ma
 # mu_1 and N_1 control the viscoplastic regularization (Perzyna approach):
 #   Higher mu_1 → faster stress relaxation toward yield surface
 #   Higher N_1  → sharper overstress response (more plastic-like)
-MC_MU_1 = 1e-7    # Fluidity parameter (1/s) — controls rate of plastic flow
-MC_N_1  = 5.0     # Rate exponent — higher = more rate-independent (plastic-like)
+MC_MU_1 = 1e-9    # Fluidity parameter (1/s) — soft Perzyna regularization
+MC_N_1  = 1.0     # Rate exponent — N=1 (linear) avoids ramp blow-up far from yield
 
 # ── LEACHING PHASE SETTINGS ──────────────────────────────────────────────────────
 # LEACHING_MODE: How pressure decreases during leaching:
@@ -117,7 +117,7 @@ LEACHING_MODE = "linear"
 LEACHING_DAYS = 91
 
 # LEACHING_DT_HOURS: Time step during leaching (coarser than operation)
-LEACHING_DT_HOURS = 12
+LEACHING_DT_HOURS = 1
 
 # STEPPED_N_STEPS: Number of pressure steps for "stepped" mode (only used if LEACHING_MODE = "stepped")
 #   Each step holds pressure constant for LEACHING_DAYS / STEPPED_N_STEPS days
@@ -298,6 +298,7 @@ VALID_CAVERN_TYPES = [
     "asymmetric_shelf_600", "asymmetric_shelf_1200",
     "vertical_intrusion_600", "vertical_intrusion_1200",
     "spike_upper", "spike_lower", "spike_none",
+    "dipping_interlayer", "dipping_nointerlayer",
     "A5", "A5_interlayer",
 ]
 VALID_SCENARIOS = ["industry", "transport", "power_generation", "csv"]
@@ -334,6 +335,9 @@ CAVERN_PARAMS = {
     "spike_upper": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 1},
     "spike_lower": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 1},
     "spike_none": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 0},
+    # Dipping interlayer caverns (regular 1200k capsule + 2 inclined interlayers @65°)
+    "dipping_interlayer":   {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 2},
+    "dipping_nointerlayer": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 0},
     # ══════════════════════════════════════════════════════════════════════════════
     # ZUIDWENDING CAVERN A5 (~1.000.000 m³)
     # Real depth: Roof 1140m, Bottom 1510m, Height 370m
@@ -363,6 +367,8 @@ GRID_FOLDERS = {
     "spike_upper": "cavern_spike_upper_1200_3D",
     "spike_lower": "cavern_spike_lower_1200_3D",
     "spike_none": "cavern_spike_none_1200_3D",
+    "dipping_interlayer":   "cavern_dipping_interlayer_1200_3D",
+    "dipping_nointerlayer": "cavern_dipping_nointerlayer_1200_3D",
     "A5": "cavern_A5_3D",
     "A5_interlayer": "cavern_A5_interlayer_3D",
 }
@@ -1349,19 +1355,34 @@ def setup_material_heterogeneous(mat, n_elems, grid, config):
     E0[:] = 20.425 * ut.GPa
     nu0[:] = 0.25
 
-    # Assign interlayer properties from config
+    # Build TARGET interlayer stiffness fields (used after the warm-start ramp).
+    E_target = E0.clone()
+    nu_target = nu0.clone()
     if len(interlayer_1_cells) > 0:
-        E0[interlayer_1_cells] = il1_E * ut.GPa
-        nu0[interlayer_1_cells] = il1_nu
+        E_target[interlayer_1_cells] = il1_E * ut.GPa
+        nu_target[interlayer_1_cells] = il1_nu
     if len(interlayer_2_cells) > 0:
-        E0[interlayer_2_cells] = il2_E * ut.GPa
-        nu0[interlayer_2_cells] = il2_nu
+        E_target[interlayer_2_cells] = il2_E * ut.GPa
+        nu_target[interlayer_2_cells] = il2_nu
     if len(interlayer_3_cells) > 0:
-        E0[interlayer_3_cells] = il3_E * ut.GPa
-        nu0[interlayer_3_cells] = il3_nu
+        E_target[interlayer_3_cells] = il3_E * ut.GPa
+        nu_target[interlayer_3_cells] = il3_nu
 
-    spring_0 = sf.Spring(E0, nu0, "spring")
+    # WARM-START: equilibrium phase uses IL stiffness = salt stiffness, so the
+    # elastic-contrast shock that was driving the equilibrium phase to ~570 MPa
+    # in the anhydrite slab disappears. Stash the target so we can ramp back up
+    # to it during the operation fade-in window (see install_elastic_ramp).
+    spring_0 = sf.Spring(E0.clone(), nu0.clone(), "spring")
     mat.add_to_elastic(spring_0)
+
+    mat._spring = spring_0
+    mat._E_eq = E0.clone()
+    mat._nu_eq = nu0.clone()
+    mat._E_target = E_target
+    mat._nu_target = nu_target
+    mat._il_cells_all = np.concatenate([interlayer_1_cells, interlayer_2_cells, interlayer_3_cells]) \
+        if (len(interlayer_1_cells)+len(interlayer_2_cells)+len(interlayer_3_cells)) > 0 \
+        else np.array([], dtype=int)
 
     if USE_MUNSON_DAWSON:
         # ── MUNSON-DAWSON (salt only; A=0 on interlayers) ─────────────────
@@ -1622,10 +1643,18 @@ def add_mohr_coulomb_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, in
         mu_1, N_1, cohesion, friction_angle, dilation_angle, sigma_t,
         "mohr_coulomb"
     )
+    # Stash the "real" mu_1 mask so the caller can activate the model after
+    # the equilibrium / warm-start phase by restoring it.
+    mc._real_mu_1 = mu_1.clone()
+    # Deactivate during initial phase (warm-start): mu_1 = 0 everywhere so the
+    # Perzyna ramp produces zero plastic rate while the elastic stress field
+    # equilibrates. Reactivate via mc.mu_1 = mc._real_mu_1 before operation.
+    mc.mu_1 = to.zeros_like(mu_1)
+
     mat.add_to_non_elastic(mc)
 
     if MPI.COMM_WORLD.rank == 0:
-        print(f"[MATERIAL] Mohr-Coulomb viscoplasticity added for interlayers:")
+        print(f"[MATERIAL] Mohr-Coulomb viscoplasticity added for interlayers (deactivated for warm-start):")
         for cells, material_name in interlayer_groups:
             if len(cells) > 0:
                 p = MC_PARAMS[material_name]
@@ -1635,7 +1664,7 @@ def add_mohr_coulomb_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, in
                       f"σ_t={p['sigma_t_mpa']} MPa, "
                       f"μ₁={MC_MU_1:.1e}, N₁={MC_N_1}")
 
-    return mat
+    return mat, mc
 
 
 def add_matsuoka_nakai_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells=None):
@@ -1706,6 +1735,8 @@ def add_matsuoka_nakai_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, 
         mu_1, N_1, cohesion, friction_angle, dilation_angle, sigma_t,
         "matsuoka_nakai"
     )
+    mn._real_mu_1 = mu_1.clone()
+    mn.mu_1 = to.zeros_like(mu_1)
     mat.add_to_non_elastic(mn)
 
     if MPI.COMM_WORLD.rank == 0:
@@ -1719,7 +1750,247 @@ def add_matsuoka_nakai_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, 
                       f"\u03c3_t={p['sigma_t_mpa']} MPa, "
                       f"\u03bc\u2081={MC_MU_1:.1e}, N\u2081={MC_N_1}")
 
-    return mat
+    return mat, mn
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WARM-START ELASTIC RAMP (IL stiffness 0 → target during operation fade-in)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def set_elastic_blend(mat, alpha):
+    """Blend the spring's E/nu between the equilibrium (alpha=0, IL=salt) and
+    target (alpha=1, IL contrast applied) values, then rebuild the assembled
+    Material stiffness so the next solve sees the new tangent.
+    No-op for the homogeneous case."""
+    if not hasattr(mat, "_spring"):
+        return
+    alpha = float(np.clip(alpha, 0.0, 1.0))
+    spring = mat._spring
+    spring.E = (1.0 - alpha) * mat._E_eq + alpha * mat._E_target
+    spring.nu = (1.0 - alpha) * mat._nu_eq + alpha * mat._nu_target
+    spring.initialize()
+    # Single elastic element → mat operators are simply the spring's.
+    mat.C = spring.C
+    mat.C_inv = spring.C_inv
+    mat.C_tilde = spring.C_tilde
+    mat.C_tilde_inv = spring.C_tilde_inv
+    mat.K = spring.K
+    mat.E = spring.E
+    mat.ShearMod = 3.0 * mat.K * mat.E / (9.0 * mat.K - mat.E)
+
+
+def install_elastic_ramp(sim_op, mom_eq, ramp_hours):
+    """Wrap mom_eq.solve so that on every Picard iteration during the operation
+    phase, the IL elastic stiffness is blended from salt-matched (alpha=0) to
+    its target value (alpha=1) using a smooth cosine ramp synchronized with
+    the existing pressure fade-in window. After ramp_hours the blend is locked
+    at alpha=1 and the wrapper does nothing further."""
+    mat = mom_eq.mat
+    if not hasattr(mat, "_spring"):
+        return  # homogeneous — nothing to ramp
+    if ramp_hours <= 0.0:
+        # No fade-in: bump immediately. (User has been warned this re-creates the shock.)
+        set_elastic_blend(mat, 1.0)
+        return
+
+    ramp_s = ramp_hours * 3600.0
+    rank = MPI.COMM_WORLD.rank
+    set_elastic_blend(mat, 0.0)  # ensure we start matched
+
+    # Locate Mohr-Coulomb / Drucker-Prager element (if any) for reactivation at lock.
+    mc_elem = None
+    for el in getattr(mat, "elems_ne", []):
+        nm = getattr(el, "name", "").lower()
+        if ("mohr" in nm) or ("drucker" in nm) or ("matsuoka" in nm):
+            if hasattr(el, "_real_mu_1"):
+                mc_elem = el
+                break
+
+    state = {"locked": False, "last_alpha": 0.0}
+    orig_solve = mom_eq.solve
+
+    def solve_wrapped(stress_k, t, dt):
+        if not state["locked"]:
+            if t >= ramp_s:
+                set_elastic_blend(mat, 1.0)
+                state["locked"] = True
+                state["last_alpha"] = 1.0
+                if rank == 0:
+                    print(f"[ELASTIC-RAMP] Locked at alpha=1.0 (t={t/3600:.2f}h ≥ "
+                          f"{ramp_hours:.2f}h). IL stiffness now at target.", flush=True)
+                if mc_elem is not None:
+                    mc_elem.mu_1 = mc_elem._real_mu_1
+                    if rank == 0:
+                        print(f"[DP-ACTIVATE] Restored mu_1 on '{mc_elem.name}' "
+                              f"— Drucker-Prager now active.", flush=True)
+            else:
+                alpha = 0.5 * (1.0 - math.cos(math.pi * t / ramp_s))
+                if abs(alpha - state["last_alpha"]) > 1e-3:
+                    set_elastic_blend(mat, alpha)
+                    state["last_alpha"] = alpha
+                    if rank == 0:
+                        print(f"[ELASTIC-RAMP] t={t/3600:.2f}h alpha={alpha:.3f}",
+                              flush=True)
+        return orig_solve(stress_k, t, dt)
+
+    mom_eq.solve = solve_wrapped
+    if rank == 0:
+        print(f"[ELASTIC-RAMP] Installed: IL stiffness blends 0→1 over "
+              f"{ramp_hours:.1f}h synchronized with pressure fade-in.", flush=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONVERGENCE DIAGNOSTICS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def install_convergence_diagnostics(sim_op, mom_eq, mom_solver,
+                                    salt_cells, il1_cells, il2_cells, il3_cells):
+    """Monkey-patch the operation simulator + mom_eq to print, on every Picard
+    iteration, *exactly* what is going wrong: KSP reason, stress/strain norms,
+    NaN locations, per-region stats, and yield-function values for plastic
+    interlayer models. On the first NaN/Inf or first non-converged step it
+    raises a RuntimeError with the failing region so the user sees it
+    immediately on stdout — instead of the silent dt-cut retry loop.
+    """
+    rank = MPI.COMM_WORLD.rank
+    interlayer_cells = np.concatenate([il1_cells, il2_cells, il3_cells]) \
+        if (len(il1_cells) + len(il2_cells) + len(il3_cells)) > 0 \
+        else np.array([], dtype=int)
+    has_il = len(interlayer_cells) > 0
+
+    def _stats(name, t, region):
+        a = t.detach().cpu().numpy() if hasattr(t, "detach") else np.asarray(t)
+        if a.size == 0:
+            return f"{name}[{region}]=<empty>"
+        finite = np.isfinite(a)
+        n_nan = int(np.isnan(a).sum())
+        n_inf = int(np.isinf(a).sum())
+        if finite.any():
+            af = a[finite]
+            return (f"{name}[{region}] min={af.min():+.3e} max={af.max():+.3e} "
+                    f"|.|max={np.abs(af).max():.3e} nan={n_nan} inf={n_inf}")
+        return f"{name}[{region}] ALL non-finite (nan={n_nan} inf={n_inf})"
+
+    def _check_and_dump(tag, t_sec, ite):
+        """Inspect mom_eq state. Returns (ok, msg)."""
+        msgs = [f"[DIAG/{tag}] t={t_sec:.3e}s ite={ite}"]
+        bad = False
+
+        # KSP solver convergence reason
+        try:
+            reason = mom_solver.getConvergedReason()
+            its = mom_solver.getIterationNumber()
+            rnorm = mom_solver.getResidualNorm()
+            msgs.append(f"  KSP: reason={reason} its={its} rnorm={rnorm:.3e}")
+            if reason < 0:
+                bad = True
+                msgs.append(f"  KSP DIVERGED (PETSc reason code {reason})")
+        except Exception as e:
+            msgs.append(f"  KSP: <unavailable: {e}>")
+
+        # Stress / strain
+        try:
+            sig = to.tensor(mom_eq.sig.x.array.reshape(-1, 3, 3))
+            msgs.append("  " + _stats("sigma", sig, "all"))
+            if has_il:
+                msgs.append("  " + _stats("sigma", sig[salt_cells], "salt"))
+                msgs.append("  " + _stats("sigma", sig[interlayer_cells], "interlayer"))
+            if not to.isfinite(sig).all():
+                bad = True
+                bad_idx = (~to.isfinite(sig).reshape(sig.shape[0], -1).all(dim=1)).nonzero().flatten()
+                in_il = np.intersect1d(bad_idx.cpu().numpy(), interlayer_cells) if has_il else np.array([])
+                in_salt = np.intersect1d(bad_idx.cpu().numpy(), salt_cells) if has_il else bad_idx.cpu().numpy()
+                msgs.append(f"  STRESS NaN/Inf in {len(bad_idx)} cells "
+                            f"(salt={len(in_salt)}, interlayer={len(in_il)})")
+                if len(bad_idx) > 0:
+                    centroids = mom_eq.grid.mesh.geometry.x[
+                        mom_eq.grid.mesh.topology.connectivity(3, 0).array
+                    ].reshape(-1, 4, 3).mean(axis=1)
+                    sample = bad_idx[:5].cpu().numpy()
+                    for i in sample:
+                        msgs.append(f"    cell {i}: centroid={centroids[i]}")
+        except Exception as e:
+            msgs.append(f"  sigma: <unavailable: {e}>")
+
+        # Per-non-elastic-element rate diagnostics
+        for elem in getattr(mom_eq.mat, "elems_ne", []) or []:
+            try:
+                r = elem.eps_ne_rate
+                msgs.append("  " + _stats(f"d_eps/dt[{elem.name}]", r, "all"))
+                if has_il and "mohr" in elem.name.lower() or "drucker" in elem.name.lower() \
+                   or "matsuoka" in elem.name.lower():
+                    if hasattr(elem, "Fvp"):
+                        msgs.append("  " + _stats(f"Fvp[{elem.name}]", elem.Fvp, "interlayer"))
+                if not to.isfinite(r).all():
+                    bad = True
+                    msgs.append(f"  RATE NaN/Inf in element '{elem.name}'")
+            except Exception as e:
+                msgs.append(f"  elem {elem.name}: <unavailable: {e}>")
+
+        # Material stiffness
+        try:
+            G = mom_eq.mat.G
+            if not to.isfinite(G).all():
+                bad = True
+                msgs.append("  MATERIAL G has NaN/Inf — constitutive update produced bad tangent")
+        except Exception:
+            pass
+
+        if rank == 0:
+            print("\n".join(msgs), flush=True)
+        return (not bad)
+
+    # Wrap mom_eq.solve to detect KSP divergence per call
+    orig_solve = mom_eq.solve
+    state = {"step": 0, "ite": 0, "first_failure_dumped": False}
+
+    def solve_wrapped(stress_k, t, dt):
+        state["ite"] += 1
+        try:
+            out = orig_solve(stress_k, t, dt)
+        except Exception as e:
+            if rank == 0:
+                print(f"[DIAG] mom_eq.solve raised: {type(e).__name__}: {e}", flush=True)
+            _check_and_dump("solve-EXC", t, state["ite"])
+            raise
+        ok = _check_and_dump("post-solve", t, state["ite"])
+        if not ok and not state["first_failure_dumped"]:
+            state["first_failure_dumped"] = True
+            dump = {
+                "t": t, "dt": dt, "step": state["step"], "ite": state["ite"],
+                "sigma": mom_eq.sig.x.array.copy(),
+                "salt_cells": salt_cells, "il1": il1_cells,
+                "il2": il2_cells, "il3": il3_cells,
+            }
+            for elem in getattr(mom_eq.mat, "elems_ne", []) or []:
+                try:
+                    dump[f"rate_{elem.name}"] = elem.eps_ne_rate.detach().cpu().numpy()
+                except Exception:
+                    pass
+            path = os.path.join(os.getcwd(), "diag_first_failure.pt")
+            try:
+                to.save(dump, path)
+                if rank == 0:
+                    print(f"[DIAG] First-failure state dumped to {path}", flush=True)
+            except Exception as e:
+                if rank == 0:
+                    print(f"[DIAG] Could not dump first-failure state: {e}", flush=True)
+        return out
+
+    mom_eq.solve = solve_wrapped
+
+    # Reset Picard counter at the start of each step
+    orig_run = sim_op.run
+    def run_wrapped(*a, **kw):
+        if rank == 0:
+            print("[DIAG] Convergence diagnostics installed. "
+                  "Per-iteration KSP/stress/rate stats will be printed.",
+                  flush=True)
+            print(f"[DIAG] n_salt={len(salt_cells)} "
+                  f"n_il1={len(il1_cells)} n_il2={len(il2_cells)} n_il3={len(il3_cells)}",
+                  flush=True)
+        return orig_run(*a, **kw)
+    sim_op.run = run_wrapped
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1825,8 +2096,8 @@ def main():
     # Define solver
     mom_solver = PETSc.KSP().create(grid.mesh.comm)
     mom_solver.setType("cg")
-    mom_solver.getPC().setType("asm")
-    mom_solver.setTolerances(rtol=1e-10, max_it=100)
+    mom_solver.getPC().setType("gamg")
+    mom_solver.setTolerances(rtol=1e-10, max_it=500)
     mom_eq.set_solver(mom_solver)
 
     # Define material properties
@@ -1856,6 +2127,14 @@ def main():
         alpha_th[salt_cells] = THERMAL_EXPANSION_COEFF
         thermo = sf.Thermoelastic(alpha_th, "thermo")
         mat.add_to_thermoelastic(thermo)
+
+    # Interlayer plasticity (DP / MN) is added LATER, after the equilibrium /
+    # leaching phase, so that the equilibrium phase runs purely elastic + MD.
+    # This is option (a) of the warm-start strategy: don't even attach MC to
+    # mat.elems_ne until the stress field has equilibrated.
+    _n_il_local = len(interlayer_1_cells) + len(interlayer_2_cells) + len(interlayer_3_cells)
+    n_interlayers_early = MPI.COMM_WORLD.allreduce(_n_il_local, op=MPI.SUM)
+    mc_interlayer = None
 
     mom_eq.set_material(mat)
 
@@ -1965,6 +2244,9 @@ def main():
             print(f"[LEACHING] Running for {LEACHING_DAYS} days...")
 
         sim_init = sf.Simulator_M(mom_eq, tc_init, outputs_init, True)
+        install_convergence_diagnostics(sim_init, mom_eq, mom_solver,
+                                        salt_cells, interlayer_1_cells,
+                                        interlayer_2_cells, interlayer_3_cells)
         sim_init.run()
 
         if MPI.COMM_WORLD.rank == 0:
@@ -2039,26 +2321,44 @@ def main():
             print(f"[EQUILIBRIUM] Running for {EQUILIBRIUM_HOURS} hours...")
 
         sim_init = sf.Simulator_M(mom_eq, tc_init, outputs_init, True)
+        install_convergence_diagnostics(sim_init, mom_eq, mom_solver,
+                                        salt_cells, interlayer_1_cells,
+                                        interlayer_2_cells, interlayer_3_cells)
         sim_init.run()
 
         if MPI.COMM_WORLD.rank == 0:
             print("[EQUILIBRIUM] Complete.")
 
+    # Now that the elastic + MD stress field has equilibrated, attach the
+    # interlayer plasticity model for the operation phase.
+    if n_interlayers_early > 0 and INTERLAYER_MODEL != "elastic":
+        if INTERLAYER_MODEL == "drucker_prager":
+            mat, mc_interlayer = add_mohr_coulomb_interlayers(
+                mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
+        elif INTERLAYER_MODEL == "matsuoka_nakai":
+            mat, mc_interlayer = add_matsuoka_nakai_interlayers(
+                mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
+        else:
+            raise ValueError(f"Unknown INTERLAYER_MODEL: '{INTERLAYER_MODEL}'")
+        # Activate immediately (no more warm-start hold).
+        if mc_interlayer is not None and hasattr(mc_interlayer, "_real_mu_1"):
+            mc_interlayer.mu_1 = mc_interlayer._real_mu_1
+        # Re-attach material so the FE elastic field stays in sync; this only
+        # copies mat.C and does NOT reset existing element internal state.
+        mom_eq.set_material(mat)
+        if MPI.COMM_WORLD.rank == 0:
+            print(f"[MATERIAL] Interlayer plasticity ATTACHED post-equilibrium "
+                  f"(μ₁={MC_MU_1:.1e}, N₁={MC_N_1})")
+
     # ===== OPERATION PHASE =====
     # Desai is part of the SafeInCave model only — Munson-Dawson handles
     # its own transient/viscoplastic response internally.
+    # Note: interlayer plasticity (DP / MN) is now added earlier, before the
+    # leaching phase, so it is active from step 1.
+
     if USE_DESAI and not USE_MUNSON_DAWSON:
         if n_interlayers > 0:
             mat = add_desai_heterogeneous(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
-            if INTERLAYER_MODEL == "drucker_prager":
-                mat = add_mohr_coulomb_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
-            elif INTERLAYER_MODEL == "matsuoka_nakai":
-                mat = add_matsuoka_nakai_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, interlayer_2_cells, interlayer_3_cells)
-            elif INTERLAYER_MODEL == "elastic":
-                if MPI.COMM_WORLD.rank == 0:
-                    print(f"[MATERIAL] Interlayer model: elastic only (no plasticity)")
-            else:
-                raise ValueError(f"Unknown INTERLAYER_MODEL: '{INTERLAYER_MODEL}'. Use 'elastic', 'drucker_prager', or 'matsuoka_nakai'.")
         else:
             # Homogeneous Desai (scenario-dependent)
             if MATERIAL_SCENARIO == "A":
@@ -2373,10 +2673,18 @@ def main():
 
         # Run coupled thermo-mechanical simulation
         sim_op = sf.Simulator_TM(mom_eq, heat_eq, tc_operation, outputs_op, False)
+        install_convergence_diagnostics(sim_op, mom_eq, mom_solver,
+                                        salt_cells, interlayer_1_cells,
+                                        interlayer_2_cells, interlayer_3_cells)
+        install_elastic_ramp(sim_op, mom_eq, RAMP_UP_HOURS)
         sim_op.run()
     else:
         # Run mechanical-only simulation
         sim_op = sf.Simulator_M(mom_eq, tc_operation, outputs_op, False)
+        install_convergence_diagnostics(sim_op, mom_eq, mom_solver,
+                                        salt_cells, interlayer_1_cells,
+                                        interlayer_2_cells, interlayer_3_cells)
+        install_elastic_ramp(sim_op, mom_eq, RAMP_UP_HOURS)
         sim_op.run()
 
     if MPI.COMM_WORLD.rank == 0:
