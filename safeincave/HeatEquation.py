@@ -342,12 +342,14 @@ class HeatDiffusion():
         # Build bilinear form
         a = (self.rho*self.cp*self.dT*self.T_/self.dt + self.k*ufl.dot(ufl.grad(self.dT), ufl.grad(self.T_)))*self.dx
         a += sum(self.bc.robin_bcs_a)
+        a += sum(self.bc.cavern_bcs_a)
         bilinear_form = do.fem.form(a)
         A = do.fem.petsc.assemble_matrix(bilinear_form, bcs=self.bc.dirichlet_bcs)
         A.assemble()
 
         # Build linear form
-        L = (self.rho*self.cp*self.T_old*self.T_/self.dt)*self.dx + sum(self.bc.neumann_bcs) + sum(self.bc.robin_bcs_b)
+        L = (self.rho*self.cp*self.T_old*self.T_/self.dt)*self.dx
+        L += sum(self.bc.neumann_bcs) + sum(self.bc.robin_bcs_b) + sum(self.bc.cavern_bcs_b)
         linear_form = do.fem.form(L)
         b = do.fem.petsc.assemble_vector(linear_form)
         do.fem.petsc.apply_lifting(b, [bilinear_form], [self.bc.dirichlet_bcs])
@@ -361,7 +363,7 @@ class HeatDiffusion():
         self.X.x.scatter_forward()
         self.split_solution()
 
-        # Update old temperature field
-        self.update_T_old()
+        # # Update old temperature field
+        # self.update_T_old()
 
 

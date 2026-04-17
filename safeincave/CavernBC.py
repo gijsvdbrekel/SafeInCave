@@ -246,7 +246,7 @@ class HeatFluxComputer():
         else:
             Q_form = fem.form(ufl.dot(kappa * ufl.grad(T), self.n) * self.ds(self.grid.get_boundary_tag(self.boundary_name)))
             Q = fem.assemble_scalar(Q_form)
-            Q = self.grid.mesh.comm.allreduce(Q, op=MPI.SUM)
+            Q = -self.grid.mesh.comm.allreduce(Q, op=MPI.SUM)
             return Q
 
 
@@ -279,6 +279,9 @@ class Cavern(ABC):
     def calculate_initial_condition(self) -> None:
         pass
 
+    def calculate_heat(self, T: any=None, kappa: any=None) -> None:
+        pass
+
 
 
 class CavernHandler:
@@ -308,8 +311,8 @@ class CavernHandler:
         for cavern in self.caverns_MFlux + self.caverns_PT:
             cavern.calculate_volume(u)
 
-    def compute_heat(self, T: any=None, kappa: any=None) -> None:
-        for cavern in self.caverns_MFlux:
+    def calculate_total_heat(self, T: any=None, kappa: any=None) -> None:
+        for cavern in self.caverns_MFlux + self.caverns_PT:
             cavern.calculate_heat(T, kappa)
 
 
@@ -411,12 +414,16 @@ class Cavern_PT(Cavern):
         self.ref_pos = ref_pos
         self.direction = direction
         self.gravity = g
+        self.Q = 0.0
         
         self.AS = CP.AbstractState("HEOS", self.fluid)
         self.P = self.P_values[0]
         self.T = self.T_values[0]
         self.AS.update(CP.PT_INPUTS, self.P + self.P_atm, self.T)
         self.density = self.AS.rhomass()
+
+        # Initialize heat flux computer
+        self.heat = HeatFluxComputer(grid=grid, boundary_name=self.cavern_name)
 
         # Initialize cavern volume computer
         self.cvc = CavernVolumeComputer(
@@ -431,6 +438,7 @@ class Cavern_PT(Cavern):
         self.M_hist = []
         self.P_hist = []
         self.T_hist = []
+        self.Q_hist = []
         self.density_hist = []
         self.t_hist = []
 
@@ -440,6 +448,10 @@ class Cavern_PT(Cavern):
             self.V = self.cvc.compute()
         else:
             self.V = self.cvc.compute(u)
+
+    
+    def calculate_heat(self, T: any=None, kappa: any=None) -> None:
+        self.Q = self.heat.compute(T, kappa)
 
 
     def update_cavern(self, t: float, dt: float) -> None:
@@ -459,6 +471,7 @@ class Cavern_PT(Cavern):
         self.M_hist.append(self.density * self.V)
         self.P_hist.append(self.P)
         self.T_hist.append(self.T)
+        self.Q_hist.append(self.Q)
         self.t_hist.append(t)
 
     
@@ -470,6 +483,7 @@ class Cavern_PT(Cavern):
         data["Density"] = self.density_hist
         data["Volume"] = self.V_hist
         data["Mass"] = self.M_hist
+        data["Heat"] = self.Q_hist
         return data
 
 
@@ -504,7 +518,7 @@ class Cavern_MassFlux(Cavern):
         self.P_init = P_init
         self.T_init = T_init
         self.T_in = T_in
-        self.Q_in = 0.0
+        self.Q = 0.0
 
         # Initial gauge pressure and temperature
         self.P = P_init
@@ -537,6 +551,7 @@ class Cavern_MassFlux(Cavern):
         self.M_hist = []
         self.P_hist = []
         self.T_hist = []
+        self.Q_hist = []
         self.density_hist = []
         self.t_hist = []
 
@@ -551,20 +566,16 @@ class Cavern_MassFlux(Cavern):
 
     
     def calculate_heat(self, T: any=None, kappa: any=None) -> None:
-        self.Q_in = self.heat.compute(T, kappa)
+        self.Q = self.heat.compute(T, kappa)
 
     
-    def calculate_heat(self, T: any) -> None:
-        pass
-
-
     def update_cavern(self, t: float, dt: float) -> None:
         Mflux = np.interp(t, self.time_values, self.Mflux_values)
         self.M = self.M0 + Mflux * dt
         dm = self.M - self.M0
         self.P, self.T, self.density = self.model.solve(
             dm = dm,
-            Q_in = self.Q_in,
+            Q_in = self.Q,
             T_in = self.T_in,
             P0 = self.P0 + self.P_atm,  # Convert to absolute pressure
             T0 = self.T0,
@@ -587,6 +598,7 @@ class Cavern_MassFlux(Cavern):
         self.M_hist.append(self.V * self.density)
         self.P_hist.append(self.P)
         self.T_hist.append(self.T)
+        self.Q_hist.append(self.Q)
         self.t_hist.append(t)
 
 
@@ -605,6 +617,7 @@ class Cavern_MassFlux(Cavern):
         data["Density"] = self.density_hist
         data["Volume"] = self.V_hist
         data["Mass"] = self.M_hist
+        data["Heat"] = self.Q_hist
         return data
 
 

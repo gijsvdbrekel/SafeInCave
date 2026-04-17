@@ -50,6 +50,264 @@ class Simulator(ABC):
 		pass
 
 
+class Simulator_Full(Simulator):
+	"""
+	Run the coupled thermo–mechanical simulation.
+
+	Workflow
+	--------
+	1. Initialize outputs.
+	2. Initialize momentum temperature from the heat solution and update BCs.
+	3. Optionally solve a purely elastic response.
+	4. Initialize non-elastic rates.
+	5. For each time step:
+
+	   - Advance time and update boundary conditions for both equations.
+	   - Solve the heat equation for ``(t, dt)`` and set temperatures in momentum.
+	   - Iterate the momentum step (assemble/solve, update internal variables and rates).
+	   - Save requested fields.
+
+	Returns
+	-------
+	None
+	"""
+	def __init__(self, eq_mom: LinearMomentum, 
+					   eq_heat: HeatDiffusion, 
+					   t_control: TimeControllerBase, 
+					   outputs: list[SaveFields],
+					   caverns: CavernHandler=None,
+					   compute_elastic_response: bool=True):
+		self.eq_mom = eq_mom
+		self.eq_heat = eq_heat
+		self.t_control = t_control
+		self.outputs = outputs
+		self.caverns = caverns
+		self.compute_elastic_response = compute_elastic_response
+
+		if caverns == None:
+			self.caverns = CavernHandler()
+		
+		ScreenPrinter.reset_instance()
+		self.screen = ScreenPrinter(self.eq_mom.grid, self.eq_mom.solver, self.eq_mom.mat, self.outputs, t_control.time_unit)
+
+	def run(self) -> None:
+		"""
+		Run the coupled thermo–mechanical simulation.
+
+		Workflow
+		--------
+		1. Initialize outputs.
+		2. Initialize momentum temperature history from the heat solution.
+		3. Update BCs and optionally solve a purely elastic step.
+		4. Initialize non-elastic rates.
+		5. Time loop:
+
+		   - Advance time, update BCs, solve heat step.
+		   - Fixed-point (or single-pass) iterate the momentum step with the
+		     current temperature, updating internal variables and rates.
+		   - Save requested fields.
+
+		Convergence
+		-----------
+		Uses a relative change in total strain between iterations as error.
+		If ``theta == 1.0`` (backward Euler) or there are no non-elastic
+		elements, iteration terminates immediately.
+
+		Returns
+		-------
+		None
+
+		Notes
+		-----
+		- Calls ``SaveFields.initialize()`` once and ``save_fields(t)`` at each
+		  saved time, followed by ``save_mesh()`` after the loop.
+		- Printing of progress occurs on rank 0 only.
+		- The first ``output.save_fields(0)`` call targets the last ``output``
+		  from the preceding loop variable; ensure all outputs are saved by
+		  iterating over ``self.outputs``.
+		"""
+		# Output field
+		for output in self.outputs:
+			output.initialize()
+
+		# Update boundary conditions
+		self.eq_mom.bc.update_dirichlet(self.t_control.t)
+		self.eq_mom.bc.update_neumann(self.t_control.t)
+		self.eq_mom.bc.update_cavern_bcs(self.caverns)
+
+		if self.compute_elastic_response:
+			# Solve elasticity
+			self.eq_mom.solve_elastic_response()
+
+			# Calculate total (elastic) strain
+			eps_tot_to = self.eq_mom.compute_total_strain()
+
+			# Compute stress
+			stress_to = self.eq_mom.compute_elastic_stress(eps_tot_to)
+
+		else:
+			# Calculate total strain
+			eps_tot_to = self.eq_mom.compute_total_strain()
+
+			# Retrieve stress
+			stress_to = numpy2torch(self.eq_mom.sig.x.array.reshape((self.eq_mom.n_elems, 3, 3)))
+
+		# Calculate initial cavern volumes
+		self.caverns.calculate_volumes(self.eq_mom.u)
+
+		# Calculate initial heat flux in caverns
+		self.caverns.calculate_total_heat(self.eq_heat.T, self.eq_heat.k)
+
+		# Calculate initial cavern masses and volumes
+		self.caverns.calculate_initial_conditions()
+
+		# Record initial cavern data
+		self.caverns.record_cavern_data(self.t_control.t)
+
+
+		# Set initial temperature to momentum equation
+		T_elems = self.eq_heat.get_T_elems()
+		self.eq_mom.set_T(T_elems)
+		self.eq_mom.set_T0(T_elems)
+
+		# Calculate and eps_ie_rate_old
+		self.eq_mom.compute_eps_ne_rate(stress_to, self.t_control.t)
+		self.eq_mom.update_eps_ne_rate_old()
+
+		# Save fields
+		self.eq_mom.compute_p_elems()
+		self.eq_mom.compute_q_elems()
+		self.eq_mom.compute_p_nodes()
+		self.eq_mom.compute_q_nodes()
+
+		# Save initial fields
+		for output in self.outputs:
+			output.save_fields(0)
+
+		# Time loop
+		while self.t_control.keep_looping():
+
+			# Advance time
+			self.t_control.advance_time()
+			t = self.t_control.t
+			dt = self.t_control.dt
+
+			# Update boundary conditions
+			self.eq_mom.bc.update_dirichlet(t)
+			self.eq_mom.bc.update_neumann(t)
+			self.eq_heat.bc.update_bcs(t)
+
+			# Iterative loop settings
+			tol = 1e-7
+			error = 2*tol
+			ite = 0
+			maxiter = 80
+
+			while error > tol and ite < maxiter:
+
+				# Update cavern boundary conditions for heat diffusion equation
+				self.eq_heat.bc.update_cavern_bcs(self.caverns)
+
+				# Solve heat
+				self.eq_heat.solve(t, dt)
+
+				# Calculate total heat transfered through cavern walls
+				self.caverns.calculate_total_heat(self.eq_heat.T, self.eq_heat.k)
+
+				# Update thermodynamic state of caverns
+				self.caverns.update_caverns(t, dt)
+
+				# Update cavern boundary conditions for momentum equation
+				self.eq_mom.bc.update_cavern_bcs(self.caverns)
+
+				# Set new temperature to momentum equation
+				T_elems = self.eq_heat.get_T_elems()
+				self.eq_mom.set_T(T_elems)
+
+				# Update total strain of previous iteration (eps_tot_k <-- eps_tot)
+				eps_tot_k_to = eps_tot_to.clone()
+
+				# Update stress
+				stress_k_to = stress_to.clone()
+
+				# Build bi-linear form
+				self.eq_mom.solve(stress_k_to, t, dt)
+
+				# Compute total strain
+				eps_tot_to = self.eq_mom.compute_total_strain()
+
+				# Compute stress
+				stress_to = self.eq_mom.compute_stress(eps_tot_to)
+
+				# Increment internal variables
+				self.eq_mom.increment_internal_variables(stress_to, stress_k_to, dt)
+
+				# Compute inelastic strain rates
+				self.eq_mom.compute_eps_ne_rate(stress_to, dt)
+
+				# Recalculate volumes of caverns
+				self.caverns.calculate_volumes(self.eq_mom.u)
+
+				# Compute error
+				if self.eq_mom.theta == 1.0:
+					error = 0.0
+				elif len(self.eq_mom.mat.elems_ne) == 0:
+					error = 0.0
+				else:
+					eps_tot_k_flat = to.flatten(eps_tot_k_to)
+					eps_tot_flat = to.flatten(eps_tot_to)
+					local_error =  np.linalg.norm(eps_tot_k_flat - eps_tot_flat) / np.linalg.norm(eps_tot_flat)
+					error = self.eq_mom.grid.mesh.comm.allreduce(local_error, op=MPI.SUM)
+
+				ite += 1
+
+			# Calculate next cavern masses and volumes
+			self.caverns.calculate_initial_conditions()
+
+			# Record thermodynamic data for caverns
+			self.caverns.record_cavern_data(t)
+
+			# Update internal variables
+			self.eq_mom.update_internal_variables()
+
+			# Update strain rates
+			self.eq_mom.update_eps_ne_rate_old()
+
+			# Update strain
+			self.eq_mom.update_eps_ne_old(stress_to, stress_k_to, dt)
+
+			# Update old temperature field
+			self.eq_heat.update_T_old()
+
+
+
+			# Save fields
+			self.eq_mom.compute_p_elems()
+			self.eq_mom.compute_q_elems()
+			self.eq_mom.compute_p_nodes()
+			self.eq_mom.compute_q_nodes()
+			for output in self.outputs:
+				output.save_fields(t)
+
+			# Print stuff
+			current_time = "%.3f"%(t/self.t_control.time_conversion)
+			screen_output_row = [
+									self.t_control.step_counter, 
+									self.t_control.dt/self.t_control.time_conversion,
+									f"{current_time} / {self.t_control.t_final/self.t_control.time_conversion}",
+									ite,
+									error,
+			]
+			self.screen.print_row(screen_output_row)
+
+		self.caverns.save_caverns_data()
+
+		self.screen.close()
+
+		for output in self.outputs:
+			output.save_mesh()
+
+
 class Simulator_TM(Simulator):
 	"""
 	Run the coupled thermo–mechanical simulation.
@@ -404,8 +662,10 @@ class Simulator_M(Simulator):
 
 			while error > tol and ite < maxiter:
 
-				# Update cavern boundary conditions
+				# Update thermodynamic state of caverns
 				self.caverns.update_caverns(t, dt)
+				
+				# Update cavern boundary conditions
 				self.eq_mom.bc.update_cavern_bcs(self.caverns)
 
 				# Update total strain of previous iteration (eps_tot_k <-- eps_tot)

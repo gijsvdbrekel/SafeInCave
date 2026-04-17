@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .HeatEquation import HeatDiffusion
+    from .CavernBC import CavernHandler
     
 from abc import ABC
 import numpy as np
@@ -331,4 +332,13 @@ class BcHandler():
             T_inf = np.interp(t, bc.time_values, bc.values)
             self.robin_bcs_a.append(bc.h*self.eq.dT*self.eq.T_*self.eq.ds(self.eq.grid.get_boundary_tag(bc.boundary_name)))
             self.robin_bcs_b.append(bc.h*T_inf*self.eq.T_*self.eq.ds(self.eq.grid.get_boundary_tag(bc.boundary_name)))
-
+	
+    def update_cavern_bcs(self, cavern_handler: CavernHandler):
+        self.cavern_bcs_a = []
+        self.cavern_bcs_b = []
+        for cavern in cavern_handler.caverns_PT + cavern_handler.caverns_MFlux + cavern_handler.caverns_T:
+            T_inf = cavern.T
+            h = cavern.h_conv
+            self.cavern_bcs_a.append(h*self.eq.dT*self.eq.T_*self.eq.ds(self.eq.grid.get_boundary_tag(cavern.cavern_name)))
+            self.cavern_bcs_b.append(h*T_inf*self.eq.T_*self.eq.ds(self.eq.grid.get_boundary_tag(cavern.cavern_name)))
+            
