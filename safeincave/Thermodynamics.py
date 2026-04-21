@@ -51,7 +51,7 @@ class CavernThermodynamics(object):
         h = self.AS.hmass()
         return rho, u, h
 
-    def solve_withdrawal(
+    def solve_withdrawal_old(
         self,
         *,
         P0: float,
@@ -112,23 +112,24 @@ class CavernThermodynamics(object):
         rho_target = M1 / V1
 
         # Outlet enthalpy
-        Pout = (P0 + P1_guess) / 2
-        Tout = (T0 + T1_guess) / 2
-        _, _, h_out = self.rho_u_h(Pout, Tout)
+        Pout_guess = (P0 + P1_guess) / 2
+        Tout_guess = (T0 + T1_guess) / 2
+        _, _, h_out = self.rho_u_h(Pout_guess, Tout_guess)
 
         # Initial guess for boundary work
-        W = Pout * (V1 - V0)
+        W = (V1 - V0) * (P0 + P1_guess) / 2
 
         # Characteristic scaling for residuals
         energy_scale = max(1.0, abs(M0 * u0) + abs(Q) + abs(W) + abs(m_prod * h_out))
         density_scale = max(1.0, abs(rho_target))
+        Pout_scale = max(1.0, abs(2*Pout_guess))
+        Tout_scale = max(1.0, abs(2*Tout_guess))
 
         def residuals(x: np.ndarray) -> np.ndarray:
             logP1, T1 = float(x[0]), float(x[1])
             P1 = np.exp(logP1)
             
-            Pout = (P0 + P1) / 2
-            W = Pout * (V1 - V0)
+            W = (V1 - V0) * (P0 + P1) / 2
 
             try:
                 rho1, u1, _ = self.rho_u_h(P1, T1)
@@ -153,7 +154,7 @@ class CavernThermodynamics(object):
         return float(np.exp(logP1)), float(T1), float(rho1)
 
 
-    def solve_injection(
+    def solve_injection_old(
         self,
         *,
         P0: float,
@@ -266,6 +267,227 @@ class CavernThermodynamics(object):
             print("Solver failed:", sol.message)
 
         logP1, T1, logPin = sol.x
+        rho1 = M1 / V1
+        return float(np.exp(logP1)), float(T1), float(rho1)
+
+
+
+    def solve_withdrawal(
+        self,
+        *,
+        P0: float,
+        T0: float,
+        V0: float,
+        m_prod: float = 0.0,
+        Q: float,
+        V1: float,
+        logP1_guess: float | None = None,
+        T1_guess: float | None = None,
+        method: str = "hybr",
+        tol: float = 1e-8,
+    ) -> Tuple[float, float, float]:
+        """
+        Solve one time step.
+
+        Parameters
+        ----------
+        P0, T0, V0 : float
+            Initial cavern pressure [Pa], temperature [K], volume [m^3]
+        Pin, Tin : float
+            Inlet pressure [Pa] and temperature [K]
+        m_prod : float
+            Mass withdrawn (produced) during the time step [kg]
+        Q : float
+            Heat added to gas during the step [J]
+        W : float
+            Boundary work done by gas during the step [J]
+        V1 : float
+            Final cavern volume [m^3]
+        logP1_guess, T1_guess : optional
+            Initial guesses for unknowns log(P1) and T1
+        method : str
+            Solver used by scipy.optimize.root
+        tol : float
+            Nonlinear solver tolerance
+        """
+        if V0 <= 0.0 or V1 <= 0.0:
+            raise ValueError("V0 and V1 must be positive.")
+        if m_prod > 0.0:
+            raise ValueError("m_prod must be nonpositive.")
+
+        # Initial cavern state
+        rho0, u0, _ = self.rho_u_h(P0, T0)
+        M0 = rho0 * V0
+        M1 = M0 + m_prod
+
+        # Initial guess
+        if logP1_guess is None:
+            P1_guess = max(1e3, P0 * (M1 / max(M0, 1e-30)) * (V0 / V1))
+            logP1_guess = np.log(P1_guess)
+
+        if T1_guess is None:
+            T1_guess = max(50.0, T0)
+
+        x0 = np.array([logP1_guess, T1_guess], dtype=float)
+
+        rho_target = M1 / V1
+
+        # Outlet enthalpy
+        Pout_guess = (P0 + P1_guess) / 2
+        Tout_guess = (T0 + T1_guess) / 2
+        _, _, h_out = self.rho_u_h(Pout_guess, Tout_guess)
+
+        # Initial guess for boundary work
+        W = (V1 - V0) * (P0 + P1_guess) / 2
+
+        # Characteristic scaling for residuals
+        energy_scale = max(1.0, abs(M0 * u0) + abs(Q) + abs(W) + abs(m_prod * h_out))
+        density_scale = max(1.0, abs(rho_target))
+
+        def residuals(x: np.ndarray) -> np.ndarray:
+            logP1, T1 = float(x[0]), float(x[1])
+            P1 = np.exp(logP1)
+
+            Tout = (T0 + T1) / 2
+            Pout = (P0 + P1) / 2
+            W = (V1 - V0) * (P0 + P1) / 2
+
+            try:
+                rho1, u1, _ = self.rho_u_h(P1, T1)
+                _, _, h_out = self.rho_u_h(Pout, Tout)
+            except Exception as e:
+                # Return large residuals if CoolProp fails at this state
+                return np.array([1e20, 1e20], dtype=float)
+
+            F1 = M1 * u1 - M0 * u0 - Q + W - m_prod * h_out
+            F2 = rho1 - rho_target
+
+            return np.array([F1 / energy_scale, F2 / density_scale], dtype=float)
+
+        sol = root(
+            residuals,
+            x0,
+            method=method,
+            tol=tol,
+        )
+
+        logP1, T1 = sol.x
+        rho1 = M1 / V1
+        return float(np.exp(logP1)), float(T1), float(rho1)
+
+
+    def solve_injection(
+        self,
+        *,
+        P0: float,
+        T0: float,
+        V0: float,
+        Tin: float,
+        m_inj: float,
+        Q: float,
+        V1: float,
+        logP1_guess: float | None = None,
+        T1_guess: float | None = None,
+        method: str = "hybr",
+        tol: float = 1e-8,
+    ) -> Tuple[float, float, float]:
+        """
+        Solve one time step.
+
+        Parameters
+        ----------
+        P0, T0, V0 : float
+            Initial cavern pressure [Pa], temperature [K], volume [m^3]
+        Tin : float
+            Inlet temperature [K]
+        m_inj : float
+            Injected mass during the time step [kg]
+        Q : float
+            Heat added to gas during the step [J]
+        V1 : float
+            Final cavern volume [m^3]
+        logP1_guess, T1_guess : optional
+            Initial guesses for unknowns log(P1) and T1
+        method : str
+            Solver used by scipy.optimize.root
+        tol : float
+            Nonlinear solver tolerance
+        """
+        if V0 <= 0.0 or V1 <= 0.0:
+            raise ValueError("V0 and V1 must be positive.")
+        if P0 <= 0.0:
+            raise ValueError("P0 and Pin must be positive.")
+        if T0 <= 0.0 or Tin <= 0.0:
+            raise ValueError("T0 and Tin must be positive.")
+        if m_inj <= 0.0:
+            raise ValueError("m_inj must be positive.")
+
+        # Initial cavern state
+        rho0, u0, _ = self.rho_u_h(P0, T0)
+        M0 = rho0 * V0
+        M1 = M0 + m_inj
+
+        # Initial guess
+        if logP1_guess is None:
+            P1_guess = max(1e3, P0 * (M1 / max(M0, 1e-30)) * (V0 / V1))
+            logP1_guess = np.log(P1_guess)
+
+        if T1_guess is None:
+            T1_guess = max(50.0, T0)
+
+        Pin_guess = (P0 + P1_guess) / 2
+
+        # Initial solution guess
+        x0 = np.array([logP1_guess, T1_guess], dtype=float)
+
+        # Target density
+        rho_target = M1 / V1
+
+        # Inlet enthalpy
+        _, _, h_in = self.rho_u_h(Pin_guess, Tin)
+
+        # Initial guess for boundary work
+        W = Pin_guess * (V1 - V0)
+
+        # Characteristic scaling for residuals
+        energy_scale = max(1.0, abs(M0 * u0) + abs(Q) + abs(W) + abs(m_inj * h_in))
+        density_scale = max(1.0, abs(rho_target))
+
+        def residuals(x: np.ndarray) -> np.ndarray:
+            logP1, T1 = float(x[0]), float(x[1])
+            P1 = np.exp(logP1)
+            
+            Pin = (P0 + P1)/2
+            W = (V1 - V0) * (P0 + P1) / 2
+
+            try:
+                rho1, u1, _ = self.rho_u_h(P1, T1)
+            except Exception as e:
+                # Return large residuals if CoolProp fails at this state
+                return np.array([1e20, 1e20, 1e20], dtype=float)
+
+            try:
+                _, _, h_in = self.rho_u_h(Pin, Tin)
+            except Exception as e:
+                # Return large residuals if CoolProp fails at this state
+                return np.array([1e20, 1e20, 1e20], dtype=float)
+
+            F1 = M1 * u1 - M0 * u0 - Q + W - m_inj * h_in
+            F2 = rho1 - rho_target
+
+            return np.array([F1/energy_scale, F2/density_scale], dtype=float)
+
+        sol = root(
+            residuals,
+            x0,
+            method=method,
+            tol=tol,
+        )
+
+        if not sol.success:
+            print("Solver failed:", sol.message)
+
+        logP1, T1 = sol.x
         rho1 = M1 / V1
         return float(np.exp(logP1)), float(T1), float(rho1)
 

@@ -30,8 +30,8 @@ class Test_T(unittest.TestCase):
                                             m_prod = dm,
                                             Q = Q,
                                             V1 = V1)
-        self.assertAlmostEqual(P1, 102644.02778644663, places=6)
-        self.assertAlmostEqual(T1, 301.1203235397102, places=6)
+        self.assertAlmostEqual(P1, 102643.79952048359, places=6)
+        self.assertAlmostEqual(T1, 301.1196554705438, places=6)
         self.assertAlmostEqual(rho1, 1.1878743317048073, places=6)
 
     def test_solve_injection(self):
@@ -50,6 +50,6 @@ class Test_T(unittest.TestCase):
                                             m_inj = dm,
                                             Q = Q,
                                             V1 = V1)
-        self.assertAlmostEqual(P1, 1828353.117886266, places=6)
+        self.assertAlmostEqual(P1, 1828353.1178692507, places=6)
         self.assertAlmostEqual(T1, 566.0800589800913, places=6)
         self.assertAlmostEqual(rho1, 11.17699558838776, places=6)
