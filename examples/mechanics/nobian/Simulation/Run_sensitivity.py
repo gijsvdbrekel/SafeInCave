@@ -297,16 +297,27 @@ class ProfilingRecorder:
                 scratch["ct"] += time.perf_counter() - t0
         mom_eq.compute_CT = wrapped_compute_CT
 
-        orig_ksp_solve = mom_eq.solver.solve
-        self._originals.append((mom_eq.solver, "solve", orig_ksp_solve))
+        # PETSc KSP is a C-extension object — its `solve` attribute is read-only,
+        # so we cannot monkey-patch it directly. Replace mom_eq.solver with a
+        # lightweight proxy that delegates every attribute to the real KSP but
+        # times the solve() call. Restored in uninstall().
+        real_ksp = mom_eq.solver
 
-        def wrapped_ksp_solve(*a, **kw):
-            t0 = time.perf_counter()
-            try:
-                return orig_ksp_solve(*a, **kw)
-            finally:
-                scratch["ksp"] += time.perf_counter() - t0
-        mom_eq.solver.solve = wrapped_ksp_solve
+        class _KSPTimingProxy:
+            __slots__ = ("_ksp",)
+            def __init__(self, ksp):
+                object.__setattr__(self, "_ksp", ksp)
+            def solve(self, *a, **kw):
+                t0 = time.perf_counter()
+                try:
+                    return self._ksp.solve(*a, **kw)
+                finally:
+                    scratch["ksp"] += time.perf_counter() - t0
+            def __getattr__(self, name):
+                return getattr(self._ksp, name)
+
+        self._originals.append((mom_eq, "solver", real_ksp))
+        mom_eq.solver = _KSPTimingProxy(real_ksp)
 
         orig_solve = mom_eq.solve
         self._originals.append((mom_eq, "solve", orig_solve))

@@ -71,7 +71,7 @@ EQUILIBRIUM_DT_HOURS = 0.5
 #   "A5"                     - Zuidwending cavern A5, homogeneous (~1.000.000 m³, depth 1140-1510m)
 #   "A5_interlayer"          - Zuidwending cavern A5 with 2 interlayers (~1.000.000 m³)
 
-CAVERN_TYPE = "spike_lower"
+CAVERN_TYPE = "spike_upper"
 
 # ── INTERLAYER MATERIAL SELECTION ──────────────────────────────────────────────
 # Choose the material for each interlayer (used for all heterogeneous cavern types)
