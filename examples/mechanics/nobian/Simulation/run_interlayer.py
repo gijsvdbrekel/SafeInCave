@@ -198,7 +198,7 @@ P_MIN_MPA          = 10.0    # Absolute minimum cavern pressure (MPa)
 SCHEDULE_MODE = "direct"
 
 # OPERATION_DAYS: Total simulation duration in days (operation phase only)
-OPERATION_DAYS = 365 
+OPERATION_DAYS = 1095 
 
 # N_CYCLES: Number of pressure cycles (only used with "stretch" mode)
 N_CYCLES = 5
