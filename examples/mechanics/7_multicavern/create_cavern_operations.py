@@ -34,6 +34,14 @@ def get_massflux_hydrogen():
     return list(t_hist*day), list(P_hist*MPa), list(T_hist)
 
 
+def get_PT_hydrogen():
+    data = np.loadtxt("PT_H2.csv", delimiter=",", skiprows=1)
+    t_hist = data[:, 0]*day
+    P_hist = (data[:, 1] - 5)*MPa
+    T_hist = data[:, 2]
+    return list(t_hist), list(P_hist), list(T_hist)
+
+
 
 def get_massflux_methane(scale=1.0):
     time_hist = np.array([
@@ -74,7 +82,8 @@ def main():
     data["Cavern_full"]["flow"] = [x.item() for x in flow_hist]
 
     # Create Hydrogen pressure history
-    t_hist, P_hist, T_hist = get_massflux_hydrogen()
+    # t_hist, P_hist, T_hist = get_massflux_hydrogen()
+    t_hist, P_hist, T_hist = get_PT_hydrogen()
     data["Cavern_half"]["time"] = [x.item() for x in t_hist]
     data["Cavern_half"]["P_hist"] = P_hist
     data["Cavern_half"]["T_hist"] = T_hist
@@ -92,25 +101,25 @@ def main():
     fig.subplots_adjust(top=0.935, bottom=0.155, left=0.119, right=0.980, hspace=0.35, wspace=0.38)
     fig.patch.set_alpha(0.0)
 
-    axis[0,0].plot(np.array(data["Cavern_half"]["time"])/day, np.array(data["Cavern_half"]["P_hist"])/MPa, ".-")
+    axis[0,0].plot(np.array(data["Cavern_half"]["time"])/day, np.array(data["Cavern_half"]["P_hist"])/MPa, "-", color="steelblue", linewidth=2.0)
     axis[0,0].set_xlabel("Time (days)", fontname="serif", size=12)
     axis[0,0].set_ylabel("Pressure (MPa)", fontname="serif", size=12)
     axis[0,0].set_title("Cavern_half - Hydrogen", fontname="serif", size=14)
 
 
-    axis[1,0].plot(np.array(data["Cavern_half"]["time"])/day, np.array(data["Cavern_half"]["T_hist"]), ".-")
+    axis[1,0].plot(np.array(data["Cavern_half"]["time"])/day, np.array(data["Cavern_half"]["T_hist"]), "-", color="steelblue", linewidth=2.0)
     axis[1,0].set_xlabel("Time (days)", fontname="serif", size=12)
     axis[1,0].set_ylabel("Temperature (K)", fontname="serif", size=12)
     axis[1,0].set_title("Cavern_half - Hydrogen", fontname="serif", size=14)
 
-    axis[0,1].plot(np.array(data["Cavern_full"]["time"])/day, np.array(data["Cavern_full"]["flow"]), ".-")
+    axis[0,1].plot(np.array(data["Cavern_full"]["time"])/day, np.array(data["Cavern_full"]["flow"]), "-", color="forestgreen", linewidth=2.0)
     axis[0,1].set_xlabel("Time (days)", fontname="serif", size=12)
-    axis[0,1].set_ylabel("Mass flow rate (kg/m3)", fontname="serif", size=12)
+    axis[0,1].set_ylabel("Mass flow rate (kg/s)", fontname="serif", size=12)
     axis[0,1].set_title("Cavern_full - Methane", fontname="serif", size=14)
 
-    axis[0,2].plot(np.array(data["Cavern_quarter"]["time"])/day, np.array(data["Cavern_quarter"]["flow"]), ".-")
+    axis[0,2].plot(np.array(data["Cavern_quarter"]["time"])/day, np.array(data["Cavern_quarter"]["flow"]), "-", color="lightcoral", linewidth=2.0)
     axis[0,2].set_xlabel("Time (days)", fontname="serif", size=12)
-    axis[0,2].set_ylabel("Mass flow rate (kg/m3)", fontname="serif", size=12)
+    axis[0,2].set_ylabel("Mass flow rate (kg/s)", fontname="serif", size=12)
     axis[0,2].set_title("Cavern_quarter - Water", fontname="serif", size=14)
 
 
