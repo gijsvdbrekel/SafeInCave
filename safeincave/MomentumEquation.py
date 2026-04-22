@@ -724,7 +724,7 @@ class LinearMomentum(LinearMomentumBase):
         self.C = do.fem.Function(self.DG0_6x6)
         self.CT = do.fem.Function(self.DG0_6x6)
         self.eps_rhs = do.fem.Function(self.DG0_3x3)
-        # self.eps_0 = do.fem.Function(self.DG0_3x3)
+        self.eps_0 = do.fem.Function(self.DG0_3x3)
 
     def create_pytorch_fields(self) -> None:
         """
@@ -845,8 +845,8 @@ class LinearMomentum(LinearMomentumBase):
         ------------
         Copies the stress into :attr:`sig`.
         """
-        # stress_to = dotdot_torch(self.mat.CT, self.eps0_to + eps_tot_to - self.eps_rhs_to)
-        stress_to = dotdot_torch(self.mat.CT, eps_tot_to - self.eps_rhs_to)
+        stress_to = dotdot_torch(self.mat.CT, self.eps0_to + eps_tot_to - self.eps_rhs_to)
+        # stress_to = dotdot_torch(self.mat.CT, eps_tot_to - self.eps_rhs_to)
         self.sig.x.array[:] = to.flatten(stress_to)
         return stress_to
     
@@ -868,10 +868,9 @@ class LinearMomentum(LinearMomentumBase):
         Sets :attr:`sig` field.
         """
         self.eps0_to = dotdot_torch(self.mat.C_inv, sig0)
-        # self.eps_0.x.array[:] = to.flatten(self.eps0_to)
-        self.eps_tot.x.array[:] = to.flatten(self.eps0_to)
+        self.eps_0.x.array[:] = to.flatten(self.eps0_to)
+        # self.eps_tot.x.array[:] = to.flatten(self.eps0_to)
         self.sig.x.array[:] = to.flatten(sig0)
-
 
     def compute_eps_rhs(self, dt: float, stress_k: to.Tensor) -> None:
         """
@@ -917,7 +916,8 @@ class LinearMomentum(LinearMomentumBase):
         A.assemble()
 
         # Build linear form
-        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs))
+        b_rhs = ufl.inner(dotdot_ufl(self.C, -self.eps_0), epsilon(self.u_))*self.dx
+        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + b_rhs)
         b = fem_petsc.assemble_vector(linear_form)
         fem_petsc.apply_lifting(b, [bilinear_form], [self.bc.dirichlet_bcs])
         b.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
@@ -1011,8 +1011,8 @@ class LinearMomentum(LinearMomentumBase):
         A.assemble()
 
         # Build linear form
-        # b_rhs = ufl.inner(dotdot_ufl(self.CT, self.eps_rhs - self.eps_0), epsilon(self.u_))*self.dx
-        b_rhs = ufl.inner(dotdot_ufl(self.CT, self.eps_rhs), epsilon(self.u_))*self.dx
+        b_rhs = ufl.inner(dotdot_ufl(self.CT, self.eps_rhs - self.eps_0), epsilon(self.u_))*self.dx
+        # b_rhs = ufl.inner(dotdot_ufl(self.CT, self.eps_rhs), epsilon(self.u_))*self.dx
         linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + b_rhs)
         b = fem_petsc.assemble_vector(linear_form)
         fem_petsc.apply_lifting(b, [bilinear_form], [self.bc.dirichlet_bcs])
