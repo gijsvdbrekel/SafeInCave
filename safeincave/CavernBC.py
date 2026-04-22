@@ -240,14 +240,15 @@ class HeatFluxComputer():
         self.n = ufl.FacetNormal(self.grid.mesh)
 
     
-    def compute(self, T: any=None, kappa: any=None) -> float:
+    def compute(self, dt: float, T: any=None, kappa: any=None) -> float:
         if T is None or kappa is None:
+            print(T, kappa)
             return 0.0
         else:
             Q_form = fem.form(ufl.dot(kappa * ufl.grad(T), self.n) * self.ds(self.grid.get_boundary_tag(self.boundary_name)))
             Q = fem.assemble_scalar(Q_form)
             Q = -self.grid.mesh.comm.allreduce(Q, op=MPI.SUM)
-            return Q
+            return dt * Q
 
 
 class Cavern(ABC):
@@ -311,9 +312,9 @@ class CavernHandler:
         for cavern in self.caverns_MFlux + self.caverns_PT:
             cavern.calculate_volume(u)
 
-    def calculate_total_heat(self, T: any=None, kappa: any=None) -> None:
+    def calculate_total_heat(self, dt: float, T: any=None, kappa: any=None) -> None:
         for cavern in self.caverns_MFlux + self.caverns_PT:
-            cavern.calculate_heat(T, kappa)
+            cavern.calculate_heat(dt, T, kappa)
 
 
     def update_caverns(self, 
@@ -450,8 +451,8 @@ class Cavern_PT(Cavern):
             self.V = self.cvc.compute(u)
 
     
-    def calculate_heat(self, T: any=None, kappa: any=None) -> None:
-        self.Q = self.heat.compute(T, kappa)
+    def calculate_heat(self, dt: float, T: any=None, kappa: any=None) -> None:
+        self.Q = self.heat.compute(dt, T, kappa)
 
 
     def update_cavern(self, t: float, dt: float) -> None:
@@ -565,8 +566,9 @@ class Cavern_MassFlux(Cavern):
             self.ref_pos = self.cvc.calculate_cavern_midpoint(direction=self.direction, u=u)
 
     
-    def calculate_heat(self, T: any=None, kappa: any=None) -> None:
-        self.Q = self.heat.compute(T, kappa)
+    def calculate_heat(self, dt: float, T: any=None, kappa: any=None) -> None:
+        self.Q = self.heat.compute(dt, T, kappa)
+        # self.Q = 0.0
 
     
     def update_cavern(self, t: float, dt: float) -> None:

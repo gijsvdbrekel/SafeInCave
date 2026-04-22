@@ -255,7 +255,6 @@ class Test_MFlux(unittest.TestCase):
                                     P_init = 1*self.MPa,
                                     T_init = 303,
                                     T_in = 303,
-                                    Q_in = 0.0,
                                     Mflux_values = [0, 0.01, 0.01, 0.0, 0.0],
                                     time_values = np.linspace(t0, tf, 5),
                                 )
@@ -271,7 +270,6 @@ class Test_MFlux(unittest.TestCase):
                                     P_init = 1*self.MPa,
                                     T_init = 303,
                                     T_in = 293,
-                                    Q_in = 0.0,
                                     Mflux_values = [0, 0.01, 0.01, 0.0, 0.0],
                                     time_values = np.linspace(t0, tf, 5),
                                 )
@@ -287,7 +285,6 @@ class Test_MFlux(unittest.TestCase):
                                     P_init = 1*self.MPa,
                                     T_init = 303,
                                     T_in = 293,
-                                    Q_in = 0.0,
                                     Mflux_values = [0, 0.01, 0.01, 0.0, 0.0],
                                     time_values = np.linspace(t0, tf, 5),
                                 )

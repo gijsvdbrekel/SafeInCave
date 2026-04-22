@@ -246,13 +246,13 @@ class CavernThermodynamics(object):
                 rho1, u1, _ = self.rho_u_h(P1, T1)
             except Exception as e:
                 # Return large residuals if CoolProp fails at this state
-                return np.array([1e20, 1e20, 1e20], dtype=float)
+                return np.array([1e20, 1e20], dtype=float)
 
             try:
                 _, _, h_in = self.rho_u_h(Pin, Tin)
             except Exception as e:
                 # Return large residuals if CoolProp fails at this state
-                return np.array([1e20, 1e20, 1e20], dtype=float)
+                return np.array([1e20, 1e20], dtype=float)
 
             F1 = M1 * u1 - M0 * u0 - Q + W - m_inj * h_in
             F2 = rho1 - rho_target

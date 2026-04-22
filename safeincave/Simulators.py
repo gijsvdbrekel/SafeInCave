@@ -155,8 +155,8 @@ class Simulator_Full(Simulator):
 		# Calculate initial cavern volumes
 		self.caverns.calculate_volumes(self.eq_mom.u)
 
-		# Calculate initial heat flux in caverns
-		self.caverns.calculate_total_heat(self.eq_heat.T, self.eq_heat.k)
+		# # Calculate initial heat flux in caverns
+		# self.caverns.calculate_total_heat(self.eq_heat.T, self.eq_heat.k)
 
 		# Calculate initial cavern masses and volumes
 		self.caverns.calculate_initial_conditions()
@@ -212,7 +212,7 @@ class Simulator_Full(Simulator):
 				self.eq_heat.solve(t, dt)
 
 				# Calculate total heat transfered through cavern walls
-				self.caverns.calculate_total_heat(self.eq_heat.T, self.eq_heat.k)
+				self.caverns.calculate_total_heat(dt, self.eq_heat.T, self.eq_heat.k)
 
 				# Update thermodynamic state of caverns
 				self.caverns.update_caverns(t, dt)
