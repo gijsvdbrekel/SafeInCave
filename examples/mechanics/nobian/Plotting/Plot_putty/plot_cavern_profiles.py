@@ -17,7 +17,7 @@ CAVERNS = [
     ("Regular",             "cavern_regular_1200_3D"),
     ("Reversed-circulation","cavern_reversedcirculation_1200_3D"),
     ("Direct-circulation",  "cavern_directcirculation_1200_3D"),
-    ("Tube-failure",        "cavern_tubefailure_1200_3D"),
+    ("String-failure",      "cavern_tubefailure_1200_3D"),
     ("Tilt",                "cavern_tilted_1200_3D"),
     ("Fast-leached",        "cavern_fastleached_1200_3D"),
 ]

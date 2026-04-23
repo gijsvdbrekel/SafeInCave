@@ -57,14 +57,14 @@ from plot_results import (
 # =============================================================================
 
 plt.rcParams.update({
-    "font.size":        14,
-    "axes.titlesize":   16,
-    "axes.labelsize":   14,
-    "xtick.labelsize":  12,
-    "ytick.labelsize":  12,
-    "legend.fontsize":  11,
-    "figure.titlesize": 18,
-    "lines.linewidth":  1.8,
+    "font.size":        18,
+    "axes.titlesize":   22,
+    "axes.labelsize":   20,
+    "xtick.labelsize":  18,
+    "ytick.labelsize":  18,
+    "legend.fontsize":  16,
+    "figure.titlesize": 24,
+    "lines.linewidth":  2.0,
 })
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -89,12 +89,12 @@ DIMENSIONS = {
         },
     },
     "constitutive": {
-        "title": "Constitutive model: MD vs SIC, scenario A vs B",
+        "title": "Constitutive model: MD vs TUD2023, scenario A vs B",
         "cases": ["md_B_baseline", "sic_B_baseline", "md_A_baseline"],
         "labels": {
-            "md_B_baseline":  "MD (Scenario B)",
-            "sic_B_baseline": "SIC (Scenario B)",
-            "md_A_baseline":  "MD (Scenario A)",
+            "md_B_baseline":  "MD_B",
+            "sic_B_baseline": "TUD2023_B",
+            "md_A_baseline":  "MD_A",
         },
     },
     "startup": {
@@ -109,9 +109,9 @@ DIMENSIONS = {
         "title": "Cavern geometry & volume",
         "cases": ["md_B_baseline", "tilted_cavern", "volume_600"],
         "labels": {
-            "md_B_baseline":  "Regular 1200k (baseline)",
-            "tilted_cavern":  "Tilted 1200k",
-            "volume_600":     "Regular 600k",
+            "md_B_baseline":  "Regular 1,200,000 m³ (baseline)",
+            "tilted_cavern":  "Tilted 1,200,000 m³",
+            "volume_600":     "Regular 600,000 m³",
         },
     },
     "secondary_creep": {
@@ -120,8 +120,8 @@ DIMENSIONS = {
         "labels": {
             "md_B_baseline":        "Baseline",
             "no_pressure_solution": "No pressure-solution",
-            "no_kelvin":            "No Kelvin (SIC)",
-            "no_desai":             "No Desai (SIC)",
+            "no_kelvin":            "No Kelvin (TUD2023)",
+            "no_desai":             "No Desai (TUD2023)",
         },
     },
     "timestep": {

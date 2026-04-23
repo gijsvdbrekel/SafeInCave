@@ -28,13 +28,13 @@ from case_index import detect_layout_and_collect_cases, filter_cases
 # POSTER-FRIENDLY GLOBAL STYLE
 # =============================================================================
 plt.rcParams.update({
-    'font.size':        16,
-    'axes.titlesize':   20,
-    'axes.labelsize':   18,
-    'xtick.labelsize':  14,
-    'ytick.labelsize':  14,
-    'legend.fontsize':  14,
-    'figure.titlesize': 22,
+    'font.size':        18,
+    'axes.titlesize':   22,
+    'axes.labelsize':   20,
+    'xtick.labelsize':  18,
+    'ytick.labelsize':  18,
+    'legend.fontsize':  18,
+    'figure.titlesize': 24,
     'lines.linewidth':  2.0,
 })
 
@@ -51,17 +51,17 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 # Available filters:
 #   "caverns"        - Cavern shapes to include: (e.g. "regular1200", "tilted1200","directcirculation600", "reversedcirculation1200")                                                   "fastleached1200", "tubefailure1200").
 #   "pressure"       - Pressure scenario: "industry", "transport", "power_generation", "csv", or None
-#   "scenario"       - Material scenario(s): "A_SIC", "A_MD", "B_SIC", "B_MD" or None
+#   "scenario"       - Material scenario(s): "MD_A", "MD_B", "TUD2023_B" or None
 #   "n_cycles"       - Number of cycles (int) or None
 #   "operation_days" - Operation duration (int) or None
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["spike_none", "spike_upper", "spike_lower"],
+    "caverns": ["spike_lower", "spike_upper", "spike_none"],
     "pressure": ["csv"],
-    "scenario": ["A_MD"],
+    "scenario": ["MD_A"],
     "n_cycles": None,
-    "operation_days": 365,
+    "operation_days": 1095,
     "case_contains": None,
 }
 
@@ -85,10 +85,10 @@ SELECT = {
 #                         Color = pressure scheme, linestyle = pressure scheme.
 #
 #   "compare_sizes"     - One figure PER BASE SHAPE (e.g. "Regular"), with
-#                         600k and 1200k overlaid on the same axes.
-#                         Color = scenario (A_SIC, B_MD, etc.).
-#                         Linestyle = solid for 1200k, dashed for 600k.
-#                         Label = "B_SIC (1200k)", "B_MD (600k)", etc.
+#                         600,000 m³ and 1,200,000 m³ overlaid on the same axes.
+#                         Color = scenario (TUD2023_A, MD_B, etc.).
+#                         Linestyle = solid for 1,200,000 m³, dashed for 600,000 m³.
+#                         Label = "TUD2023_B (1,200,000 m³)" etc.
 
 PLOT_MODE = "compare_shapes"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
 
@@ -143,45 +143,54 @@ MPA = 1e6
 HOUR = 3600.0
 DAY = 24.0 * HOUR
 
+# Cavern colours picked to be visually distinct from the grayscale dilatancy
+# palette below. Tilt moved off pink (which now belongs to De Vries 2005).
 CAVERN_COLORS = {
     "Asymmetric":              "#ff7f0e",
     "Direct-circulation":      "#2ca02c",
     "IrregularFine":           "#9467bd",
     "Regular":                 "#1f77b4",
     "Reversed-circulation":    "#8c564b",
-    "Tilt":                    "#e377c2",
+    "Tilt":                    "#17becf",   # cyan (was pink — clashed with De Vries)
     "Fast-leached":            "#d62728",
-    "Tube-failure":            "#bcbd22",
-    "Spike-none":              "#17becf",
-    "Spike-upper":             "#7f7f7f",
-    "Spike-lower":             "#aec7e8",
-    # Size-specific variants (solid = 1200k, lighter = 600k)
-    "Asymmetric (1200k)":          "#ff7f0e",
-    "Direct-circulation (1200k)":  "#2ca02c",
-    "IrregularFine (1200k)":       "#9467bd",
-    "Regular (1200k)":             "#1f77b4",
-    "Reversed-circulation (1200k)":"#8c564b",
-    "Tilt (1200k)":                "#e377c2",
-    "Fast-leached (1200k)":        "#d62728",
-    "Tube-failure (1200k)":        "#bcbd22",
-    "Asymmetric (600k)":           "#ffbb78",
-    "Direct-circulation (600k)":   "#98df8a",
-    "IrregularFine (600k)":        "#c5b0d5",
-    "Regular (600k)":              "#aec7e8",
-    "Reversed-circulation (600k)": "#c49c94",
-    "Tilt (600k)":                 "#f7b6d2",
-    "Fast-leached (600k)":         "#ff9896",
-    "Tube-failure (600k)":         "#dbdb8d",
+    "String-failure":          "#bcbd22",
+    "Homogeneous":             "#1f77b4",
+    "Heterogeneous_above":     "#d62728",
+    "Heterogeneous_below":     "#2ca02c",
+    # Size-specific variants (solid = 1,200,000 m³, lighter = 600,000 m³)
+    "Asymmetric (1,200,000 m³)":          "#ff7f0e",
+    "Direct-circulation (1,200,000 m³)":  "#2ca02c",
+    "IrregularFine (1,200,000 m³)":       "#9467bd",
+    "Regular (1,200,000 m³)":             "#1f77b4",
+    "Reversed-circulation (1,200,000 m³)":"#8c564b",
+    "Tilt (1,200,000 m³)":                "#17becf",
+    "Fast-leached (1,200,000 m³)":        "#d62728",
+    "String-failure (1,200,000 m³)":      "#bcbd22",
+    "Asymmetric (600,000 m³)":            "#ffbb78",
+    "Direct-circulation (600,000 m³)":    "#98df8a",
+    "IrregularFine (600,000 m³)":         "#c5b0d5",
+    "Regular (600,000 m³)":               "#aec7e8",
+    "Reversed-circulation (600,000 m³)":  "#c49c94",
+    "Tilt (600,000 m³)":                  "#9edae5",
+    "Fast-leached (600,000 m³)":          "#ff9896",
+    "String-failure (600,000 m³)":        "#dbdb8d",
 }
 
 SCENARIO_COLORS = {
-    # Current: Scenario A/B/B_freecalibr × SafeInCave/Munson-Dawson
-    "A_SIC":            "#1f77b4",   # Scenario A, SafeInCave   (blue)
-    "A_MD":             "#ff7f0e",   # Scenario A, Munson-Dawson (orange)
-    "B_SIC":            "#2ca02c",   # Scenario B, SafeInCave   (green)
-    "B_MD":             "#d62728",   # Scenario B, Munson-Dawson (red)
-    "B_freecalibr_SIC": "#9467bd",   # Scenario B_freecalibr, SafeInCave (purple)
-    "B_freecalibr_MD":  "#17becf",   # Scenario B_freecalibr, Munson-Dawson (cyan)
+    # Current: <model>_<scenario>. TUD2023 = SafeInCave constitutive model.
+    "TUD2023_A":            "#1f77b4",   # SafeInCave, Scenario A (blue)
+    "MD_A":                 "#ff7f0e",   # Munson-Dawson, Scenario A (orange)
+    "TUD2023_B":            "#2ca02c",   # SafeInCave, Scenario B (green)
+    "MD_B":                 "#d62728",   # Munson-Dawson, Scenario B (red)
+    "TUD2023_B_freecalibr": "#9467bd",   # SafeInCave, B_freecalibr (purple)
+    "MD_B_freecalibr":      "#17becf",   # Munson-Dawson, B_freecalibr (cyan)
+    # Legacy spelling (scenario-first) kept so old folders still match
+    "A_SIC":            "#1f77b4",
+    "A_MD":             "#ff7f0e",
+    "B_SIC":            "#2ca02c",
+    "B_MD":             "#d62728",
+    "B_freecalibr_SIC": "#9467bd",
+    "B_freecalibr_MD":  "#17becf",
     # Legacy names (kept for backward compatibility)
     "disloc_old_only":  "#1f77b4",
     "disloc_new_only":  "#ff7f0e",
@@ -198,7 +207,14 @@ SCENARIO_COLORS = {
 }
 
 SCENARIO_LINESTYLES = {
-    # Current
+    # Current: <model>_<scenario>
+    "TUD2023_A":            "-",
+    "MD_A":                 "--",
+    "TUD2023_B":            "-",
+    "MD_B":                 "--",
+    "TUD2023_B_freecalibr": "-",
+    "MD_B_freecalibr":      "--",
+    # Legacy spelling
     "A_SIC":            "-",
     "A_MD":             "--",
     "B_SIC":            "-",
@@ -264,19 +280,21 @@ PROBE_COLORS = {
 
 CAVERN_ORDER = [
     "Asymmetric", "Direct-circulation", "Regular", "Reversed-circulation",
-    "Tilt", "Fast-leached", "Tube-failure", "IrregularFine",
-    "Spike-none", "Spike-upper", "Spike-lower",
-    "Asymmetric (1200k)", "Direct-circulation (1200k)", "Regular (1200k)",
-    "Reversed-circulation (1200k)", "Tilt (1200k)", "Fast-leached (1200k)",
-    "Tube-failure (1200k)", "IrregularFine (1200k)",
-    "Asymmetric (600k)", "Direct-circulation (600k)", "Regular (600k)",
-    "Reversed-circulation (600k)", "Tilt (600k)", "Fast-leached (600k)",
-    "Tube-failure (600k)", "IrregularFine (600k)",
+    "Tilt", "Fast-leached", "String-failure", "IrregularFine",
+    "Homogeneous", "Heterogeneous_above", "Heterogeneous_below",
+    "Asymmetric (1,200,000 m³)", "Direct-circulation (1,200,000 m³)", "Regular (1,200,000 m³)",
+    "Reversed-circulation (1,200,000 m³)", "Tilt (1,200,000 m³)", "Fast-leached (1,200,000 m³)",
+    "String-failure (1,200,000 m³)", "IrregularFine (1,200,000 m³)",
+    "Asymmetric (600,000 m³)", "Direct-circulation (600,000 m³)", "Regular (600,000 m³)",
+    "Reversed-circulation (600,000 m³)", "Tilt (600,000 m³)", "Fast-leached (600,000 m³)",
+    "String-failure (600,000 m³)", "IrregularFine (600,000 m³)",
 ]
 SCENARIO_ORDER = [
-    # Current
+    # Current (model_scenario)
+    "TUD2023_A", "MD_A", "TUD2023_B", "MD_B", "TUD2023_B_freecalibr", "MD_B_freecalibr",
+    # Legacy (scenario_model)
     "A_SIC", "A_MD", "B_SIC", "B_MD", "B_freecalibr_SIC", "B_freecalibr_MD",
-    # Legacy
+    # Legacy presets
     "disloc_old_only", "disloc_new_only", "desai_only", "full_minus_desai",
     "full", "full_minus_ps", "md_only", "md_steady_only", "full_md",
     "interlayer", "nointerlayer", None,
@@ -351,16 +369,26 @@ SIZE_LINESTYLES = {"1200k": "-", "600k": "--"}
 
 
 def _extract_size_tag(cavern_label):
-    """Extract '600k' or '1200k' from a cavern label like 'Regular (1200k)'."""
-    import re
-    m = re.search(r"\((\d+k)\)", cavern_label or "")
-    return m.group(1) if m else None
+    """Extract '600k' or '1200k' from a cavern label.
+
+    Handles both the current 'Regular (1,200,000 m³)' format and the legacy
+    'Regular (1200k)' short form.
+    """
+    label = cavern_label or ""
+    if "1,200,000" in label or "(1200k)" in label:
+        return "1200k"
+    if "600,000" in label or "(600k)" in label:
+        return "600k"
+    return None
 
 
 def _strip_size(cavern_label):
-    """Strip volume suffix: 'Regular (1200k)' -> 'Regular'."""
+    """Strip volume suffix: 'Regular (1,200,000 m³)' -> 'Regular' (also handles legacy '1200k')."""
     import re
-    return re.sub(r"\s*\(\d+k\)\s*$", "", cavern_label or "").strip()
+    s = cavern_label or ""
+    s = re.sub(r"\s*\([\d,]+\s*m³\)\s*$", "", s)
+    s = re.sub(r"\s*\(\d+k\)\s*$", "", s)
+    return s.strip()
 
 
 def get_case_color_and_style(cavern_label, scenario_preset, pressure_scenario=None, mode=None):
@@ -512,6 +540,32 @@ def load_wall_points(case_folder):
     wall_points = points[wall_idx]
     order = np.argsort(wall_points[:, 2])
     return wall_points[order]
+
+
+def load_wall_points_initial_final(case_folder):
+    """Return (initial, final) wall profile points, each sorted by z.
+
+    Initial = mesh wall nodes at operation t=0 (post-leaching); final = same nodes
+    after applying the displacement field at the last saved timestep.
+    """
+    u_xdmf = path_u_xdmf(case_folder)
+    msh_path = path_geom_msh(case_folder)
+
+    points, _, u_field = post.read_node_vector(u_xdmf)
+    points_msh, wall_idx_msh = get_wall_indices_from_msh(msh_path)
+
+    mapping = post.build_mapping(points_msh, points)
+    wall_idx = np.array([mapping[i] for i in wall_idx_msh], dtype=int)
+
+    base = points[wall_idx]
+    u0 = u_field[0, wall_idx, :]
+    uT = u_field[-1, wall_idx, :]
+
+    initial = base + u0
+    final = base + uT
+
+    order = np.argsort(initial[:, 2])
+    return initial[order], final[order]
 
 
 def auto_generate_probes_from_wall_points(wall_points_sorted_z):
@@ -689,14 +743,17 @@ def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=40.0, 
     def q_from_sqrtJ2(sqrtJ2):
         return np.sqrt(3.0) * sqrtJ2
 
+    # Dilatancy boundaries use a dedicated grayscale palette so they never
+    # collide with cavern or scenario colours in the legend. Line-style alone
+    # distinguishes individual boundary criteria.
     boundary_styles = {
-        "ratigan_027":  {"color": "#7570b3", "linestyle": "--", "linewidth": 1.3, "alpha": 0.85},
-        "ratigan_018":  {"color": "#7570b3", "linestyle": ":",  "linewidth": 1.3, "alpha": 0.85},
-        "spiers":       {"color": "#66a61e", "linestyle": "-.", "linewidth": 1.3, "alpha": 0.85},
-        "devries_comp": {"color": "#e7298a", "linestyle": "-",  "linewidth": 1.5, "alpha": 0.90},
-        "devries_ext":  {"color": "#e7298a", "linestyle": "--", "linewidth": 1.5, "alpha": 0.90},
-        "mc_anhydrite": {"color": "#d95f02", "linestyle": "-",  "linewidth": 1.8, "alpha": 0.90},
-        "mc_mudstone":  {"color": "#d95f02", "linestyle": "--", "linewidth": 1.5, "alpha": 0.85},
+        "ratigan_027":  {"color": "#000000", "linestyle": "--", "linewidth": 1.6, "alpha": 0.95},
+        "ratigan_018":  {"color": "#000000", "linestyle": ":",  "linewidth": 1.6, "alpha": 0.95},
+        "spiers":       {"color": "#555555", "linestyle": "-.", "linewidth": 1.6, "alpha": 0.95},
+        "devries_comp": {"color": "#888888", "linestyle": "-",  "linewidth": 1.8, "alpha": 1.00},
+        "devries_ext":  {"color": "#888888", "linestyle": "--", "linewidth": 1.8, "alpha": 1.00},
+        "mc_anhydrite": {"color": "#333333", "linestyle": "-",  "linewidth": 1.8, "alpha": 0.95},
+        "mc_mudstone":  {"color": "#333333", "linestyle": "--", "linewidth": 1.6, "alpha": 0.90},
     }
 
     if "ratigan_027" in show_boundaries:
@@ -1222,7 +1279,6 @@ def compute_FOS_data(time_days, stress_data):
 def plot_convergence_combined(cases):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 9), sharex=True,
                                    gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
-    ax1.set_title("Cavern convergence", fontsize=20, fontweight='bold', pad=8)
 
     for c in cases:
         cav = c.get("cavern_label")
@@ -1248,7 +1304,7 @@ def plot_convergence_combined(cases):
     if uniq:
         ax1.legend(uniq.values(), uniq.keys(), loc="upper center",
                    bbox_to_anchor=(0.5, 1.0), ncol=min(3, len(uniq)),
-                   fontsize=14, frameon=True)
+                   fontsize=18, frameon=True)
 
     # Plot pressure schedule(s) — overlay all distinct schedules in compare_pressures
     _plotted_pressures = set()
@@ -1264,7 +1320,7 @@ def plot_convergence_combined(cases):
     if not _plotted_pressures:
         ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
     if len(_plotted_pressures) > 1:
-        ax2.legend(fontsize=14, frameon=True, loc="upper right")
+        ax2.legend(fontsize=18, frameon=True, loc="upper right")
     ax2.set_ylabel("Pressure (MPa)")
     ax2.set_xlabel("Time (days)")
     ax2.grid(True, alpha=0.3)
@@ -1297,18 +1353,21 @@ def plot_convergence_separate(cases):
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(20, 10), sharex=True,
                                        gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
-        fig.suptitle(f"Convergence: {label}")
 
         ax1.plot(t_days, conv, linewidth=2.0, color=col, alpha=0.95, label=label)
         ax1.set_ylabel("Convergence (ΔV/V0) (%)")
         ax1.grid(True, alpha=0.3)
-        ax1.legend(loc="upper left", fontsize=14, frameon=True)
+        ax1.legend(loc="upper left", fontsize=18, frameon=True)
+
+        ax1.text(0.985, 0.03, cav, transform=ax1.transAxes,
+                 fontsize=18, fontweight='bold', ha='right', va='bottom',
+                 bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray', boxstyle='round,pad=0.4'))
 
         tH, pMPa = read_pressure_schedule(c["case_path"])
         if tH is None:
             ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
         else:
-            ax2.plot(tH / 24.0, pMPa, linewidth=1.7)
+            ax2.plot(tH / 24.0, pMPa, linewidth=1.7, color='black')
         ax2.set_ylabel("Pressure (MPa)")
         ax2.set_xlabel("Time (days)")
         ax2.grid(True, alpha=0.3)
@@ -1325,12 +1384,20 @@ def plot_convergence_separate(cases):
 
 
 def plot_convergence_per_cavern(cases, group_fn=None):
-    """One convergence figure per cavern, scenarios/pressures overlaid."""
+    """One convergence figure per cavern, scenarios/pressures overlaid.
+
+    Layout: left column = convergence (top) + pressure (bottom); right column
+    (spanning both rows) = wall profile, initial vs final. The wall panel uses
+    non-equal aspect so sub-percent radial displacements remain visible.
+    """
     groups = (group_fn or group_cases_by_cavern)(cases)
     for cav_label, cav_cases in groups.items():
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 9), sharex=True,
-                                       gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
-        fig.suptitle(f"3D cavern volume convergence — {cav_label}")
+        fig = plt.figure(figsize=(22, 10))
+        gs = fig.add_gridspec(2, 2, width_ratios=[2.4, 1.0],
+                              height_ratios=[2.2, 1.0], hspace=0.12, wspace=0.18)
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax2 = fig.add_subplot(gs[1, 0], sharex=ax1)
+        ax3 = fig.add_subplot(gs[:, 1])
 
         for c in cav_cases:
             cav_full = c.get("cavern_label", cav_label)
@@ -1355,9 +1422,14 @@ def plot_convergence_per_cavern(cases, group_fn=None):
         if uniq:
             ax1.legend(uniq.values(), uniq.keys(), loc="upper center",
                        bbox_to_anchor=(0.5, 1.0), ncol=min(3, len(uniq)),
-                       fontsize=14, frameon=True)
+                       fontsize=18, frameon=True)
 
-        # Plot pressure schedule(s) — overlay all distinct schedules
+        ax1.text(0.985, 0.03, cav_label, transform=ax1.transAxes,
+                 fontsize=18, fontweight='bold', ha='right', va='bottom',
+                 bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray', boxstyle='round,pad=0.4'))
+
+        # Plot pressure schedule(s) — overlay all distinct schedules.
+        # Use a neutral colour (black) so it never clashes with a scenario line above.
         _plotted_pressures = set()
         for c in cav_cases:
             ps = c.get("pressure_scenario")
@@ -1366,16 +1438,50 @@ def plot_convergence_per_cavern(cases, group_fn=None):
             _plotted_pressures.add(ps)
             tH, pMPa = read_pressure_schedule(c["case_path"])
             if tH is not None:
-                pcol, pls = get_case_color_and_style(cav_label, c.get("scenario_preset"), ps)
-                ax2.plot(tH / 24.0, pMPa, linewidth=1.7, color=pcol, linestyle=pls,
+                ax2.plot(tH / 24.0, pMPa, linewidth=1.7, color='black',
                          label=PRESSURE_LABELS.get(ps, ps))
         if not _plotted_pressures:
             ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
         if len(_plotted_pressures) > 1:
-            ax2.legend(fontsize=14, frameon=True, loc="upper right")
+            ax2.legend(fontsize=18, frameon=True, loc="upper right")
         ax2.set_ylabel("Pressure (MPa)")
         ax2.set_xlabel("Time (days)")
         ax2.grid(True, alpha=0.3)
+
+        # Wall-normal displacement Δn(z): positive = inward along the local
+        # outward normal (i.e., convergence). Using the wall normal instead of
+        # a radial distance avoids the r≥0 artefact at the roof and floor tips.
+        any_drawn = False
+        for c in cav_cases:
+            cav_full = c.get("cavern_label", cav_label)
+            sc = c.get("scenario_preset")
+            ps = c.get("pressure_scenario")
+            col, ls = get_case_color_and_style(cav_full, sc, ps)
+            label = get_case_label(c)
+            try:
+                wp_init, wp_final = load_wall_points_initial_final(c["case_path"])
+            except Exception as e:
+                print(f"[WALL-PROFILE SKIP] {cav_label}/{sc}/{ps}: {e}")
+                continue
+            normals = compute_outward_normal_2d(wp_init)
+            u_delta = wp_final - wp_init
+            dn_outward = np.einsum('ij,ij->i', u_delta, normals)
+            dn_inward_cm = -dn_outward * 100.0  # m → cm, flip sign so inward is positive
+            z = wp_init[:, 2]
+            ax3.plot(dn_inward_cm, z, color=col, linestyle=ls, linewidth=1.8,
+                     alpha=0.9, label=label)
+            any_drawn = True
+
+        if any_drawn:
+            ax3.axvline(0.0, color='black', linewidth=1.0, alpha=0.6)
+            ax3.set_xlabel("Wall-normal displacement Δn (cm)\n(positive = inward)")
+            ax3.set_ylabel("z (m)")
+            ax3.grid(True, alpha=0.3)
+            ax3.legend(fontsize=13, frameon=True, loc='best')
+        else:
+            ax3.text(0.5, 0.5, "No wall-profile data", ha="center", va="center",
+                     transform=ax3.transAxes)
+            ax3.axis("off")
 
         safe_cav = cav_label.replace(" ", "_")
         outname = f"convergence_{safe_cav}.png"
@@ -1420,10 +1526,10 @@ def plot_stress_combined(cases, stress_by_series):
             ax.scatter(p[-1], q[-1], s=30, edgecolors="black", linewidths=0.6,
                        color=color, zorder=5)
 
-        ax.set_title(STRESS_PROBE_TITLES.get(ptype, ptype), fontsize=20, fontweight='bold', pad=6)
-        ax.set_xlabel("Mean stress p (MPa)", fontsize=18)
-        ax.set_ylabel("Differential stress q (MPa)", fontsize=18)
-        ax.tick_params(axis='both', labelsize=16)
+        ax.set_title(STRESS_PROBE_TITLES.get(ptype, ptype), fontsize=24, fontweight='bold', pad=6)
+        ax.set_xlabel("Mean stress p (MPa)", fontsize=22)
+        ax.set_ylabel("Differential stress q (MPa)", fontsize=22)
+        ax.tick_params(axis='both', labelsize=20)
         ax.grid(True, alpha=0.3)
 
     axp = axes[5]
@@ -1442,13 +1548,13 @@ def plot_stress_combined(cases, stress_by_series):
                  ha="center", va="center", transform=axp.transAxes)
         axp.axis("off")
     else:
-        axp.set_title("Pressure schedule", fontsize=20, fontweight='bold', pad=6)
-        axp.set_xlabel("Time (days)", fontsize=18)
-        axp.set_ylabel("Pressure (MPa)", fontsize=18)
-        axp.tick_params(axis='both', labelsize=16)
+        axp.set_title("Pressure schedule", fontsize=24, fontweight='bold', pad=6)
+        axp.set_xlabel("Time (days)", fontsize=22)
+        axp.set_ylabel("Pressure (MPa)", fontsize=22)
+        axp.tick_params(axis='both', labelsize=20)
         axp.grid(True, alpha=0.3)
         if len(_plotted_pressures) > 1:
-            axp.legend(fontsize=14, frameon=True)
+            axp.legend(fontsize=18, frameon=True)
 
     # Build separate legend entries for dilatancy boundaries and cavern shapes
     boundary_handles, boundary_labels = [], []
@@ -1467,12 +1573,24 @@ def plot_stress_combined(cases, stress_by_series):
             shape_handles.append(h)
             shape_labels.append(l)
 
-    all_handles = shape_handles + boundary_handles
-    all_labels = shape_labels + boundary_labels
-    fig.legend(all_handles, all_labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
-               ncol=min(5, len(all_labels)), frameon=True, fontsize=14)
+    # Legend above the figure, with explicit section headers so readers can see
+    # at a glance which entries are cavern geometries vs. dilatancy criteria.
+    all_handles, all_labels = [], []
+    if shape_handles:
+        all_handles.append(plt.Line2D([], [], color="none"))
+        all_labels.append(r"$\bf{Cavern\ geometries}$")
+        all_handles.extend(shape_handles)
+        all_labels.extend(shape_labels)
+    if boundary_handles:
+        all_handles.append(plt.Line2D([], [], color="none"))
+        all_labels.append(r"$\bf{Dilatancy\ criteria}$")
+        all_handles.extend(boundary_handles)
+        all_labels.extend(boundary_labels)
 
-    fig.tight_layout(rect=[0, 0, 1, 0.92])
+    fig.legend(all_handles, all_labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
+               ncol=min(4, len(all_labels)), frameon=True, fontsize=18)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.80])
 
     outname = f"pq_paths_combined_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
     outpath = os.path.join(OUT_DIR, outname.replace(" ", "").replace("'", "").replace("[", "").replace("]", ""))
@@ -1503,12 +1621,11 @@ def plot_stress_separate(cases, stress_by_series):
             ax.scatter(p[-1], q[-1], s=40, edgecolors="black", linewidths=0.8,
                        color=color, zorder=5)
 
-            ax.set_title(f"p-q stress path: {ptype}")
-            ax.set_xlabel("Mean stress p (MPa)")
-            ax.set_ylabel("Differential stress q (MPa)")
+            ax.set_title(f"p-q stress path: {ptype}", fontsize=22, fontweight='bold')
+            ax.set_xlabel("Mean stress p (MPa)", fontsize=22)
+            ax.set_ylabel("Differential stress q (MPa)", fontsize=22)
+            ax.tick_params(axis='both', labelsize=20)
             ax.grid(True, alpha=0.3)
-            if i == 0:
-                ax.legend(loc="upper left", fontsize=14, frameon=True)
 
         axp = axes[5]
         case_path = None
@@ -1520,10 +1637,11 @@ def plot_stress_separate(cases, stress_by_series):
         if case_path:
             tH, pMPa = read_pressure_schedule(case_path)
             if tH is not None:
-                axp.plot(tH / 24.0, pMPa, linewidth=2.0, color=color)
-                axp.set_title("Pressure schedule")
-                axp.set_xlabel("Time (days)")
-                axp.set_ylabel("Pressure (MPa)")
+                axp.plot(tH / 24.0, pMPa, linewidth=2.0, color='black')
+                axp.set_title("Pressure schedule", fontsize=22, fontweight='bold')
+                axp.set_xlabel("Time (days)", fontsize=22)
+                axp.set_ylabel("Pressure (MPa)", fontsize=22)
+                axp.tick_params(axis='both', labelsize=20)
                 axp.grid(True, alpha=0.3)
             else:
                 axp.text(0.5, 0.5, "No pressure data", ha="center", va="center", transform=axp.transAxes)
@@ -1531,8 +1649,34 @@ def plot_stress_separate(cases, stress_by_series):
         else:
             axp.axis("off")
 
-        fig.suptitle(f"Stress State: {case_label}", fontsize=20, fontweight="bold")
-        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        # Single legend above the figure, separating geometries from dilatancy criteria.
+        b_handles, b_labels = [], []
+        s_handles, s_labels = [], []
+        handles, labels = axes[0].get_legend_handles_labels()
+        seen = set()
+        for h, l in zip(handles, labels):
+            if l in seen:
+                continue
+            seen.add(l)
+            if any(kw in l for kw in ["Ratigan", "Spiers", "De Vries", "Anhydrite", "Mudstone"]):
+                b_handles.append(h); b_labels.append(l)
+            else:
+                s_handles.append(h); s_labels.append(l)
+        all_handles, all_labels = [], []
+        if s_handles:
+            all_handles.append(plt.Line2D([], [], color="none"))
+            all_labels.append(r"$\bf{Cavern\ geometries}$")
+            all_handles.extend(s_handles); all_labels.extend(s_labels)
+        if b_handles:
+            all_handles.append(plt.Line2D([], [], color="none"))
+            all_labels.append(r"$\bf{Dilatancy\ criteria}$")
+            all_handles.extend(b_handles); all_labels.extend(b_labels)
+        if all_handles:
+            fig.legend(all_handles, all_labels, loc="upper center",
+                       bbox_to_anchor=(0.5, 0.99),
+                       ncol=min(4, len(all_labels)), frameon=True, fontsize=18)
+
+        fig.tight_layout(rect=[0, 0, 1, 0.82])
 
         safe_name = f"{cav}_{sc}_{ps}".replace(" ", "_").replace("/", "_").replace("None", "")
         outname = f"pq_paths_{safe_name}.png"
@@ -1584,9 +1728,10 @@ def plot_stress_per_cavern(cases, group_fn=None):
                 ax.scatter(p[-1], q[-1], s=30, edgecolors="black", linewidths=0.6,
                            color=color, zorder=5)
 
-            ax.set_title(f"p-q stress path: {ptype}")
-            ax.set_xlabel("Mean stress p (MPa)")
-            ax.set_ylabel("Differential stress q (MPa)")
+            ax.set_title(f"p-q stress path: {ptype}", fontsize=22, fontweight='bold')
+            ax.set_xlabel("Mean stress p (MPa)", fontsize=22)
+            ax.set_ylabel("Differential stress q (MPa)", fontsize=22)
+            ax.tick_params(axis='both', labelsize=20)
             ax.grid(True, alpha=0.3)
 
         # Pressure subplot — overlay all distinct pressure schedules
@@ -1599,31 +1744,50 @@ def plot_stress_per_cavern(cases, group_fn=None):
             _plotted_pressures.add(ps)
             tH, pMPa = read_pressure_schedule(c["case_path"])
             if tH is not None:
-                pcol, pls = get_case_color_and_style(cav_label, c.get("scenario_preset"), ps)
-                axp.plot(tH / 24.0, pMPa, linewidth=2.0, color=pcol, linestyle=pls,
+                axp.plot(tH / 24.0, pMPa, linewidth=2.0, color='black',
                          label=PRESSURE_LABELS.get(ps, ps))
         if not _plotted_pressures:
             axp.text(0.5, 0.5, "No pressure_schedule.json found.",
                      ha="center", va="center", transform=axp.transAxes)
             axp.axis("off")
         else:
-            axp.set_title("Pressure schedule")
-            axp.set_xlabel("Time (days)")
-            axp.set_ylabel("Pressure (MPa)")
+            axp.set_title("Pressure schedule", fontsize=22, fontweight='bold')
+            axp.set_xlabel("Time (days)", fontsize=22)
+            axp.set_ylabel("Pressure (MPa)", fontsize=22)
+            axp.tick_params(axis='both', labelsize=20)
             axp.grid(True, alpha=0.3)
             if len(_plotted_pressures) > 1:
-                axp.legend(fontsize=14, frameon=True)
+                axp.legend(fontsize=18, frameon=True)
 
+        # Legend above the figure, with section headers that separate cavern
+        # geometries / scenarios from dilatancy criteria.
+        b_handles, b_labels = [], []
+        s_handles, s_labels = [], []
         handles, labels = axes[0].get_legend_handles_labels()
-        uniq = {}
+        seen = set()
         for h, l in zip(handles, labels):
-            if l not in uniq:
-                uniq[l] = h
-        fig.legend(uniq.values(), uniq.keys(), loc="upper center", bbox_to_anchor=(0.5, 0.96),
-                   ncol=min(5, len(uniq)), frameon=True, fontsize=14)
+            if l in seen:
+                continue
+            seen.add(l)
+            if any(kw in l for kw in ["Ratigan", "Spiers", "De Vries", "Anhydrite", "Mudstone"]):
+                b_handles.append(h); b_labels.append(l)
+            else:
+                s_handles.append(h); s_labels.append(l)
+        all_handles, all_labels = [], []
+        if s_handles:
+            all_handles.append(plt.Line2D([], [], color="none"))
+            all_labels.append(r"$\bf{Scenarios}$")
+            all_handles.extend(s_handles); all_labels.extend(s_labels)
+        if b_handles:
+            all_handles.append(plt.Line2D([], [], color="none"))
+            all_labels.append(r"$\bf{Dilatancy\ criteria}$")
+            all_handles.extend(b_handles); all_labels.extend(b_labels)
+        if all_handles:
+            fig.legend(all_handles, all_labels, loc="upper center",
+                       bbox_to_anchor=(0.5, 0.99),
+                       ncol=min(4, len(all_labels)), frameon=True, fontsize=18)
 
-        fig.suptitle(f"Stress State — {cav_label}", fontsize=20, fontweight="bold", y=0.99)
-        fig.tight_layout(rect=[0, 0, 1, 0.92])
+        fig.tight_layout(rect=[0, 0, 1, 0.82])
 
         safe_cav = cav_label.replace(" ", "_")
         outname = f"pq_paths_{safe_cav}.png"
@@ -1733,7 +1897,7 @@ def _plot_fos_on_axes(axes, fos_by_case, title_prefix=""):
     if handles:
         fig = ax_sum.get_figure()
         fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.99),
-                   ncol=min(4, len(labels)), frameon=True, fontsize=14)
+                   ncol=min(4, len(labels)), frameon=True, fontsize=18)
 
 
 def plot_fos_combined(cases):
@@ -1920,11 +2084,11 @@ def plot_fos_summary(cases):
             ax_fos.plot(tx, my, linewidth=2.0, linestyle=ls, color=col, label=label)
 
     ax_fos.axhline(y=1.0, color='red', linestyle=':', linewidth=1.5, alpha=0.8)
-    ax_fos.set_title("Global min FOS (all cells)", fontsize=18, fontweight='bold')
+    ax_fos.set_title("Global min FOS (all cells)", fontsize=22, fontweight='bold')
     ax_fos.set_xlabel("Time (days)")
     ax_fos.set_ylabel("Factor of Safety")
     ax_fos.grid(True, alpha=0.3)
-    ax_fos.legend(fontsize=14, frameon=True, loc="upper center",
+    ax_fos.legend(fontsize=18, frameon=True, loc="upper center",
                    bbox_to_anchor=(0.5, 1.15), ncol=4)
 
     # Right: one pressure subplot per scenario
@@ -1942,7 +2106,7 @@ def plot_fos_summary(cases):
                 _pressure_plotted.add(ps_key)
                 break
 
-        ax_p.set_title(PRESSURE_LABELS.get(ps_key, ps_key), fontsize=16)
+        ax_p.set_title(PRESSURE_LABELS.get(ps_key, ps_key), fontsize=20)
         ax_p.set_ylabel("Pressure (MPa)")
         ax_p.grid(True, alpha=0.3)
         if row == len(ordered) - 1:
@@ -2013,7 +2177,7 @@ def plot_propagation_depth(ax, time_days, fos_data, radial_distances, threshold=
     ax.set_ylabel('FOS<1 penetration depth (m)')
     ax.set_title('Connected dilating zone size')
     ax.grid(True, alpha=0.3)
-    ax.legend(loc='upper left', fontsize=14)
+    ax.legend(loc='upper left', fontsize=18)
 
 
 def plot_fracture_propagation(case_meta):
@@ -2086,7 +2250,7 @@ def plot_fracture_propagation_grouped(frac_cases):
     tightly packed.
     """
     # Build lookup: cavern_label -> case_meta
-    # Strip volume suffix (e.g. " (1200k)") so bare names like "Regular" match
+    # Strip volume suffix (e.g. " (1,200,000 m³)") so bare names like "Regular" match
     case_by_label = {}
     for c in frac_cases:
         cav = c.get("cavern_label", "")
@@ -2140,9 +2304,9 @@ def plot_fracture_propagation_grouped(frac_cases):
             ax_dep = axes[idx * 2 + 1]
 
             plot_cavern_with_probes(ax_cav, wall_pts, samp_pts)
-            ax_cav.set_title(shape_name, fontsize=20, fontweight='bold', pad=6)
-            ax_cav.set_xlabel("Radial distance (m)", fontsize=18)
-            ax_cav.set_ylabel("Height z (m)", fontsize=18)
+            ax_cav.set_title(shape_name, fontsize=22, fontweight='bold', pad=6)
+            ax_cav.set_xlabel("Radial distance (m)", fontsize=22)
+            ax_cav.set_ylabel("Height z (m)", fontsize=22)
             ax_cav.tick_params(axis='both', labelsize=16)
             leg = ax_cav.get_legend()
             if leg is not None:
@@ -2150,13 +2314,13 @@ def plot_fracture_propagation_grouped(frac_cases):
 
             plot_propagation_depth(ax_dep, t_days, fos_d, RADIAL_DISTANCES, FOS_THRESHOLD)
             ax_dep.set_title("", fontsize=1)  # clear sub-title
-            ax_dep.set_xlabel("Time (days)", fontsize=18)
-            ax_dep.set_ylabel("FOS<1 penetration (m)", fontsize=18)
+            ax_dep.set_xlabel("Time (days)", fontsize=22)
+            ax_dep.set_ylabel("FOS<1 penetration (m)", fontsize=22)
             ax_dep.tick_params(axis='both', labelsize=16)
             # Move legend to top-right, only show once (last column)
             leg_dep = ax_dep.get_legend()
             if idx == n_shapes - 1:
-                ax_dep.legend(loc='upper right', fontsize=14, frameon=True)
+                ax_dep.legend(loc='upper right', fontsize=18, frameon=True)
             elif leg_dep is not None:
                 leg_dep.remove()
 
@@ -2332,27 +2496,27 @@ def plot_mc_failure_combined(cases, c_MPa=4.0, phi_deg=35.0):
     ax_f.set_ylabel("Max $f_{MC}$ (MPa)")
     ax_f.set_title(f"Mohr-Coulomb yield function — interlayer cells (c={c_MPa} MPa, $\\varphi$={phi_deg}°)",
                    fontsize=20, fontweight='bold')
-    ax_f.legend(loc='best', fontsize=13)
+    ax_f.legend(loc='best', fontsize=18)
     ax_f.text(0.02, 0.95, "$f > 0$: failure", transform=ax_f.transAxes,
-              fontsize=13, va='top', ha='left', style='italic', color='#d62728')
+              fontsize=16, va='top', ha='left', style='italic', color='#d62728')
 
     # Failed cell count panel (interlayer only)
     ax_n.set_ylabel("Cells with $f > 0$")
-    ax_n.set_title("Number of interlayer cells in Mohr-Coulomb failure", fontsize=18)
-    ax_n.legend(loc='best', fontsize=13)
+    ax_n.set_title("Number of interlayer cells in Mohr-Coulomb failure", fontsize=22)
+    ax_n.legend(loc='best', fontsize=18)
 
     # Pressure schedule panel
     ax_p.set_ylabel("P (MPa)")
     if not pressure_plotted:
         ax_p.text(0.5, 0.5, "No pressure schedule", ha="center", va="center",
-                  transform=ax_p.transAxes, fontsize=12)
+                  transform=ax_p.transAxes, fontsize=16)
 
     # MC FOS panel (interlayer only)
     ax_fos.axhline(1.0, color='k', linewidth=0.8, linestyle='--', alpha=0.5)
     ax_fos.set_ylabel("Min MC FOS (interlayer)")
     ax_fos.set_xlabel("Time (days)")
-    ax_fos.set_title("Mohr-Coulomb factor of safety — interlayer cells only", fontsize=18)
-    ax_fos.legend(loc='best', fontsize=13)
+    ax_fos.set_title("Mohr-Coulomb factor of safety — interlayer cells only", fontsize=22)
+    ax_fos.legend(loc='best', fontsize=18)
 
     fig.tight_layout()
     outpath = os.path.join(OUT_DIR, "mc_failure.png")

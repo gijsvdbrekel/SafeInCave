@@ -16,9 +16,12 @@ KNOWN_PRESSURES = {
     "sinus", "irregular", "csv_profile",
 }
 KNOWN_SCENARIOS = {
-    # current names: Scenario A/B/B_freecalibr × SafeInCave/Munson-Dawson
+    # current names: Model × Scenario A/B/B_freecalibr
+    # (SafeInCave constitutive model is now called TUD2023)
+    "TUD2023_A", "MD_A", "TUD2023_B", "MD_B",
+    "TUD2023_B_freecalibr", "MD_B_freecalibr",
+    # legacy names (kept so old folders still classify correctly)
     "A_SIC", "A_MD", "B_SIC", "B_MD", "B_freecalibr_SIC", "B_freecalibr_MD",
-    # legacy names
     "desai_only", "disloc_old_only", "disloc_new_only", "full",
     "full_minus_desai", "full_md", "full_minus_ps", "md_only", "md_steady_only",
 }
@@ -53,9 +56,12 @@ def _infer_cavern_type_from_case_name(case_name: str) -> str | None:
 
 def _nice_cavern_label(cavern_type_or_group: str) -> str:
     low = (cavern_type_or_group or "").lower()
-    # Extract volume suffix (e.g. "600", "1200") if present
+    # Extract volume suffix (e.g. "600", "1200") if present. The numeric
+    # suffix is in "k m³" — spell it out so readers don't mistake it for a
+    # count or dimension.
     m = re.search(r"(600|1200)$", low)
-    size_tag = f" ({m.group(1)}k)" if m else ""
+    _VOLUME_LABELS = {"600": "600,000 m³", "1200": "1,200,000 m³"}
+    size_tag = f" ({_VOLUME_LABELS[m.group(1)]})" if m else ""
     if low.startswith("asymmetric"):
         return f"Asymmetric{size_tag}"
     if low.startswith("directcirculation"):
@@ -73,13 +79,13 @@ def _nice_cavern_label(cavern_type_or_group: str) -> str:
     if low.startswith("fastleached"):
         return f"Fast-leached{size_tag}"
     if low.startswith("tubefailure"):
-        return f"Tube-failure{size_tag}"
+        return f"String-failure{size_tag}"
     if low == "spike_none":
-        return "Spike-none"
+        return "Homogeneous"
     if low == "spike_upper":
-        return "Spike-upper"
+        return "Heterogeneous_above"
     if low == "spike_lower":
-        return "Spike-lower"
+        return "Heterogeneous_below"
     return (cavern_type_or_group or "").split("_")[0] if cavern_type_or_group else "Unknown"
 
 def read_case_metadata(case_path: str) -> dict:
@@ -123,7 +129,8 @@ def read_case_metadata(case_path: str) -> dict:
         if mat_sc is not None and model is not None:
             sc = str(mat_sc).strip()                   # "A", "B", or "B_freecalibr"
             is_md = "munson" in str(model).lower()
-            meta["scenario_preset"] = f"{sc}_MD" if is_md else f"{sc}_SIC"
+            # New convention: <model>_<scenario>. SafeInCave model is labelled TUD2023.
+            meta["scenario_preset"] = f"MD_{sc}" if is_md else f"TUD2023_{sc}"
 
         # Legacy: old "scenario" key
         if meta["scenario_preset"] is None:
@@ -155,8 +162,13 @@ def read_case_metadata(case_path: str) -> dict:
                 break
 
     if meta["scenario_preset"] is None:
-        # New-style S{A/B}_{SIC/MD} tags in folder name, e.g. "sa_sic", "sb_md"
-        _SA_MAP = {"sb_freecalibr_sic": "B_freecalibr_SIC", "sb_freecalibr_md": "B_freecalibr_MD", "sa_sic": "A_SIC", "sa_md": "A_MD", "sb_sic": "B_SIC", "sb_md": "B_MD"}
+        # New-style S{A/B}_{SIC/MD} tags in folder name, e.g. "sa_sic", "sb_md".
+        # Remapped to the <model>_<scenario> naming (TUD2023 for SafeInCave).
+        _SA_MAP = {
+            "sb_freecalibr_sic": "TUD2023_B_freecalibr", "sb_freecalibr_md": "MD_B_freecalibr",
+            "sa_sic": "TUD2023_A", "sa_md": "MD_A",
+            "sb_sic": "TUD2023_B", "sb_md": "MD_B",
+        }
         for tag, preset in _SA_MAP.items():
             if f"_{tag}_" in name or name.endswith(f"_{tag}"):
                 meta["scenario_preset"] = preset

@@ -102,7 +102,7 @@ def _nice_cavern_label(cavern_key):
     if low.startswith("fastleached"):
         return "Fast-leached"
     if low.startswith("tubefailure"):
-        return "Tube-failure"
+        return "String-failure"
     return cavern_key or "Unknown"
 
 
