@@ -551,7 +551,7 @@ class Simulator_M(Simulator):
 	def __init__(self, eq_mom: LinearMomentum, 
 					   t_control: TimeControllerBase,
 					   outputs: list[SaveFields],
-					   caverns: CavernHandler=None,
+					   caverns: CavernHandler | None = None,
 					   compute_elastic_response: bool=True):
 		self.eq_mom = eq_mom
 		self.t_control = t_control
@@ -561,6 +561,7 @@ class Simulator_M(Simulator):
 
 		if caverns == None:
 			self.caverns = CavernHandler()
+
 		
 		ScreenPrinter.reset_instance()
 		self.screen = ScreenPrinter(self.eq_mom.grid, self.eq_mom.solver, self.eq_mom.mat, self.outputs, t_control.time_unit)
