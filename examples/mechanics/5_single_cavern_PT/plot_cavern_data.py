@@ -3,7 +3,6 @@ import safeincave.PostProcessingTools as post
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-import meshio
 
 hour = 60*60
 day = 24*hour

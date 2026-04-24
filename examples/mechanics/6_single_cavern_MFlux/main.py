@@ -139,7 +139,6 @@ def main():
                             P_init = 0.4*p_mid,
                             T_init = 320.0,
                             T_in = 300.0,
-                            Q_in = 0.0,
                             Mflux_values = data["flow_rate"],
                             time_values = data["time"],
                             direction = 2,
