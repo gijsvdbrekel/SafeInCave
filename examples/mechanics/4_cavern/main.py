@@ -130,9 +130,8 @@ def run(formulation):
 
 	# Calculate lithostatic pressure at the cavern's roof
 	cavern_roof = ovb_thickness + hanging_wall
-	p_roof = 0 - salt_density*g*hanging_wall - ovb_density*g*ovb_thickness
-
-	print(0.2*p_roof, 0.8*p_roof, cavern_roof)
+	p_roof = 0 + salt_density*abs(g)*hanging_wall + ovb_density*abs(g)*ovb_thickness
+	print(0.2*p_roof/1e6, 0.8*p_roof/1e6, cavern_roof)
 
 	# Impose loading condition on the cavern walls
 	bc_cavern = momBC.NeumannBC(boundary_name = "Cavern",
@@ -151,11 +150,6 @@ def run(formulation):
 	# Equilibrium output folder
 	ouput_folder_equilibrium = os.path.join(output_folder, "equilibrium")
 
-	# Print output folder
-	if MPI.COMM_WORLD.rank == 0:
-		print(ouput_folder_equilibrium)
-		sys.stdout.flush()
-
 	# Create output handlers
 	output_mom = sf.SaveFields(mom_eq)
 	output_mom.set_output_folder(ouput_folder_equilibrium)
@@ -166,7 +160,7 @@ def run(formulation):
 	outputs = [output_mom]
 
 	# Define simulator
-	sim = sf.Simulator_M(mom_eq, tc_eq, outputs, True)
+	sim = sf.Simulator_M(mom_eq, tc_eq, outputs, compute_elastic_response=True)
 	sim.run()
 
 
@@ -205,11 +199,6 @@ def run(formulation):
 	# Define output folder
 	output_folder_operation = os.path.join(output_folder, "operation")
 
-	# Print output folder
-	if MPI.COMM_WORLD.rank == 0:
-		print(output_folder_operation)
-		sys.stdout.flush()
-
 	# Create output handlers
 	output_mom = sf.SaveFields(mom_eq)
 	output_mom.set_output_folder(output_folder_operation)
@@ -219,14 +208,14 @@ def run(formulation):
 	outputs = [output_mom]
 
 	# Define simulator
-	sim = sf.Simulator_M(mom_eq, tc_op, outputs, False)
-	# sim.run()
+	sim = sf.Simulator_M(mom_eq, tc_op, outputs, compute_elastic_response=False)
+	sim.run()
 
 
 def main():
 	run("P1")
-	run("P1P1")
-	run("P1P1_Stab")
+	# run("P1P1")
+	# run("P1P1_Stab")
 
 if __name__ == '__main__':
 	main()

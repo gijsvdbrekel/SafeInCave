@@ -870,7 +870,7 @@ class LinearMomentum(LinearMomentumBase):
         A.assemble()
 
         # Build linear form
-        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs))
+        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + sum(self.bc.cavern_bcs))
         b = fem_petsc.assemble_vector(linear_form)
         fem_petsc.apply_lifting(b, [bilinear_form], [self.bc.dirichlet_bcs])
         b.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
@@ -965,7 +965,7 @@ class LinearMomentum(LinearMomentumBase):
 
         # Build linear form
         b_rhs = ufl.inner(dotdot_ufl(self.CT, self.eps_rhs), epsilon(self.u_))*self.dx
-        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + b_rhs)
+        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + sum(self.bc.cavern_bcs) + b_rhs)
         b = fem_petsc.assemble_vector(linear_form)
         fem_petsc.apply_lifting(b, [bilinear_form], [self.bc.dirichlet_bcs])
         b.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
@@ -1124,7 +1124,7 @@ class LinearMomentumMixed(LinearMomentumBase):
         A.assemble()
 
         # Build linear form
-        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs))
+        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + sum(self.bc.cavern_bcs))
         b = do.fem.petsc.assemble_vector(linear_form)
         do.fem.petsc.apply_lifting(b, [bilinear_form], [self.bc.dirichlet_bcs])
         b.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
@@ -1175,7 +1175,7 @@ class LinearMomentumMixed(LinearMomentumBase):
         b_u = ufl.inner(dotdot_ufl(self.CT_tilde, self.eps_rhs_tilde), epsilon(self.u_))*self.dx
         b_p = self.K*(phi2*(self.T_vol*self.p_k + self.B_vol) - self.eps_ne_vol - self.eps_th_vol)*self.p_*self.dx
         # b_p = bp*self.p_*self.dx
-        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + b_u + b_p)
+        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + sum(self.bc.cavern_bcs) + b_u + b_p)
         b = do.fem.petsc.assemble_vector(linear_form)
         do.fem.petsc.apply_lifting(b, [bilinear_form], [self.bc.dirichlet_bcs])
         b.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)

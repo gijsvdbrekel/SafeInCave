@@ -16,7 +16,9 @@ from .HeatEquation import HeatDiffusion
 from .MomentumEquation import LinearMomentumBase, LinearMomentum, LinearMomentumMixed
 from .MaterialProps import Material, NonElasticElement, Spring, Thermoelastic, Viscoelastic, DislocationCreep, PressureSolutionCreep, ViscoplasticDesai
 from .OutputHandler import SaveFields
-from .Simulators import Simulator_TM, Simulator_T, Simulator_M, Simulator_GUI
+from .Thermodynamics import CavernThermodynamics
+from . import CavernBC
+from .Simulators import Simulator_TM, Simulator_T, Simulator_M, Simulator_Full, Simulator_GUI
 from .ScreenOutput import ScreenPrinter
 from .TimeHandler import TimeControllerBase, TimeController, TimeControllerParabolic
 from . import MomentumBC
@@ -27,7 +29,6 @@ from . import Utils
 
 __all__ = [
     "GridHandlerGMSH",
-    "HeatBC",
     "HeatDiffusion",
     "LinearMomentumBase",
     "LinearMomentum",
@@ -44,6 +45,7 @@ __all__ = [
     "Simulator_TM",
     "Simulator_T",
     "Simulator_M",
+    "Simulator_Full",
     "Simulator_GUI",
     "ScreenPrinter",
     "TimeControllerBase",
@@ -51,10 +53,12 @@ __all__ = [
     "TimeControllerParabolic",
     "MomentumBC",
     "HeatBC",
+    "CavernBC",
+    "CavernThermodynamics",
     "PostProcessingTools",
     "Utils",
 ]
 
 __author__ = "Hermínio T. Honório"
-__email__ = "h.tasinafohonor@tudelft.nl"
+__email__ = "h.tasinafohonorio@tno.nl"
 

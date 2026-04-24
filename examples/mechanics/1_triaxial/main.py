@@ -191,9 +191,9 @@ def run(formulation):
 
 
 def main():
-	# run("P1")
+	run("P1")
 	# run("P1P1")
-	run("P1P1_Stab")
+	# run("P1P1_Stab")
 
 
 if __name__ == '__main__':

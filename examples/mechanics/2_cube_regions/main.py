@@ -157,7 +157,7 @@ def run(formulation):
 		print(output_folder)
 
 	# Define simulator
-	sim = Simulator_M(mom_eq, t_control, outputs, True)
+	sim = Simulator_M(mom_eq, t_control, outputs, compute_elastic_response=True)
 	sim.run()
 
 
