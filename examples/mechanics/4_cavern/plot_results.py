@@ -256,15 +256,8 @@ def plot_probes(ax, probes):
 		ax.scatter(probe[0], probe[2], c=COLORS[i], edgecolors="black", zorder=10000)
 
 
-def main():
+def dashboard(output_folder):
 	fig, ax_logo, ax_info_1, ax_info_2, ax_info_3, ax0, ax00, ax01, ax02, ax10, ax11, ax12, ax30, ax31, ax32 = create_layout()
-
-	# Specify folder to load the results from
-	output_folder = os.path.join("output", "case_0", "P1", "operation")
-	output_folder = os.path.join("output", "case_0", "P1P1", "operation")
-	output_folder = os.path.join("output", "case_0", "P1P1_Stab_E", "operation")
-	output_folder = os.path.join("output", "case_0", "P1P1_Stab_E_Star", "operation")
-	# output_folder = os.path.join("output", "case_gui", "operation")
 
 	# Probe points around the cavern wall
 	depth = 800 + 430
@@ -339,6 +332,16 @@ def main():
 
 	plt.show()
 
+
+def main():
+	# Specify folder to load the results from
+	output_folder = os.path.join("output", "case_0", "P1", "operation")
+	# output_folder = os.path.join("output", "case_0", "P1P1", "operation")
+	# output_folder = os.path.join("output", "case_0", "P1P1_Stab", "operation")
+	# output_folder = os.path.join("output", "case_gui", "operation")
+
+	# Plot results                        
+	dashboard(output_folder)
 
 if __name__ == '__main__':
 	main()

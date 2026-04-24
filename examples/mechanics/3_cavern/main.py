@@ -201,7 +201,7 @@ def run(formulation):
 	outputs = [output_mom]
 
 	# Define simulator
-	sim = sf.Simulator_M(mom_eq, tc_equilibrium, outputs, True)
+	sim = sf.Simulator_M(mom_eq, tc_equilibrium, outputs, compute_elastic_response=True)
 	sim.run()
 
 
@@ -312,12 +312,12 @@ def run(formulation):
 	outputs = [output_mom]
 
 	# Define simulator
-	sim = sf.Simulator_M(mom_eq, tc_operation, outputs, False)
+	sim = sf.Simulator_M(mom_eq, tc_operation, outputs, compute_elastic_response=False)
 	sim.run()
 
 
 def main():
-	run("P1")
+	# run("P1")
 	# run("P1P1")
 	run("P1P1_Stab")
 
