@@ -290,7 +290,7 @@ class CavernHandler:
         self.caverns_T = []
         self.caverns_PT = []
         self.caverns_MFlux = []
-        self.output_folder = "."
+        self.output_folder = None
 
 
     def add_cavern(self, cavern: Cavern) -> None:
@@ -355,7 +355,8 @@ class CavernHandler:
             cavern_data[cavern.cavern_name]["Type"] = cavern.type
             cavern_data[cavern.cavern_name]["Fluid"] = cavern.fluid
             cavern_data[cavern.cavern_name]["Data"] = cavern.create_data()
-        save_json(cavern_data, os.path.join(self.output_folder, "cavern_data.json"))
+        if self.output_folder is not None:
+            save_json(cavern_data, os.path.join(self.output_folder, "cavern_data.json"))
 
 
 
