@@ -55,7 +55,7 @@ EQUILIBRIUM_DT_HOURS = 0.5
 #   Special caverns (CAVERN_SIZE is ignored):
 #     "A5"           - Zuidwending cavern A5 (~1.000.000k m³, depth 1140-1510m)
 
-CAVERN_TYPE = "reversedcirculation"
+CAVERN_TYPE = "tilted"
 
 # CAVERN_SIZE: Volume in thousands of m³ (ignored for A5)
 #   600  - 600,000 m³ volume
@@ -147,10 +147,10 @@ MAX_DP_MPA      = 0.2              # Max pressure change per step (MPa)
 SCHEDULE_MODE = "stretch"
 
 # OPERATION_DAYS: Total simulation duration in days (operation phase only)
-OPERATION_DAYS = 365
+OPERATION_DAYS = 366
 
 # N_CYCLES: Number of pressure cycles (industry: sinusoidal; transport: 2-day cycles)
-N_CYCLES = 22
+N_CYCLES = 21
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
 dt_hours = 2
@@ -166,7 +166,7 @@ RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
 MATERIAL_SCENARIO = "B"             # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
-USE_MUNSON_DAWSON = False         # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
+USE_MUNSON_DAWSON = True         # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
 USE_THERMAL = False

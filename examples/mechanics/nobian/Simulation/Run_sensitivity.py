@@ -142,6 +142,7 @@ SENSITIVITY_CASES = {
     "no_pressure_solution": {"MATERIAL_OVERRIDES": {"disable_pressure_solution": True}},
     "no_kelvin":            {"USE_MUNSON_DAWSON": False, "MATERIAL_OVERRIDES": {"disable_kelvin": True}},
     "no_desai":             {"USE_MUNSON_DAWSON": False, "MATERIAL_OVERRIDES": {"disable_desai": True}},
+    "no_kelvin_no_desai":   {"USE_MUNSON_DAWSON": False, "MATERIAL_OVERRIDES": {"disable_kelvin": True, "disable_desai": True}},
 
     # ── Dimension 6: Numerical dt ───────────────────────────────────────────
     "dt_half":             {"dt_hours": 1.0},

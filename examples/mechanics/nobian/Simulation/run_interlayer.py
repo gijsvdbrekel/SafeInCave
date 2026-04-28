@@ -1602,13 +1602,13 @@ def add_mohr_coulomb_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, in
         "anhydrite": {
             "cohesion_mpa": 4.0,          # MPa (Cała et al. 2018)
             "friction_angle_deg": 35.0,    # degrees
-            "dilation_angle_deg": 7.0,     # degrees (Rowe dilatancy, φ_cv≈29° from Pluymakers et al.)
+            "dilation_angle_deg": 0.0,     # degrees (Rowe dilatancy, φ_cv≈29° from Pluymakers et al.)
             "sigma_t_mpa": 1.0,           # MPa tensile strength
         },
         "mudstone": {
             "cohesion_mpa": 2.0,
             "friction_angle_deg": 25.0,
-            "dilation_angle_deg": 5.0,
+            "dilation_angle_deg": 0.0,
             "sigma_t_mpa": 0.5,
         },
     }
@@ -1694,13 +1694,13 @@ def add_matsuoka_nakai_interlayers(mat, mom_eq, salt_cells, interlayer_1_cells, 
         "anhydrite": {
             "cohesion_mpa": 4.0,
             "friction_angle_deg": 35.0,
-            "dilation_angle_deg": 7.0,
+            "dilation_angle_deg": 0.0,
             "sigma_t_mpa": 1.0,
         },
         "mudstone": {
             "cohesion_mpa": 2.0,
             "friction_angle_deg": 25.0,
-            "dilation_angle_deg": 5.0,
+            "dilation_angle_deg": 0.0,
             "sigma_t_mpa": 0.5,
         },
     }

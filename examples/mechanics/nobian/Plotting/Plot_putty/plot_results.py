@@ -57,11 +57,11 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["spike_lower", "spike_upper", "spike_none"],
-    "pressure": ["csv"],
-    "scenario": ["MD_A"],
-    "n_cycles": None,
-    "operation_days": 1095,
+    "caverns": ["regular1200"],
+    "pressure": ["industry"],
+    "scenario": [ "MD_B", "TUD2023_B"],
+    "n_cycles": 21,
+    "operation_days": None,
     "case_contains": None,
 }
 
@@ -90,15 +90,15 @@ SELECT = {
 #                         Linestyle = solid for 1,200,000 m³, dashed for 600,000 m³.
 #                         Label = "TUD2023_B (1,200,000 m³)" etc.
 
-PLOT_MODE = "compare_shapes"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
+PLOT_MODE = "compare_scenarios"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
 
 FIGURES = {
     "convergence": True,          # Figure 1: volume convergence
-    "stress_state": False,         # Figure 2: p-q stress paths
+    "stress_state": True,         # Figure 2: p-q stress paths
     "fos": False,                  # Figure 3: FOS over time
     "fracture_propagation": False, # Figure 4: dilatancy zone analysis
     "fos_summary": False,          # Figure 5: global min FOS + 4 pressure profiles
-    "mc_failure": True,            # Figure 6: Mohr-Coulomb failure (interlayer cases)
+    "mc_failure": False,            # Figure 6: Mohr-Coulomb failure (interlayer cases)
 }
 
 # Stress state options
@@ -129,6 +129,11 @@ OUT_DIR = os.path.join(ROOT, "_figures")
 SHOW = False
 DPI = 300
 CAVERN_PHYS_TAG = 29
+
+# Amplification factor for the initial-vs-final wall profile subplot in
+# plot_convergence_per_cavern. Raise to exaggerate sub-percent radial changes
+# so they are visible at print size; factor is annotated on the plot.
+WALL_PROFILE_AMPLIFICATION = 100.0
 
 # =============================================================================
 # END OF USER CONFIGURATION
@@ -368,6 +373,57 @@ def read_pressure_schedule(case_folder: str):
 SIZE_LINESTYLES = {"1200k": "-", "600k": "--"}
 
 
+def _extract_model_only(scenario_preset):
+    """Return just the constitutive-model name from a preset key.
+
+    'TUD2023_B' -> 'TUD2023', 'MD_B_freecalibr' -> 'MD'. Legacy forms where the
+    parameter scenario comes first ('A_SIC', 'B_MD') are mapped to the new
+    model name ('TUD2023', 'MD') so figures stay consistent across runs.
+    """
+    if not scenario_preset:
+        return ""
+    s = str(scenario_preset)
+    head = s.split("_", 1)[0].upper()
+    if head == "SIC":
+        return "TUD2023"
+    if head in ("A", "B"):
+        # legacy "A_SIC" / "B_MD": the model is the second token
+        parts = s.split("_")
+        if len(parts) >= 2:
+            tail = parts[-1].upper()
+            if tail == "SIC":
+                return "TUD2023"
+            if tail == "MD":
+                return "MD"
+        return head  # fallback
+    return head
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Depth conversion: mesh z-coordinate (0 at bottom, 660 at top) → actual
+# depth-from-surface (m), based on the overburden above each cavern size.
+# 0.6 Mm³ caverns: 200 m sand + 625 m salt above model → model top at 825 m.
+# 1.2 Mm³ caverns: 200 m sand + 708 m salt above model → model top at 908 m.
+# ──────────────────────────────────────────────────────────────────────────
+DOMAIN_HEIGHT_M = 660.0
+OVERBURDEN_TOP_DEPTH_M = {"1200k": 908.0, "600k": 825.0}
+
+
+def z_mesh_to_depth_m(z_mesh, cavern_label):
+    """Convert mesh z (0 = bottom, 660 = top) to depth from surface (m)."""
+    tag = _extract_size_tag(cavern_label) or "1200k"
+    top_depth = OVERBURDEN_TOP_DEPTH_M.get(tag, 908.0)
+    return top_depth + (DOMAIN_HEIGHT_M - np.asarray(z_mesh, dtype=float))
+
+
+def add_panel_label(ax, letter, fontsize=20):
+    """Add a bold (A)/(B)/... label to the top-left of a subplot."""
+    ax.text(0.02, 0.98, f"({letter})", transform=ax.transAxes,
+            fontsize=fontsize, fontweight='bold', va='top', ha='left',
+            bbox=dict(facecolor='white', alpha=0.85, edgecolor='none', pad=3),
+            zorder=100)
+
+
 def _extract_size_tag(cavern_label):
     """Extract '600k' or '1200k' from a cavern label.
 
@@ -415,7 +471,16 @@ def get_case_color_and_style(cavern_label, scenario_preset, pressure_scenario=No
 
 
 def get_case_label(meta, mode=None):
-    """Return a human-readable label for a case based on the active PLOT_MODE."""
+    """Return a human-readable label for a case based on the active PLOT_MODE.
+
+    Rules (thesis convention):
+      - Never include the parameter scenario (A / B / B_freecalibr) — that goes
+        in the figure caption.
+      - compare_scenarios mode: show the constitutive model only (TUD2023 / MD).
+      - All other modes: show the cavern shape / volume only.
+      - Pressure scenario still shown in compare_pressures (distinguishes the
+        lines when the whole point of the figure IS comparing pressures).
+    """
     if mode is None:
         mode = PLOT_MODE.lower().replace(" ", "_")
     cav = meta.get("cavern_label", "")
@@ -424,12 +489,11 @@ def get_case_label(meta, mode=None):
     if mode == "compare_pressures":
         return PRESSURE_LABELS.get(ps, ps or "unknown")
     elif mode == "compare_sizes":
-        size_tag = _extract_size_tag(cav) or ""
-        return f"{sc} ({size_tag})" if sc else f"{cav}"
+        return cav
     elif mode == "compare_scenarios":
-        return f"{sc}" if sc is not None else meta.get("case_name", "")
+        return _extract_model_only(sc) or meta.get("case_name", "")
     else:  # compare_shapes
-        return f"{cav} | {sc}" if sc is not None else f"{cav}"
+        return cav
 
 
 def get_series_key(meta):
@@ -1302,9 +1366,11 @@ def plot_convergence_combined(cases):
         if ll not in uniq:
             uniq[ll] = hh
     if uniq:
-        ax1.legend(uniq.values(), uniq.keys(), loc="upper center",
-                   bbox_to_anchor=(0.5, 1.0), ncol=min(3, len(uniq)),
-                   fontsize=18, frameon=True)
+        # Place the legend ABOVE the figure (not on the axes) so it never gets
+        # clipped when there are many cases (e.g. Homogeneous vs Heterogeneous).
+        fig.legend(uniq.values(), uniq.keys(), loc="upper center",
+                   bbox_to_anchor=(0.5, 0.995),
+                   ncol=min(4, len(uniq)), fontsize=18, frameon=True)
 
     # Plot pressure schedule(s) — overlay all distinct schedules in compare_pressures
     _plotted_pressures = set()
@@ -1325,7 +1391,10 @@ def plot_convergence_combined(cases):
     ax2.set_xlabel("Time (days)")
     ax2.grid(True, alpha=0.3)
 
-    fig.tight_layout()
+    add_panel_label(ax1, "A")
+    add_panel_label(ax2, "B")
+
+    fig.tight_layout(rect=[0, 0, 1, 0.86])
 
     outname = f"convergence_combined_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
     outpath = os.path.join(OUT_DIR, outname.replace(" ", ""))
@@ -1371,6 +1440,9 @@ def plot_convergence_separate(cases):
         ax2.set_ylabel("Pressure (MPa)")
         ax2.set_xlabel("Time (days)")
         ax2.grid(True, alpha=0.3)
+
+        add_panel_label(ax1, "A")
+        add_panel_label(ax2, "B")
 
         safe_name = c.get("case_name", "unknown").replace(" ", "_")
         outname = f"convergence_{safe_name}.png"
@@ -1448,10 +1520,12 @@ def plot_convergence_per_cavern(cases, group_fn=None):
         ax2.set_xlabel("Time (days)")
         ax2.grid(True, alpha=0.3)
 
-        # Wall-normal displacement Δn(z): positive = inward along the local
-        # outward normal (i.e., convergence). Using the wall normal instead of
-        # a radial distance avoids the r≥0 artefact at the roof and floor tips.
+        # Wall profile: initial vs final shape. Displacement is amplified by
+        # WALL_PROFILE_AMPLIFICATION so that <1 % radial changes are visible;
+        # the factor is annotated on the subplot so readers aren't misled.
+        # Y-axis is actual depth from the surface (m), growing downward.
         any_drawn = False
+        initial_drawn = False
         for c in cav_cases:
             cav_full = c.get("cavern_label", cav_label)
             sc = c.get("scenario_preset")
@@ -1463,25 +1537,37 @@ def plot_convergence_per_cavern(cases, group_fn=None):
             except Exception as e:
                 print(f"[WALL-PROFILE SKIP] {cav_label}/{sc}/{ps}: {e}")
                 continue
-            normals = compute_outward_normal_2d(wp_init)
             u_delta = wp_final - wp_init
-            dn_outward = np.einsum('ij,ij->i', u_delta, normals)
-            dn_inward_cm = -dn_outward * 100.0  # m → cm, flip sign so inward is positive
-            z = wp_init[:, 2]
-            ax3.plot(dn_inward_cm, z, color=col, linestyle=ls, linewidth=1.8,
-                     alpha=0.9, label=label)
+            wp_final_amp = wp_init + WALL_PROFILE_AMPLIFICATION * u_delta
+            depth_init = z_mesh_to_depth_m(wp_init[:, 2], cav_full)
+            depth_final = z_mesh_to_depth_m(wp_final_amp[:, 2], cav_full)
+            if not initial_drawn:
+                ax3.plot(wp_init[:, 0], depth_init, color='black', linewidth=2.0,
+                         label='Initial')
+                initial_drawn = True
+            ax3.plot(wp_final_amp[:, 0], depth_final, color=col, linestyle=ls,
+                     linewidth=1.8, alpha=0.9, label=f'Final — {label}')
             any_drawn = True
 
         if any_drawn:
-            ax3.axvline(0.0, color='black', linewidth=1.0, alpha=0.6)
-            ax3.set_xlabel("Wall-normal displacement Δn (cm)\n(positive = inward)")
-            ax3.set_ylabel("z (m)")
+            ax3.set_xlabel("x (m)")
+            ax3.set_ylabel("Depth (m)")
             ax3.grid(True, alpha=0.3)
+            ax3.invert_yaxis()  # depth grows downward
             ax3.legend(fontsize=13, frameon=True, loc='best')
+            ax3.text(0.98, 0.02,
+                     f"Displacement ×{WALL_PROFILE_AMPLIFICATION:g}",
+                     transform=ax3.transAxes, fontsize=12, style='italic',
+                     color='#444444', va='bottom', ha='right',
+                     bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray', boxstyle='round,pad=0.3'))
         else:
             ax3.text(0.5, 0.5, "No wall-profile data", ha="center", va="center",
                      transform=ax3.transAxes)
             ax3.axis("off")
+
+        add_panel_label(ax1, "A")
+        add_panel_label(ax2, "B")
+        add_panel_label(ax3, "C")
 
         safe_cav = cav_label.replace(" ", "_")
         outname = f"convergence_{safe_cav}.png"
@@ -1513,6 +1599,8 @@ def plot_stress_combined(cases, stress_by_series):
     fig, axes = plt.subplots(2, 3, figsize=(20, 11))
     axes = axes.flatten()
 
+    panel_letters = ["A", "B", "C", "D", "E", "F"]
+
     for i, ptype in enumerate(probe_types):
         ax = axes[i]
         plot_dilatancy_boundaries(ax, show_boundaries=SHOW_DILATANCY)
@@ -1531,6 +1619,7 @@ def plot_stress_combined(cases, stress_by_series):
         ax.set_ylabel("Differential stress q (MPa)", fontsize=22)
         ax.tick_params(axis='both', labelsize=20)
         ax.grid(True, alpha=0.3)
+        add_panel_label(ax, panel_letters[i])
 
     axp = axes[5]
     _plotted_pressures = set()
@@ -1555,6 +1644,7 @@ def plot_stress_combined(cases, stress_by_series):
         axp.grid(True, alpha=0.3)
         if len(_plotted_pressures) > 1:
             axp.legend(fontsize=18, frameon=True)
+        add_panel_label(axp, panel_letters[5])
 
     # Build separate legend entries for dilatancy boundaries and cavern shapes
     boundary_handles, boundary_labels = [], []
@@ -1605,6 +1695,8 @@ def plot_stress_combined(cases, stress_by_series):
 def plot_stress_separate(cases, stress_by_series):
     probe_types = ["top", "quarter", "mid", "threequarter", "bottom"]
 
+    panel_letters = ["A", "B", "C", "D", "E", "F"]
+
     for (cav, sc, ps), d in stress_by_series.items():
         fig, axes = plt.subplots(2, 3, figsize=(18, 10))
         axes = axes.flatten()
@@ -1626,6 +1718,7 @@ def plot_stress_separate(cases, stress_by_series):
             ax.set_ylabel("Differential stress q (MPa)", fontsize=22)
             ax.tick_params(axis='both', labelsize=20)
             ax.grid(True, alpha=0.3)
+            add_panel_label(ax, panel_letters[i])
 
         axp = axes[5]
         case_path = None
@@ -1643,6 +1736,7 @@ def plot_stress_separate(cases, stress_by_series):
                 axp.set_ylabel("Pressure (MPa)", fontsize=22)
                 axp.tick_params(axis='both', labelsize=20)
                 axp.grid(True, alpha=0.3)
+                add_panel_label(axp, panel_letters[5])
             else:
                 axp.text(0.5, 0.5, "No pressure data", ha="center", va="center", transform=axp.transAxes)
                 axp.axis("off")
@@ -1715,6 +1809,8 @@ def plot_stress_per_cavern(cases, group_fn=None):
         fig, axes = plt.subplots(2, 3, figsize=(20, 11))
         axes = axes.flatten()
 
+        panel_letters = ["A", "B", "C", "D", "E", "F"]
+
         for i, ptype in enumerate(probe_types):
             ax = axes[i]
             plot_dilatancy_boundaries(ax, show_boundaries=SHOW_DILATANCY)
@@ -1733,6 +1829,7 @@ def plot_stress_per_cavern(cases, group_fn=None):
             ax.set_ylabel("Differential stress q (MPa)", fontsize=22)
             ax.tick_params(axis='both', labelsize=20)
             ax.grid(True, alpha=0.3)
+            add_panel_label(ax, panel_letters[i])
 
         # Pressure subplot — overlay all distinct pressure schedules
         axp = axes[5]
@@ -1758,6 +1855,7 @@ def plot_stress_per_cavern(cases, group_fn=None):
             axp.grid(True, alpha=0.3)
             if len(_plotted_pressures) > 1:
                 axp.legend(fontsize=18, frameon=True)
+            add_panel_label(axp, panel_letters[5])
 
         # Legend above the figure, with section headers that separate cavern
         # geometries / scenarios from dilatancy criteria.
@@ -1847,8 +1945,12 @@ def _plot_fos_on_axes(axes, fos_by_case, title_prefix=""):
 
     fos_by_case: list of (label, color, linestyle, t_days, fos_by_probe)
     """
+    panel_letters = ["A", "B", "C", "D", "E", "F"]
+    probe_axes = []  # track probe subplots for shared y-limits
+
     for i, ptype in enumerate(PROBE_ORDER):
         ax = axes[i]
+        probe_axes.append(ax)
         for label, col, ls, t_days, fos_probes in fos_by_case:
             if ptype not in fos_probes:
                 continue
@@ -1867,6 +1969,7 @@ def _plot_fos_on_axes(axes, fos_by_case, title_prefix=""):
         ax.set_xlabel("Time (days)")
         ax.set_ylabel("Factor of Safety")
         ax.grid(True, alpha=0.3)
+        add_panel_label(ax, panel_letters[i])
 
     # --- Summary subplot: global field minimum FOS ---
     ax_sum = axes[5]
@@ -1886,11 +1989,31 @@ def _plot_fos_on_axes(axes, fos_by_case, title_prefix=""):
         else:
             ax_sum.plot(tx, my, linewidth=2.0, linestyle=ls, color=col, label=label)
 
-    ax_sum.axhline(y=1.0, color='red', linestyle=':', linewidth=1.5, alpha=0.8)
+    # Add labelled failure threshold line on summary (picked up by fig.legend)
+    ax_sum.axhline(y=1.0, color='red', linestyle=':', linewidth=1.5, alpha=0.8,
+                   label="FOS = 1 (failure threshold)")
     ax_sum.set_title("Min FOS (global field)")
     ax_sum.set_xlabel("Time (days)")
     ax_sum.set_ylabel("Factor of Safety")
     ax_sum.grid(True, alpha=0.3)
+    add_panel_label(ax_sum, panel_letters[5])
+
+    # --- Shared y-limits across the 5 probe subplots for easier visual comparison ---
+    lo_vals, hi_vals = [], []
+    for ax in probe_axes:
+        for line in ax.get_lines():
+            y = np.asarray(line.get_ydata(), dtype=float)
+            y = y[np.isfinite(y)]
+            if y.size:
+                lo_vals.append(y.min()); hi_vals.append(y.max())
+    if lo_vals and hi_vals:
+        y_lo = min(lo_vals); y_hi = max(hi_vals)
+        # Always include FOS = 1 in view and add a small pad
+        y_lo = min(y_lo, 1.0); y_hi = max(y_hi, 1.0)
+        pad = 0.05 * (y_hi - y_lo) if y_hi > y_lo else 0.1
+        y_lo -= pad; y_hi += pad
+        for ax in probe_axes:
+            ax.set_ylim(y_lo, y_hi)
 
     # Add legend at top of figure (works for all callers)
     handles, labels = ax_sum.get_legend_handles_labels()
@@ -2129,33 +2252,46 @@ def plot_fos_summary(cases):
 # 12. FIGURE 4 PLOTTING — Fracture propagation (always per-case)
 # =============================================================================
 
-def plot_cavern_with_probes(ax, wall_points, sample_points):
-    ax.plot(wall_points[:, 0], wall_points[:, 2], 'k-', linewidth=2, label='Cavern wall')
+def plot_cavern_with_probes(ax, wall_points, sample_points, cavern_label=None):
+    if cavern_label is not None:
+        y_wall = z_mesh_to_depth_m(wall_points[:, 2], cavern_label)
+        y_label = 'Depth (m)'
+    else:
+        y_wall = wall_points[:, 2]
+        y_label = 'Height z (m)'
+
+    ax.plot(wall_points[:, 0], y_wall, 'k-', linewidth=2, label='Cavern wall')
 
     for probe_name, dist_points in sample_points.items():
         color = PROBE_COLORS.get(probe_name, 'gray')
 
         xs = [pt[0] for _, pt in dist_points]
-        zs = [pt[2] for _, pt in dist_points]
+        if cavern_label is not None:
+            ys = [z_mesh_to_depth_m(pt[2], cavern_label) for _, pt in dist_points]
+        else:
+            ys = [pt[2] for _, pt in dist_points]
 
-        ax.plot(xs, zs, '-', color=color, linewidth=1.5, alpha=0.7)
+        ax.plot(xs, ys, '-', color=color, linewidth=1.5, alpha=0.7)
 
         for i, (dist, pt) in enumerate(dist_points):
             marker = 'o' if dist == 0 else 's'
             size = 80 if dist == 0 else 40
-            ax.scatter(pt[0], pt[2], c=color, s=size, marker=marker,
+            y_pt = z_mesh_to_depth_m(pt[2], cavern_label) if cavern_label is not None else pt[2]
+            ax.scatter(pt[0], y_pt, c=color, s=size, marker=marker,
                       edgecolors='black', linewidths=0.5, zorder=5)
 
         wall_pt = dist_points[0][1]
-        ax.annotate(probe_name, (wall_pt[0], wall_pt[2]),
+        y_wp = z_mesh_to_depth_m(wall_pt[2], cavern_label) if cavern_label is not None else wall_pt[2]
+        ax.annotate(probe_name, (wall_pt[0], y_wp),
                    textcoords="offset points", xytext=(10, 0),
                    fontsize=20, color=color, fontweight='bold')
 
     ax.set_xlabel('Radial distance (m)')
-    ax.set_ylabel('Height z (m)')
+    ax.set_ylabel(y_label)
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
-    ax.set_title('Cavern profile with sample points')
+    if cavern_label is not None:
+        ax.invert_yaxis()
 
 
 def plot_propagation_depth(ax, time_days, fos_data, radial_distances, threshold=1.0):
@@ -2205,13 +2341,12 @@ def plot_fracture_propagation(case_meta):
 
         fig, (ax_cavern, ax_depth) = plt.subplots(1, 2, figsize=(20, 10))
 
-        plot_cavern_with_probes(ax_cavern, wall_points, sample_points)
+        plot_cavern_with_probes(ax_cavern, wall_points, sample_points, cavern_label=cav)
         plot_propagation_depth(ax_depth, time_days, fos_data, RADIAL_DISTANCES, FOS_THRESHOLD)
 
-        fig.suptitle(f'Dilatancy Zone Analysis: {case_label}\n'
-                     f'(De Vries criterion, radial distances: {RADIAL_DISTANCES} m)',
-                     fontsize=20, fontweight='bold')
-        fig.tight_layout(rect=[0, 0, 1, 0.93])
+        add_panel_label(ax_cavern, "A")
+        add_panel_label(ax_depth, "B")
+        fig.tight_layout()
 
         safe_name = f"{cav}_{sc}_{ps}".replace(" ", "_").replace("/", "_").replace("None", "none")
         outname = f"fracture_propagation_FOS_{safe_name}.png"
@@ -2299,33 +2434,42 @@ def plot_fracture_propagation_grouped(frac_cases):
         if n_shapes * 2 == 2:
             axes = [axes[0], axes[1]]
 
+        panel_letters = ["A", "B", "C", "D", "E", "F"]
         for idx, (shape_name, wall_pts, samp_pts, t_days, fos_d) in enumerate(group_data):
             ax_cav = axes[idx * 2]
             ax_dep = axes[idx * 2 + 1]
 
-            plot_cavern_with_probes(ax_cav, wall_pts, samp_pts)
+            # Look up the cavern_label (with volume tag) so depth conversion works
+            cav_full = None
+            for key, c in case_by_label.items():
+                if key == shape_name or key.startswith(shape_name + " ("):
+                    cav_full = c.get("cavern_label", shape_name)
+                    if "(" in cav_full:
+                        break
+
+            plot_cavern_with_probes(ax_cav, wall_pts, samp_pts, cavern_label=cav_full)
             ax_cav.set_title(shape_name, fontsize=22, fontweight='bold', pad=6)
             ax_cav.set_xlabel("Radial distance (m)", fontsize=22)
-            ax_cav.set_ylabel("Height z (m)", fontsize=22)
+            ax_cav.set_ylabel("Depth (m)", fontsize=22)
             ax_cav.tick_params(axis='both', labelsize=16)
             leg = ax_cav.get_legend()
             if leg is not None:
                 leg.remove()
+            add_panel_label(ax_cav, panel_letters[idx * 2])
 
             plot_propagation_depth(ax_dep, t_days, fos_d, RADIAL_DISTANCES, FOS_THRESHOLD)
             ax_dep.set_title("", fontsize=1)  # clear sub-title
             ax_dep.set_xlabel("Time (days)", fontsize=22)
             ax_dep.set_ylabel("FOS<1 penetration (m)", fontsize=22)
             ax_dep.tick_params(axis='both', labelsize=16)
-            # Move legend to top-right, only show once (last column)
             leg_dep = ax_dep.get_legend()
             if idx == n_shapes - 1:
                 ax_dep.legend(loc='upper right', fontsize=18, frameon=True)
             elif leg_dep is not None:
                 leg_dep.remove()
+            add_panel_label(ax_dep, panel_letters[idx * 2 + 1])
 
-        fig.suptitle("Dilatancy zone", fontsize=20, fontweight='bold')
-        fig.tight_layout(rect=[0, 0, 1, 0.95])
+        fig.tight_layout()
 
         outname = f"dilatancy_zone_{group_label}.png"
         outpath = os.path.join(OUT_DIR, outname)
@@ -2342,11 +2486,12 @@ def plot_fracture_propagation_grouped(frac_cases):
 # =============================================================================
 
 def _get_interlayer_cell_mask(case_meta, n_cells_xdmf):
-    """Return boolean mask (in XDMF cell order) marking interlayer cells.
+    """Return (mask, volumes_xdmf) for interlayer cells.
 
-    Reads the mesh with dolfinx to get physical tags, then maps dolfinx cell
-    ordering to XDMF cell ordering via centroid matching.
-    Returns None if no interlayer cells are found (e.g. spike_none / homogeneous).
+    mask: boolean array (XDMF cell order) marking interlayer cells.
+    volumes_xdmf: float array (XDMF cell order) with per-cell tet volume (m³)
+                  for interlayer cells, 0 elsewhere.
+    Returns (None, None) if no interlayer cells are found.
     """
     from scipy.spatial import cKDTree
 
@@ -2357,16 +2502,24 @@ def _get_interlayer_cell_mask(case_meta, n_cells_xdmf):
     INTERLAYER_TAGS = {32, 34}  # Interlayer_1=32, Interlayer_2=34
     il_dfx_cells = np.where(np.isin(cell_tags.values, list(INTERLAYER_TAGS)))[0]
     if len(il_dfx_cells) == 0:
-        return None
+        return None, None
 
-    # Compute dolfinx cell centroids
+    # Compute dolfinx cell centroids and tet volumes
     tdim = mesh.topology.dim
     c2v = mesh.topology.connectivity(tdim, 0)
     X = mesh.geometry.x
     n_cells = mesh.topology.index_map(tdim).size_local
     dfx_centroids = np.zeros((n_cells, 3))
+    dfx_volumes = np.zeros(n_cells)
     for i in range(n_cells):
-        dfx_centroids[i] = X[c2v.links(i)].mean(axis=0)
+        verts = X[c2v.links(i)]
+        dfx_centroids[i] = verts.mean(axis=0)
+        # Tet volume via scalar triple product: |det([v1-v0, v2-v0, v3-v0])| / 6
+        if verts.shape[0] == 4:
+            e1 = verts[1] - verts[0]
+            e2 = verts[2] - verts[0]
+            e3 = verts[3] - verts[0]
+            dfx_volumes[i] = abs(np.dot(e1, np.cross(e2, e3))) / 6.0
 
     # Get XDMF centroids from p_elems
     p_path = path_p_xdmf(case_meta["case_path"])
@@ -2378,8 +2531,11 @@ def _get_interlayer_cell_mask(case_meta, n_cells_xdmf):
 
     il_mask = np.zeros(n_cells_xdmf, dtype=bool)
     il_mask[xdmf_idx] = True
-    print(f"  [MC] {case_meta.get('case_name')}: {il_mask.sum()} interlayer cells identified")
-    return il_mask
+    il_volumes = np.zeros(n_cells_xdmf)
+    il_volumes[xdmf_idx] = dfx_volumes[il_dfx_cells]
+    print(f"  [MC] {case_meta.get('case_name')}: {il_mask.sum()} interlayer cells, "
+          f"total volume {il_volumes.sum():.2f} m³")
+    return il_mask, il_volumes
 
 
 def _compute_mc_failure_timeseries(case_meta, c_MPa=4.0, phi_deg=35.0):
@@ -2394,12 +2550,14 @@ def _compute_mc_failure_timeseries(case_meta, c_MPa=4.0, phi_deg=35.0):
     t_days : ndarray, shape (nt,)
     f_max_il : ndarray, shape (nt,)
         Maximum f value across interlayer cells (NaN if no interlayer).
-    n_failed : ndarray, shape (nt,)
-        Number of interlayer cells with f > 0 at each timestep.
+    frac_failed_vol : ndarray, shape (nt,)
+        Fraction of total interlayer (anhydrite) volume with f > 0 at each timestep.
     fos_mc_min_il : ndarray, shape (nt,)
         Minimum MC FOS across interlayer cells (NaN if no interlayer).
     has_interlayer : bool
         Whether this case has interlayer cells.
+    total_il_vol : float
+        Total interlayer volume (m³); 0 if no interlayer.
     """
     folder = case_meta["case_path"]
 
@@ -2408,14 +2566,17 @@ def _compute_mc_failure_timeseries(case_meta, c_MPa=4.0, phi_deg=35.0):
     t_days = t_s / DAY
     nt, nc = sig33.shape[0], sig33.shape[1]
 
-    il_mask = _get_interlayer_cell_mask(case_meta, nc)
+    il_mask, il_volumes = _get_interlayer_cell_mask(case_meta, nc)
     has_interlayer = il_mask is not None and il_mask.any()
 
     if not has_interlayer:
-        return t_days, np.full(nt, np.nan), np.full(nt, np.nan), np.full(nt, np.nan), False
+        return (t_days, np.full(nt, np.nan), np.full(nt, np.nan),
+                np.full(nt, np.nan), False, 0.0)
 
     # Raw stress for interlayer cells only
     sig_il = sig33[:, il_mask, :, :]  # (nt, n_il, 3, 3)
+    vol_il = il_volumes[il_mask]  # (n_il,) per-cell volumes in interlayer order
+    total_il_vol = float(vol_il.sum())
 
     # Compute p and q from raw tensor (SafeInCave: sigma negative in compression)
     I1 = sig_il[:, :, 0, 0] + sig_il[:, :, 1, 1] + sig_il[:, :, 2, 2]
@@ -2440,8 +2601,10 @@ def _compute_mc_failure_timeseries(case_meta, c_MPa=4.0, phi_deg=35.0):
     f_il = q_MPa - alpha_F * p_MPa - k_F
     f_max_il = np.nanmax(f_il, axis=1)
 
-    # Number of cells in MC failure (f > 0)
-    n_failed = np.sum(f_il > 0, axis=1)
+    # Volume fraction of anhydrite in MC failure (f > 0)
+    failed = (f_il > 0).astype(float)  # (nt, n_il)
+    vol_failed = failed @ vol_il        # (nt,) total failed volume per timestep
+    frac_failed_vol = vol_failed / total_il_vol if total_il_vol > 0 else np.zeros(nt)
 
     # MC FOS = q_boundary / q
     q_tol = 1e-3  # MPa
@@ -2452,16 +2615,17 @@ def _compute_mc_failure_timeseries(case_meta, c_MPa=4.0, phi_deg=35.0):
     fos_mc_min_il = np.nanmin(
         np.where(np.isfinite(fos_mc_il), fos_mc_il, np.nan), axis=1)
 
-    return t_days, f_max_il, n_failed, fos_mc_min_il, has_interlayer
+    return t_days, f_max_il, frac_failed_vol, fos_mc_min_il, has_interlayer, total_il_vol
 
 
 def plot_mc_failure_combined(cases, c_MPa=4.0, phi_deg=35.0):
     """Plot MC failure: yield function f, failed cell count, pressure, and FOS for interlayer cells."""
-    fig, axes = plt.subplots(4, 1, figsize=(14, 16), sharex=True,
-                             gridspec_kw={"height_ratios": [3, 3, 1, 3]})
-    ax_f, ax_n, ax_p, ax_fos = axes
+    fig, axes = plt.subplots(3, 1, figsize=(14, 13), sharex=True,
+                             gridspec_kw={"height_ratios": [3, 3, 1]})
+    ax_f, ax_n, ax_p = axes
 
     pressure_plotted = False
+    total_vol_by_label = {}  # for footer annotation: label -> total interlayer volume
     for c in cases:
         label = get_case_label(c)
         color, _ = get_case_color_and_style(
@@ -2470,7 +2634,7 @@ def plot_mc_failure_combined(cases, c_MPa=4.0, phi_deg=35.0):
         ls = "-"  # always solid for MC failure plot
 
         try:
-            t_days, f_max_il, n_failed, fos_mc_min_il, has_il = \
+            t_days, f_max_il, frac_failed_vol, fos_mc_min_il, has_il, total_il_vol = \
                 _compute_mc_failure_timeseries(c, c_MPa, phi_deg)
         except Exception as e:
             print(f"[WARN] MC failure skipped for {c.get('case_name')}: {e}")
@@ -2481,8 +2645,8 @@ def plot_mc_failure_combined(cases, c_MPa=4.0, phi_deg=35.0):
             continue
 
         ax_f.plot(t_days, f_max_il, color=color, linestyle=ls, label=label)
-        ax_n.plot(t_days, n_failed, color=color, linestyle=ls, label=label)
-        ax_fos.plot(t_days, fos_mc_min_il, color=color, linestyle=ls, label=label)
+        ax_n.plot(t_days, 100.0 * frac_failed_vol, color=color, linestyle=ls, label=label)
+        total_vol_by_label[label] = total_il_vol
 
         # Plot pressure schedule (once — same for all cases with same pressure)
         if not pressure_plotted:
@@ -2492,31 +2656,36 @@ def plot_mc_failure_combined(cases, c_MPa=4.0, phi_deg=35.0):
                 pressure_plotted = True
 
     # Yield function panel (interlayer only)
-    ax_f.axhline(0, color='k', linewidth=0.8, linestyle='--', alpha=0.5)
+    # Labelled axhline so the failure-threshold explanation lives in the legend
+    # (no inline text over the curves).
+    ax_f.axhline(0, color='#d62728', linewidth=1.2, linestyle='--', alpha=0.8,
+                 label="$f_{MC} = 0$ (failure threshold; $f>0$: failure)")
     ax_f.set_ylabel("Max $f_{MC}$ (MPa)")
     ax_f.set_title(f"Mohr-Coulomb yield function — interlayer cells (c={c_MPa} MPa, $\\varphi$={phi_deg}°)",
                    fontsize=20, fontweight='bold')
-    ax_f.legend(loc='best', fontsize=18)
-    ax_f.text(0.02, 0.95, "$f > 0$: failure", transform=ax_f.transAxes,
-              fontsize=16, va='top', ha='left', style='italic', color='#d62728')
+    ax_f.legend(loc='best', fontsize=16)
 
-    # Failed cell count panel (interlayer only)
-    ax_n.set_ylabel("Cells with $f > 0$")
-    ax_n.set_title("Number of interlayer cells in Mohr-Coulomb failure", fontsize=22)
-    ax_n.legend(loc='best', fontsize=18)
+    # Volume-fraction panel (interlayer only)
+    ax_n.set_ylabel("Anhydrite in MC failure (vol. %)")
+    ax_n.set_ylim(0.0, 10.0)
+    ax_n.set_title("Fraction of interlayer (anhydrite) volume in Mohr-Coulomb failure",
+                   fontsize=20)
+    ax_n.legend(loc='best', fontsize=16)
+
+    # Show total interlayer volume per case under the fraction panel so the
+    # reader can convert percent back to absolute m³ if needed.
+    if total_vol_by_label:
+        summary = "  ".join(f"{lbl}: {v:,.0f} m³" for lbl, v in total_vol_by_label.items())
+        ax_n.text(0.99, 0.98, f"Total interlayer volume — {summary}",
+                  transform=ax_n.transAxes, fontsize=12, style='italic',
+                  va='top', ha='right', color='#444444')
 
     # Pressure schedule panel
     ax_p.set_ylabel("P (MPa)")
+    ax_p.set_xlabel("Time (days)")
     if not pressure_plotted:
         ax_p.text(0.5, 0.5, "No pressure schedule", ha="center", va="center",
                   transform=ax_p.transAxes, fontsize=16)
-
-    # MC FOS panel (interlayer only)
-    ax_fos.axhline(1.0, color='k', linewidth=0.8, linestyle='--', alpha=0.5)
-    ax_fos.set_ylabel("Min MC FOS (interlayer)")
-    ax_fos.set_xlabel("Time (days)")
-    ax_fos.set_title("Mohr-Coulomb factor of safety — interlayer cells only", fontsize=22)
-    ax_fos.legend(loc='best', fontsize=18)
 
     fig.tight_layout()
     outpath = os.path.join(OUT_DIR, "mc_failure.png")
