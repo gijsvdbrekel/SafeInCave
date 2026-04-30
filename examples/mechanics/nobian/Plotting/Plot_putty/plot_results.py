@@ -57,10 +57,10 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["regular1200"],
+    "caverns": ["tilted1200"],
     "pressure": ["industry"],
-    "scenario": [ "MD_B", "TUD2023_B"],
-    "n_cycles": 21,
+    "scenario": [ "MD_B"],
+    "n_cycles": None,
     "operation_days": None,
     "case_contains": None,
 }
@@ -93,9 +93,9 @@ SELECT = {
 PLOT_MODE = "compare_scenarios"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
 
 FIGURES = {
-    "convergence": True,          # Figure 1: volume convergence
-    "stress_state": True,         # Figure 2: p-q stress paths
-    "fos": False,                  # Figure 3: FOS over time
+    "convergence": False,          # Figure 1: volume convergence
+    "stress_state": False,         # Figure 2: p-q stress paths
+    "fos": True,                  # Figure 3: FOS over time
     "fracture_propagation": False, # Figure 4: dilatancy zone analysis
     "fos_summary": False,          # Figure 5: global min FOS + 4 pressure profiles
     "mc_failure": False,            # Figure 6: Mohr-Coulomb failure (interlayer cases)
@@ -112,7 +112,7 @@ FOS_SHOW_BAND = True        # show P10-P90 band + median
 PROBE_ORDER = ["top", "quarter", "mid", "threequarter", "bottom"]
 
 # Fracture propagation options
-RADIAL_DISTANCES = [0.0, 0.5, 1.0, 2.0, 5.0, 10.0]
+RADIAL_DISTANCES = [0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
 
 # FOS (Factor of Safety) = q_boundary / q
 #   FOS < 1.0 means dilating (unsafe)
@@ -1285,6 +1285,93 @@ def generate_radial_sample_points(wall_points, probes, normals, radial_distances
     return sample_points
 
 
+def compute_global_dilation_penetration(case_folder, wall_points,
+                                         region_names=None, region_fractions=None):
+    """Volumetric scan of dilatancy zone, broken down by 5 wall regions.
+
+    For every salt cell in the mesh, computes its perpendicular distance to the
+    cavern wall (nearest wall node) and assigns it to one of 5 regions based on
+    the z-fraction of that nearest wall node (top / quarter / mid / threequarter
+    / bottom). At each timestep, the function returns, per region, the maximum
+    distance-to-wall at which any cell has FOS < 1 — i.e. the actual depth the
+    dilatancy zone has penetrated into the salt within that region.
+
+    Returns
+    -------
+    time_days : ndarray (Nt,)
+    region_depths : dict[name] -> ndarray (Nt,)
+    """
+    from scipy.spatial import cKDTree
+
+    if region_names is None:
+        region_names = ["bottom", "threequarter", "mid", "quarter", "top"]
+    if region_fractions is None:
+        region_fractions = [0.0, 0.25, 0.5, 0.75, 1.0]
+
+    p_path = path_p_xdmf(case_folder)
+    q_path = path_q_xdmf(case_folder)
+    sig_path = path_sig_xdmf(case_folder)
+
+    centroids_p, time_list_p, p_elems = post.read_cell_scalar(p_path)
+    _, time_list_q, q_elems = post.read_cell_scalar(q_path)
+    centroids_sig, time_list_sig, sig33 = post.read_cell_tensor(sig_path)
+
+    n_times = min(len(time_list_p), len(time_list_q), len(time_list_sig))
+    p_elems = p_elems[:n_times]
+    q_elems = q_elems[:n_times]
+    sig33 = sig33[:n_times]
+    time_days = np.array(time_list_p[:n_times]) / DAY
+
+    p_MPa = -p_elems / MPA
+    q_MPa = q_elems / MPA
+    sig33_MPa = -sig33 / MPA
+
+    # Map sigma cell ordering to p/q ordering via centroid match (usually identical)
+    if centroids_sig.shape[0] != centroids_p.shape[0] or \
+       not np.allclose(centroids_sig, centroids_p, atol=1e-6):
+        tree_c = cKDTree(centroids_sig)
+        _, sig_to_p = tree_c.query(centroids_p)
+        sig33_MPa = sig33_MPa[:, sig_to_p, :, :]
+
+    sig_voigt = tensor33_to_voigt6(sig33_MPa)            # (Nt, nc, 6)
+    psi = _psi_from_voigt6(sig_voigt)                    # (Nt, nc)
+    q_boundary = q_dil_devries(p_MPa, psi)               # (Nt, nc)
+    q_safe = np.where(q_MPa < 1e-3, 1e-3, q_MPa)
+    fos = q_boundary / q_safe
+    fos = np.where(q_MPa < 1e-3, 100.0, fos)
+    fos_mask = fos < FOS_THRESHOLD                       # (Nt, nc)
+
+    # Distance from each cell centroid to the nearest cavern-wall node
+    tree = cKDTree(wall_points)
+    dist_to_wall, nearest_idx = tree.query(centroids_p)  # (nc,), (nc,)
+
+    # Region by z-fraction of the nearest wall node
+    z_wall = wall_points[:, 2]
+    z_min, z_max = float(z_wall.min()), float(z_wall.max())
+    span = max(z_max - z_min, 1e-12)
+    cell_z_frac = (wall_points[nearest_idx, 2] - z_min) / span
+
+    region_idx = np.argmin(
+        np.abs(cell_z_frac[:, None] - np.asarray(region_fractions)[None, :]),
+        axis=1
+    )
+
+    Nt, nc = fos_mask.shape
+    region_depths = {name: np.zeros(Nt) for name in region_names}
+    for r, name in enumerate(region_names):
+        sel = region_idx == r
+        if not sel.any():
+            continue
+        d_sel = dist_to_wall[sel]
+        fos_sel = fos_mask[:, sel]                       # (Nt, n_in_region)
+        for t in range(Nt):
+            f = fos_sel[t]
+            if f.any():
+                region_depths[name][t] = float(d_sel[f].max())
+
+    return time_days, region_depths
+
+
 def read_stress_at_points(case_folder, sample_points):
     p_path = path_p_xdmf(case_folder)
     q_path = path_q_xdmf(case_folder)
@@ -1585,71 +1672,62 @@ def plot_convergence_per_cavern(cases, group_fn=None):
 
 
 def plot_initial_vs_final_shapes(cases):
-    """compare_shapes companion figure: initial and final wall profiles of all
-    cavern shapes shown side-by-side, with the pressure schedule(s) below
-    spanning both columns.
+    """compare_shapes companion figure: one subplot per cavern showing the
+    initial (black) and final (colored, amplified) wall profiles overlaid.
+    Subplots are arranged in a grid; the pressure schedule sits at the bottom
+    spanning all columns.
     """
-    fig = plt.figure(figsize=(18, 11))
-    gs = fig.add_gridspec(2, 2, height_ratios=[2.4, 1.0],
-                          hspace=0.18, wspace=0.12)
-    ax_init = fig.add_subplot(gs[0, 0])
-    ax_final = fig.add_subplot(gs[0, 1], sharey=ax_init)
-    ax_p = fig.add_subplot(gs[1, :])
-
-    single_scenario = len({c.get("scenario_preset") for c in cases}) == 1
-
-    any_drawn = False
-    seen_labels = set()
+    seen = set()
+    cav_cases = []
     for c in cases:
+        cav = c.get("cavern_label")
+        if cav not in seen:
+            seen.add(cav)
+            cav_cases.append(c)
+
+    n = len(cav_cases)
+    if n == 0:
+        print("[INITIAL-FINAL] No cases to plot.")
+        return
+
+    ncols = 3
+    nrows = int(np.ceil(n / ncols))
+
+    fig = plt.figure(figsize=(5.6 * ncols, 4.8 * nrows + 3.0))
+    gs = fig.add_gridspec(nrows + 1, ncols,
+                          height_ratios=[3.0] * nrows + [1.4],
+                          hspace=0.40, wspace=0.25)
+
+    for i, c in enumerate(cav_cases):
+        r, k = divmod(i, ncols)
+        ax = fig.add_subplot(gs[r, k])
         cav_full = c.get("cavern_label")
         sc = c.get("scenario_preset")
         ps = c.get("pressure_scenario")
-        col, ls = get_case_color_and_style(cav_full, sc, ps)
-        if single_scenario:
-            ls = "-"
-        label = get_case_label(c)
+        col, _ls = get_case_color_and_style(cav_full, sc, ps)
         try:
             wp_init, wp_final = load_wall_points_initial_final(c["case_path"])
         except Exception as e:
             print(f"[WALL-PROFILE SKIP] {cav_full}: {e}")
+            ax.text(0.5, 0.5, "No data", ha="center", va="center",
+                    transform=ax.transAxes)
+            ax.set_title(_strip_size(cav_full), fontsize=14)
             continue
         u_delta = wp_final - wp_init
         wp_final_amp = wp_init + WALL_PROFILE_AMPLIFICATION * u_delta
-        depth_init = z_mesh_to_depth_m(wp_init[:, 2], cav_full)
-        depth_final = z_mesh_to_depth_m(wp_final_amp[:, 2], cav_full)
 
-        if label not in seen_labels:
-            ax_init.plot(wp_init[:, 0], depth_init, color=col, linestyle=ls,
-                         linewidth=2.0, alpha=0.95, label=label)
-            ax_final.plot(wp_final_amp[:, 0], depth_final, color=col, linestyle=ls,
-                          linewidth=2.0, alpha=0.95, label=label)
-            seen_labels.add(label)
-        any_drawn = True
+        ax.plot(wp_init[:, 0], wp_init[:, 2], color='black',
+                linewidth=1.8, label='Initial')
+        ax.plot(wp_final_amp[:, 0], wp_final_amp[:, 2], color=col,
+                linewidth=1.8, label='Final')
+        ax.set_title(_strip_size(cav_full), fontsize=14)
+        ax.set_xlabel("x (m)")
+        if k == 0:
+            ax.set_ylabel("Height z (m)")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='best', fontsize=10, frameon=True)
 
-    if any_drawn:
-        for ax, title in [(ax_init, "Initial shape"), (ax_final, "Final shape")]:
-            ax.set_xlabel("x (m)")
-            ax.grid(True, alpha=0.3)
-            ax.invert_yaxis()
-            ax.set_title(title, fontsize=16)
-        ax_init.set_ylabel("Depth (m)")
-        plt.setp(ax_final.get_yticklabels(), visible=False)
-        ax_final.text(0.98, 0.02,
-                      f"Displacement ×{WALL_PROFILE_AMPLIFICATION:g}",
-                      transform=ax_final.transAxes, fontsize=12, style='italic',
-                      color='#444444', va='bottom', ha='right',
-                      bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray',
-                                boxstyle='round,pad=0.3'))
-        h, l = ax_init.get_legend_handles_labels()
-        if h:
-            fig.legend(h, l, loc="upper center", bbox_to_anchor=(0.5, 0.99),
-                       ncol=min(4, len(h)), fontsize=14, frameon=True)
-    else:
-        for ax in (ax_init, ax_final):
-            ax.text(0.5, 0.5, "No wall-profile data", ha="center", va="center",
-                    transform=ax.transAxes)
-            ax.axis("off")
-
+    ax_p = fig.add_subplot(gs[nrows, :])
     _plotted_pressures = set()
     for c in cases:
         ps = c.get("pressure_scenario")
@@ -1664,16 +1742,19 @@ def plot_initial_vs_final_shapes(cases):
         ax_p.text(0.5, 0.5, "No pressure_schedule.json found.",
                   ha="center", va="center", transform=ax_p.transAxes)
     if len(_plotted_pressures) > 1:
-        ax_p.legend(fontsize=14, frameon=True, loc="upper right")
+        ax_p.legend(fontsize=12, frameon=True, loc="upper right")
     ax_p.set_ylabel("Pressure (MPa)")
     ax_p.set_xlabel("Time (days)")
     ax_p.grid(True, alpha=0.3)
 
-    add_panel_label(ax_init, "A")
-    add_panel_label(ax_final, "B")
-    add_panel_label(ax_p, "C")
+    fig.text(0.99, 0.005,
+             f"Final wall displacement ×{WALL_PROFILE_AMPLIFICATION:g}",
+             fontsize=10, style='italic', color='#444444',
+             ha='right', va='bottom',
+             bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray',
+                       boxstyle='round,pad=0.3'))
 
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    fig.tight_layout(rect=[0, 0.02, 1, 1])
 
     outname = (f"shapes_initial_final_pressure={SELECT.get('pressure')}"
                f"_scenario={SELECT.get('scenario')}.png")
@@ -2359,6 +2440,10 @@ def plot_fos_summary(cases):
 # =============================================================================
 
 def plot_cavern_with_probes(ax, wall_points, sample_points, cavern_label=None):
+    """Cavern wall plot with five colored region markers (top / quarter / mid /
+    threequarter / bottom). The markers indicate which colour on the right-hand
+    panel maps to which part of the cavern wall.
+    """
     if cavern_label is not None:
         y_wall = z_mesh_to_depth_m(wall_points[:, 2], cavern_label)
         y_label = 'Depth (m)'
@@ -2368,23 +2453,18 @@ def plot_cavern_with_probes(ax, wall_points, sample_points, cavern_label=None):
 
     ax.plot(wall_points[:, 0], y_wall, 'k-', linewidth=2, label='Cavern wall')
 
-    for probe_name, dist_points in sample_points.items():
-        color = PROBE_COLORS.get(probe_name, 'gray')
-
-        xs = [pt[0] for _, pt in dist_points]
-        if cavern_label is not None:
-            ys = [z_mesh_to_depth_m(pt[2], cavern_label) for _, pt in dist_points]
-        else:
-            ys = [pt[2] for _, pt in dist_points]
-
-        ax.plot(xs, ys, '-', color=color, linewidth=1.5, alpha=0.7)
-
-        for i, (dist, pt) in enumerate(dist_points):
-            marker = 'o' if dist == 0 else 's'
-            size = 80 if dist == 0 else 40
-            y_pt = z_mesh_to_depth_m(pt[2], cavern_label) if cavern_label is not None else pt[2]
-            ax.scatter(pt[0], y_pt, c=color, s=size, marker=marker,
-                      edgecolors='black', linewidths=0.5, zorder=5)
+    z_w = wall_points[:, 2]
+    z_min, z_max = float(z_w.min()), float(z_w.max())
+    span = max(z_max - z_min, 1e-12)
+    region_fracs = {"bottom": 0.0, "threequarter": 0.25, "mid": 0.5,
+                    "quarter": 0.75, "top": 1.0}
+    for region_name, frac in region_fracs.items():
+        idx = int(np.argmin(np.abs(z_w - (z_min + frac * span))))
+        color = PROBE_COLORS.get(region_name, 'gray')
+        y_pt = z_mesh_to_depth_m(wall_points[idx, 2], cavern_label) \
+            if cavern_label is not None else wall_points[idx, 2]
+        ax.scatter(wall_points[idx, 0], y_pt, c=color, s=110, marker='o',
+                   edgecolors='black', linewidths=0.7, zorder=5)
 
     ax.set_xlabel('Radial distance (m)')
     ax.set_ylabel(y_label)
@@ -2392,6 +2472,23 @@ def plot_cavern_with_probes(ax, wall_points, sample_points, cavern_label=None):
     ax.grid(True, alpha=0.3)
     if cavern_label is not None:
         ax.invert_yaxis()
+
+
+def plot_propagation_depth_global(ax, time_days, region_depths):
+    """Plot dilation-zone penetration per region, computed via volumetric scan."""
+    region_order = ["top", "quarter", "mid", "threequarter", "bottom"]
+    for region_name in region_order:
+        if region_name not in region_depths:
+            continue
+        color = PROBE_COLORS.get(region_name, 'gray')
+        ax.plot(time_days, region_depths[region_name],
+                linewidth=2, color=color, label=region_name)
+
+    ax.set_xlabel('Time (days)')
+    ax.set_title('Connected dilating zone size')
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(bottom=0.0)
+    ax.legend(loc='upper left', fontsize=18)
 
 
 def plot_propagation_depth(ax, time_days, fos_data, radial_distances, threshold=1.0):
@@ -2412,6 +2509,7 @@ def plot_propagation_depth(ax, time_days, fos_data, radial_distances, threshold=
     ax.set_xlabel('Time (days)')
     ax.set_title('Connected dilating zone size')
     ax.grid(True, alpha=0.3)
+    ax.set_ylim(bottom=0.0)
     ax.legend(loc='upper left', fontsize=18)
 
 
@@ -2428,21 +2526,13 @@ def plot_fracture_propagation(case_meta):
 
     try:
         wall_points = load_wall_points(folder)
-        normals = compute_outward_normal_2d(wall_points)
-        probes = auto_generate_probes_with_index(wall_points)
-
-        sample_points = generate_radial_sample_points(
-            wall_points, probes, normals, RADIAL_DISTANCES
-        )
-
-        time_days, stress_data = read_stress_at_points(folder, sample_points)
-        fos_data = compute_FOS_data(time_days, stress_data)
+        time_days, region_depths = compute_global_dilation_penetration(folder, wall_points)
 
         fig, (ax_cavern, ax_depth) = plt.subplots(1, 2, figsize=(20, 10))
 
-        plot_cavern_with_probes(ax_cavern, wall_points, sample_points, cavern_label=cav)
-        plot_propagation_depth(ax_depth, time_days, fos_data, RADIAL_DISTANCES, FOS_THRESHOLD)
-        ax_depth.set_ylabel("")
+        plot_cavern_with_probes(ax_cavern, wall_points, None, cavern_label=cav)
+        plot_propagation_depth_global(ax_depth, time_days, region_depths)
+        ax_depth.set_ylabel("Dilatancy zone depth (m)")
 
         add_panel_label(ax_cavern, "A", fontsize=14)
         add_panel_label(ax_depth, "B", fontsize=14)
@@ -2509,15 +2599,11 @@ def plot_fracture_propagation_grouped(frac_cases):
             folder = c["case_path"]
             try:
                 wall_points = load_wall_points(folder)
-                normals = compute_outward_normal_2d(wall_points)
-                probes = auto_generate_probes_with_index(wall_points)
-                sample_points = generate_radial_sample_points(
-                    wall_points, probes, normals, RADIAL_DISTANCES
+                time_days, region_depths = compute_global_dilation_penetration(
+                    folder, wall_points
                 )
-                time_days, stress_data = read_stress_at_points(folder, sample_points)
-                fos_data = compute_FOS_data(time_days, stress_data)
-                group_data.append((shape_name, wall_points, sample_points,
-                                   time_days, fos_data))
+                group_data.append((shape_name, wall_points, None,
+                                   time_days, region_depths))
             except Exception as e:
                 print(f"[ERROR] {shape_name}: {e}")
                 import traceback
@@ -2535,9 +2621,11 @@ def plot_fracture_propagation_grouped(frac_cases):
             axes = [axes[0], axes[1]]
 
         panel_letters = ["A", "B", "C", "D", "E", "F"]
-        for idx, (shape_name, wall_pts, samp_pts, t_days, fos_d) in enumerate(group_data):
+        dep_axes = []
+        for idx, (shape_name, wall_pts, _samp_pts, t_days, region_depths) in enumerate(group_data):
             ax_cav = axes[idx * 2]
             ax_dep = axes[idx * 2 + 1]
+            dep_axes.append(ax_dep)
 
             # Look up the cavern_label (with volume tag) so depth conversion works
             cav_full = None
@@ -2547,7 +2635,7 @@ def plot_fracture_propagation_grouped(frac_cases):
                     if "(" in cav_full:
                         break
 
-            plot_cavern_with_probes(ax_cav, wall_pts, samp_pts, cavern_label=cav_full)
+            plot_cavern_with_probes(ax_cav, wall_pts, None, cavern_label=cav_full)
             ax_cav.set_title(shape_name, fontsize=22, fontweight='bold', pad=6)
             ax_cav.set_xlabel("Radial distance (m)", fontsize=22)
             ax_cav.set_ylabel("Depth (m)", fontsize=22)
@@ -2557,10 +2645,11 @@ def plot_fracture_propagation_grouped(frac_cases):
                 leg.remove()
             add_panel_label(ax_cav, panel_letters[idx * 2], fontsize=14)
 
-            plot_propagation_depth(ax_dep, t_days, fos_d, RADIAL_DISTANCES, FOS_THRESHOLD)
+            plot_propagation_depth_global(ax_dep, t_days, region_depths)
             ax_dep.set_title("", fontsize=1)  # clear sub-title
             ax_dep.set_xlabel("Time (days)", fontsize=22)
-            ax_dep.set_ylabel("")
+            ax_dep.set_ylabel("Dilatancy zone depth (m)" if idx == 0 else "",
+                             fontsize=22)
             ax_dep.tick_params(axis='both', labelsize=16)
             leg_dep = ax_dep.get_legend()
             if idx == n_shapes - 1:
@@ -2568,6 +2657,11 @@ def plot_fracture_propagation_grouped(frac_cases):
             elif leg_dep is not None:
                 leg_dep.remove()
             add_panel_label(ax_dep, panel_letters[idx * 2 + 1], fontsize=14)
+
+        if dep_axes:
+            y_max = max(ax.get_ylim()[1] for ax in dep_axes)
+            for ax in dep_axes:
+                ax.set_ylim(0.0, y_max)
 
         fig.tight_layout()
 

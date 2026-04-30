@@ -1989,22 +1989,7 @@ class MunsonDawsonCreep(NonElasticElement):
     linearised into the global Newton iteration via the residue equation
 
         r(zeta, sigma) = zeta - zeta_old - (F(zeta, sigma) - 1) * epsdot_ss(sigma) * dt
-
-    At each Newton iteration:
-
-    - `compute_B_and_H_over_h` evaluates (by central / forward finite
-      differences, mirroring Desai) the sensitivities
-            h = dr/dzeta,    Q = d eps_MD / d zeta,    P = dr/dsigma
-        and returns the consistent-tangent contribution
-            H/h = (1/h) * Q (outer) P        (packed in tensorial Voigt 6x6)
-            B   = (r / h) * Q
-    - `increment_internal_variables` applies the linearised correction
-            delta_zeta = -(r + P : delta_sigma) / h
-        using the stored r, h, P.
-
-    At Newton convergence, r(zeta, sigma) = 0 automatically — no operator
-    splitting, no freeze flag, no sub-stepping of zeta.
-
+        
     Parameters
     ----------
     A, Q, n, K0, c, m, alpha_w, beta_w, delta, mu : torch.Tensor
@@ -2042,7 +2027,7 @@ class MunsonDawsonCreep(NonElasticElement):
         super().__init__(A.shape[0])
         self.name = name
 
-        self.R = 8.32  # consistent with other creep classes
+        self.R = 8.32  
 
         # Steady-state params
         self.A = A.to(dtype=to.float64)
@@ -2057,7 +2042,7 @@ class MunsonDawsonCreep(NonElasticElement):
         self.beta_w = beta_w.to(dtype=to.float64)
         self.delta = delta.to(dtype=to.float64)
 
-        # Shear modulus (Pa); enters only through the dimensionless ratio sigma/mu.
+        # Shear modulus (Pa)
         self.mu = mu.to(dtype=to.float64)
 
         # Internal variable zeta (starts at 0 – untransient-strained rock)
@@ -2110,7 +2095,7 @@ class MunsonDawsonCreep(NonElasticElement):
     def _compute_md_fields(self, stress_vec: to.Tensor, Temp: to.Tensor, zeta: to.Tensor):
         """
         Compute all Munson-Dawson intermediate quantities for a given
-        (stress, zeta) state. Pure — no side effects.
+        (stress, zeta) state.
 
         Returns
         -------
