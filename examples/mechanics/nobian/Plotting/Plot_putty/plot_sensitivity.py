@@ -116,12 +116,14 @@ DIMENSIONS = {
     },
     "secondary_creep": {
         "title": "Secondary creep mechanisms",
-        "cases": ["md_B_baseline", "no_pressure_solution", "no_kelvin", "no_desai"],
+        "cases": ["md_B_baseline", "sic_B_baseline", "no_pressure_solution", "no_kelvin", "no_desai", "no_kelvin_no_desai"],
         "labels": {
-            "md_B_baseline":        "Baseline",
+            "md_B_baseline":        "Baseline (MD)",
+            "sic_B_baseline":       "Baseline (TUD2023)",
             "no_pressure_solution": "No pressure-solution",
             "no_kelvin":            "No Kelvin (TUD2023)",
             "no_desai":             "No Desai (TUD2023)",
+            "no_kelvin_no_desai":   "No Kelvin + No Desai (TUD2023)",
         },
     },
     "timestep": {
@@ -463,9 +465,9 @@ def plot_mc_failure_overlay(dim_key, discovered):
             warnings.warn(f"[{dim_key}/{name}] load_sig failed: {e}")
             continue
         n_cells = sig_vals.shape[1]
-        mask = _get_interlayer_cell_mask({"case_path": rec["case_path"],
-                                          "case_name": name}, n_cells)
-        if mask is None:
+        mask, _ = _get_interlayer_cell_mask({"case_path": rec["case_path"],
+                                             "case_name": name}, n_cells)
+        if mask is None or not mask.any():
             continue
 
         sig = sig_vals[:, mask]  # (Nt, nil, 3, 3)

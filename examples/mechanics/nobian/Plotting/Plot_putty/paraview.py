@@ -13,6 +13,7 @@ Usage:
 """
 
 import os
+import re
 import sys
 import argparse
 import numpy as np
@@ -45,11 +46,11 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["regular1200"],
-    "pressure": ["csv"],
-    "scenario": ["B_SIC"],
+    "caverns": ["spike_none", "spike_upper", "spike_lower"],
+    "pressure": None,
+    "scenario": None,
     "n_cycles": None,
-    "operation_days": 365,
+    "operation_days": 1095,
     "case_contains": None,
 }
 
@@ -63,11 +64,24 @@ PHASE = "operation"
 #   Special keywords (can be mixed with indices):
 #              "p_min"     → timestep at minimum cavern pressure
 #              "p_max"     → timestep at maximum cavern pressure
-TIMESTEPS = [0, "p_min", "p_max", -1]
+#              "p_min_top_<N>" → N deepest pressure dips, e.g. "p_min_top_3"
+TIMESTEPS = [0, "p_min", "p_max", "p_min_top_3", -1]
 
 # Cross-section settings
 CROSS_SECTION_Y = 225.0       # y-coordinate for vertical slice (m)
 CROSS_SECTION_THICKNESS = 5.0  # half-thickness of slice (m)
+
+# Mohr-Coulomb (anhydrite interlayer) parameters used for f_MC visualisation.
+# Failure when f_MC > 0, with f_MC = q - alpha_F * p - k_F.
+MC_C_MPA = 4.0
+MC_PHI_DEG = 35.0
+
+# Minimum separation (in days) between dips reported by p_min_top_N — prevents
+# multiple "dips" inside the same cycle from being reported as separate events.
+P_MIN_DIP_SEP_DAYS = 5.0
+
+# Interlayer physical-group cell tags in run_interlayer.py meshes
+INTERLAYER_TAGS = (32, 34)
 
 # =============================================================================
 
@@ -78,13 +92,40 @@ MPA = 1e6
 # PRESSURE-BASED TIMESTEP SELECTION
 # =============================================================================
 
+def find_lowest_pressure_dips(t_s, p_mpa, n=3, min_sep_days=P_MIN_DIP_SEP_DAYS,
+                              t_min_s=0.0):
+    """
+    Return the times (s) of the n deepest pressure dips, with a minimum
+    separation in days so multiple dips in the same cycle don't collapse.
+
+    Uses a greedy approach: pick the global minimum, then mask out a window
+    of ±min_sep_days around it, repeat until n dips are found or no
+    candidates remain.
+    """
+    p = np.asarray(p_mpa, dtype=float).copy()
+    t = np.asarray(t_s, dtype=float)
+    p[t < t_min_s] = np.inf
+    sep_s = float(min_sep_days) * 86400.0
+    picks = []
+    for _ in range(int(n)):
+        if not np.isfinite(p).any():
+            break
+        idx = int(np.argmin(p))
+        picks.append(idx)
+        # Mask a window around this dip
+        lo, hi = t[idx] - sep_s, t[idx] + sep_s
+        p[(t >= lo) & (t <= hi)] = np.inf
+    return picks
+
+
 def resolve_timesteps(timestep_sel, n_steps, xdmf_times, case_folder):
     """
     Resolve timestep selection to a list of integer indices.
 
     Handles integer indices (including negative) and special keywords:
-      "p_min" → timestep closest to minimum cavern pressure
-      "p_max" → timestep closest to maximum cavern pressure
+      "p_min"          → timestep closest to minimum cavern pressure
+      "p_max"          → timestep closest to maximum cavern pressure
+      "p_min_top_<N>"  → the N deepest pressure dips (separated in time)
     """
     if timestep_sel is None:
         return list(range(n_steps))
@@ -93,6 +134,8 @@ def resolve_timesteps(timestep_sel, n_steps, xdmf_times, case_folder):
     needs_pressure = any(isinstance(s, str) for s in timestep_sel)
     p_min_step = None
     p_max_step = None
+    top_dip_steps = {}  # N -> list of XDMF step indices
+    t_p_s = p_mpa = None
 
     if needs_pressure:
         try:
@@ -124,6 +167,7 @@ def resolve_timesteps(timestep_sel, n_steps, xdmf_times, case_folder):
             print(f"[WARN] Skipping p_min/p_max keywords")
 
     steps = []
+    top_pat = re.compile(r"^p_min_top_(\d+)$")
     for s in timestep_sel:
         if s == "p_min":
             if p_min_step is not None:
@@ -131,6 +175,17 @@ def resolve_timesteps(timestep_sel, n_steps, xdmf_times, case_folder):
         elif s == "p_max":
             if p_max_step is not None:
                 steps.append(p_max_step)
+        elif isinstance(s, str) and top_pat.match(s):
+            n_top = int(top_pat.match(s).group(1))
+            if t_p_s is None or p_mpa is None:
+                continue
+            t_first_xdmf = xdmf_times[1] if len(xdmf_times) > 1 else 0.0
+            dip_idx = find_lowest_pressure_dips(t_p_s, p_mpa, n=n_top,
+                                                t_min_s=t_first_xdmf)
+            for di in dip_idx:
+                step = int(np.argmin(np.abs(xdmf_times - t_p_s[di])))
+                steps.append(step)
+                print(f"[INFO] Dip: {p_mpa[di]:.2f} MPa at t={t_p_s[di]/86400:.1f} days → step {step}")
         else:
             steps.append(int(s) % n_steps)
 
@@ -143,6 +198,90 @@ def resolve_timesteps(timestep_sel, n_steps, xdmf_times, case_folder):
             unique.append(s)
 
     return unique
+
+
+# =============================================================================
+# INTERLAYER MASK LOADER
+# =============================================================================
+
+def load_interlayer_mask(case_folder, n_cells_xdmf, xdmf_centroids):
+    """
+    Return a boolean mask (length n_cells_xdmf, XDMF cell order) marking
+    interlayer cells, or None if no interlayer cells / msh missing.
+    """
+    msh_path = os.path.join(case_folder, "operation", "mesh", "geom.msh")
+    if not os.path.isfile(msh_path):
+        return None
+    try:
+        import dolfinx as dfx
+        from mpi4py import MPI
+        from scipy.spatial import cKDTree
+    except Exception as e:
+        print(f"[WARN] Cannot load interlayer mask (missing dolfinx/mpi4py): {e}")
+        return None
+
+    try:
+        mesh, cell_tags, _ = dfx.io.gmshio.read_from_msh(msh_path,
+                                                         MPI.COMM_WORLD, 0)
+    except Exception as e:
+        print(f"[WARN] Could not read {msh_path}: {e}")
+        return None
+
+    il_dfx_cells = np.where(np.isin(cell_tags.values,
+                                    list(INTERLAYER_TAGS)))[0]
+    if len(il_dfx_cells) == 0:
+        return None
+
+    tdim = mesh.topology.dim
+    c2v = mesh.topology.connectivity(tdim, 0)
+    X = mesh.geometry.x
+    n_cells_dfx = mesh.topology.index_map(tdim).size_local
+    dfx_centroids = np.zeros((n_cells_dfx, 3))
+    for i in range(n_cells_dfx):
+        verts = X[c2v.links(i)]
+        dfx_centroids[i] = verts.mean(axis=0)
+
+    tree = cKDTree(xdmf_centroids)
+    _, xdmf_idx = tree.query(dfx_centroids[il_dfx_cells])
+    il_mask = np.zeros(n_cells_xdmf, dtype=bool)
+    il_mask[xdmf_idx] = True
+    print(f"[INFO] Interlayer cells: {il_mask.sum()} of {n_cells_xdmf} "
+          f"(tags {list(INTERLAYER_TAGS)})")
+    return il_mask
+
+
+def compute_mc_fields(sig_3x3, il_mask, c_MPa=MC_C_MPA, phi_deg=MC_PHI_DEG):
+    """
+    Compute Mohr-Coulomb yield function f_MC and binary `failed` flag.
+    Returns (f_MC, failed) — both length n_cells. Salt cells get NaN/0.
+    """
+    n_cells = sig_3x3.shape[0]
+    f_MC = np.full(n_cells, np.nan)
+    failed = np.zeros(n_cells, dtype=np.float64)
+    if il_mask is None or not il_mask.any():
+        return f_MC, failed
+
+    sig_il = sig_3x3[il_mask]
+    I1 = sig_il[:, 0, 0] + sig_il[:, 1, 1] + sig_il[:, 2, 2]
+    I2 = (sig_il[:, 0, 0] * sig_il[:, 1, 1]
+          + sig_il[:, 1, 1] * sig_il[:, 2, 2]
+          + sig_il[:, 0, 0] * sig_il[:, 2, 2]
+          - sig_il[:, 0, 1] ** 2
+          - sig_il[:, 0, 2] ** 2
+          - sig_il[:, 1, 2] ** 2)
+    J2 = np.maximum((1.0 / 3.0) * I1 ** 2 - I2, 0.0)
+    p_MPa = -I1 / (3.0 * MPA)        # compression-positive
+    q_MPa = np.sqrt(3.0 * J2) / MPA
+
+    phi = np.radians(phi_deg)
+    sin_phi, cos_phi = np.sin(phi), np.cos(phi)
+    alpha_F = 6.0 * sin_phi / (3.0 - sin_phi)
+    k_F = 6.0 * c_MPa * cos_phi / (3.0 - sin_phi)
+    f_il = q_MPa - alpha_F * p_MPa - k_F
+
+    f_MC[il_mask] = f_il
+    failed[il_mask] = (f_il > 0).astype(np.float64)
+    return f_MC, failed
 
 
 # =============================================================================
@@ -455,6 +594,10 @@ def process_case(case_folder, phase, timestep_sel):
     cavern_pts = points[cavern_node_set]
     dist_to_wall = KDTree(cavern_pts).query(centroids)[0]
 
+    # ---- Interlayer mask (None for non-interlayer cases) ----
+    il_mask = load_interlayer_mask(case_folder, n_cells, centroids)
+    has_interlayer = il_mask is not None and il_mask.any()
+
     # ---- Cross-section mask ----
     section_mask = np.abs(centroids[:, 1] - CROSS_SECTION_Y) < CROSS_SECTION_THICKNESS
     n_section = np.sum(section_mask)
@@ -516,6 +659,20 @@ def process_case(case_folder, phase, timestep_sel):
         vol["u_mag_mm"] = u_mag_cell * 1000.0
         if has_eps_vp:
             vol["eps_vp_eq"] = eps_vp_eq
+
+        # Mohr-Coulomb fields (interlayer only; salt = NaN/0). Lets you
+        # Threshold on `is_interlayer == 1` in ParaView and color by
+        # `f_MC` or `failed`, while the surrounding salt mesh remains
+        # available as a translucent gray context.
+        if has_interlayer:
+            f_MC, failed = compute_mc_fields(sig_3x3, il_mask)
+            n_failed = int(failed.sum())
+            n_il = int(il_mask.sum())
+            print(f"    f_MC (interlayer): max={np.nanmax(f_MC):.2f} MPa | "
+                  f"{n_failed}/{n_il} cells failed (f>0)")
+            vol["is_interlayer"] = il_mask.astype(np.float64)
+            vol["f_MC"] = f_MC
+            vol["failed"] = failed
 
         volume_data_list.append(vol)
 
@@ -699,6 +856,31 @@ def process_case(case_folder, phase, timestep_sel):
        Near the cavern wall, arrows point inward = convergence.
        At t=0 arrows are zero; they grow as creep progresses.
        Larger arrows = more displacement = more creep.
+""")
+    print("─" * 70)
+    print("  E. MOHR-COULOMB FAILURE IN INTERLAYERS (paraview_volume.xdmf)")
+    print("─" * 70)
+    print(f"""
+  Cell fields `is_interlayer`, `f_MC`, `failed` are written for runs that
+  contain interlayer physical groups (tags {list(INTERLAYER_TAGS)}) — anhydrite
+  c={MC_C_MPA} MPa, phi={MC_PHI_DEG} deg.  Salt cells get f_MC = NaN.
+
+  Use TIMESTEPS = ["p_min_top_3"] to capture the three deepest pressure dips.
+
+  Step 1: Open paraview_volume.xdmf → Apply
+  Step 2: Context (translucent salt block + cavern void)
+          • Select the dataset → Filters → Extract Surface
+          • Representation: Surface; Color: solid gray; Opacity: 0.15
+  Step 3: Failure overlay (interlayer-only, colored by f_MC or failed)
+          • Re-select paraview_volume.xdmf → Filters → Threshold
+              Scalars:  is_interlayer
+              Minimum:  1
+              Maximum:  1
+          • Apply, then color by `f_MC` (sequential, centered at 0)
+            or `failed` (binary 0/1).
+          • Optional: another Threshold on `failed >= 1` to show ONLY
+            failed cells.
+  Step 4: Use the time slider to flip between the three pressure dips.
 """)
 
 

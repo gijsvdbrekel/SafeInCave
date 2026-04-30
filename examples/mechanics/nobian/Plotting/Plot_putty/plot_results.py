@@ -493,7 +493,7 @@ def get_case_label(meta, mode=None):
     elif mode == "compare_scenarios":
         return _extract_model_only(sc) or meta.get("case_name", "")
     else:  # compare_shapes
-        return cav
+        return _strip_size(cav)
 
 
 def get_series_key(meta):
@@ -1344,11 +1344,15 @@ def plot_convergence_combined(cases):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 9), sharex=True,
                                    gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.12})
 
+    single_scenario = len({c.get("scenario_preset") for c in cases}) == 1
+
     for c in cases:
         cav = c.get("cavern_label")
         sc = c.get("scenario_preset")
         ps = c.get("pressure_scenario")
         col, ls = get_case_color_and_style(cav, sc, ps)
+        if single_scenario:
+            ls = "-"
         label = get_case_label(c)
         try:
             t_days, conv = compute_convergence_3d_percent(c["case_path"], cavern_phys_tag=CAVERN_PHYS_TAG)
@@ -1369,8 +1373,8 @@ def plot_convergence_combined(cases):
         # Place the legend ABOVE the figure (not on the axes) so it never gets
         # clipped when there are many cases (e.g. Homogeneous vs Heterogeneous).
         fig.legend(uniq.values(), uniq.keys(), loc="upper center",
-                   bbox_to_anchor=(0.5, 0.995),
-                   ncol=min(4, len(uniq)), fontsize=18, frameon=True)
+                   bbox_to_anchor=(0.5, 0.99),
+                   ncol=min(4, len(uniq)), fontsize=14, frameon=True)
 
     # Plot pressure schedule(s) — overlay all distinct schedules in compare_pressures
     _plotted_pressures = set()
@@ -1394,7 +1398,7 @@ def plot_convergence_combined(cases):
     add_panel_label(ax1, "A")
     add_panel_label(ax2, "B")
 
-    fig.tight_layout(rect=[0, 0, 1, 0.86])
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
 
     outname = f"convergence_combined_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"
     outpath = os.path.join(OUT_DIR, outname.replace(" ", ""))
@@ -1578,6 +1582,108 @@ def plot_convergence_per_cavern(cases, group_fn=None):
         if SHOW:
             plt.show()
         plt.close(fig)
+
+
+def plot_initial_vs_final_shapes(cases):
+    """compare_shapes companion figure: initial and final wall profiles of all
+    cavern shapes shown side-by-side, with the pressure schedule(s) below
+    spanning both columns.
+    """
+    fig = plt.figure(figsize=(18, 11))
+    gs = fig.add_gridspec(2, 2, height_ratios=[2.4, 1.0],
+                          hspace=0.18, wspace=0.12)
+    ax_init = fig.add_subplot(gs[0, 0])
+    ax_final = fig.add_subplot(gs[0, 1], sharey=ax_init)
+    ax_p = fig.add_subplot(gs[1, :])
+
+    single_scenario = len({c.get("scenario_preset") for c in cases}) == 1
+
+    any_drawn = False
+    seen_labels = set()
+    for c in cases:
+        cav_full = c.get("cavern_label")
+        sc = c.get("scenario_preset")
+        ps = c.get("pressure_scenario")
+        col, ls = get_case_color_and_style(cav_full, sc, ps)
+        if single_scenario:
+            ls = "-"
+        label = get_case_label(c)
+        try:
+            wp_init, wp_final = load_wall_points_initial_final(c["case_path"])
+        except Exception as e:
+            print(f"[WALL-PROFILE SKIP] {cav_full}: {e}")
+            continue
+        u_delta = wp_final - wp_init
+        wp_final_amp = wp_init + WALL_PROFILE_AMPLIFICATION * u_delta
+        depth_init = z_mesh_to_depth_m(wp_init[:, 2], cav_full)
+        depth_final = z_mesh_to_depth_m(wp_final_amp[:, 2], cav_full)
+
+        if label not in seen_labels:
+            ax_init.plot(wp_init[:, 0], depth_init, color=col, linestyle=ls,
+                         linewidth=2.0, alpha=0.95, label=label)
+            ax_final.plot(wp_final_amp[:, 0], depth_final, color=col, linestyle=ls,
+                          linewidth=2.0, alpha=0.95, label=label)
+            seen_labels.add(label)
+        any_drawn = True
+
+    if any_drawn:
+        for ax, title in [(ax_init, "Initial shape"), (ax_final, "Final shape")]:
+            ax.set_xlabel("x (m)")
+            ax.grid(True, alpha=0.3)
+            ax.invert_yaxis()
+            ax.set_title(title, fontsize=16)
+        ax_init.set_ylabel("Depth (m)")
+        plt.setp(ax_final.get_yticklabels(), visible=False)
+        ax_final.text(0.98, 0.02,
+                      f"Displacement ×{WALL_PROFILE_AMPLIFICATION:g}",
+                      transform=ax_final.transAxes, fontsize=12, style='italic',
+                      color='#444444', va='bottom', ha='right',
+                      bbox=dict(facecolor='white', alpha=0.85, edgecolor='gray',
+                                boxstyle='round,pad=0.3'))
+        h, l = ax_init.get_legend_handles_labels()
+        if h:
+            fig.legend(h, l, loc="upper center", bbox_to_anchor=(0.5, 0.99),
+                       ncol=min(4, len(h)), fontsize=14, frameon=True)
+    else:
+        for ax in (ax_init, ax_final):
+            ax.text(0.5, 0.5, "No wall-profile data", ha="center", va="center",
+                    transform=ax.transAxes)
+            ax.axis("off")
+
+    _plotted_pressures = set()
+    for c in cases:
+        ps = c.get("pressure_scenario")
+        if ps in _plotted_pressures:
+            continue
+        _plotted_pressures.add(ps)
+        tH, pMPa = read_pressure_schedule(c["case_path"])
+        if tH is not None:
+            ax_p.plot(tH / 24.0, pMPa, linewidth=1.7, color='black',
+                      label=PRESSURE_LABELS.get(ps, ps))
+    if not _plotted_pressures:
+        ax_p.text(0.5, 0.5, "No pressure_schedule.json found.",
+                  ha="center", va="center", transform=ax_p.transAxes)
+    if len(_plotted_pressures) > 1:
+        ax_p.legend(fontsize=14, frameon=True, loc="upper right")
+    ax_p.set_ylabel("Pressure (MPa)")
+    ax_p.set_xlabel("Time (days)")
+    ax_p.grid(True, alpha=0.3)
+
+    add_panel_label(ax_init, "A")
+    add_panel_label(ax_final, "B")
+    add_panel_label(ax_p, "C")
+
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+
+    outname = (f"shapes_initial_final_pressure={SELECT.get('pressure')}"
+               f"_scenario={SELECT.get('scenario')}.png")
+    outpath = os.path.join(OUT_DIR, outname.replace(" ", ""))
+    fig.savefig(outpath, dpi=DPI)
+    print("[SAVED]", outpath)
+
+    if SHOW:
+        plt.show()
+    plt.close(fig)
 
 
 # =============================================================================
@@ -2280,12 +2386,6 @@ def plot_cavern_with_probes(ax, wall_points, sample_points, cavern_label=None):
             ax.scatter(pt[0], y_pt, c=color, s=size, marker=marker,
                       edgecolors='black', linewidths=0.5, zorder=5)
 
-        wall_pt = dist_points[0][1]
-        y_wp = z_mesh_to_depth_m(wall_pt[2], cavern_label) if cavern_label is not None else wall_pt[2]
-        ax.annotate(probe_name, (wall_pt[0], y_wp),
-                   textcoords="offset points", xytext=(10, 0),
-                   fontsize=20, color=color, fontweight='bold')
-
     ax.set_xlabel('Radial distance (m)')
     ax.set_ylabel(y_label)
     ax.set_aspect('equal')
@@ -2310,7 +2410,6 @@ def plot_propagation_depth(ax, time_days, fos_data, radial_distances, threshold=
         ax.plot(time_days, max_depth, linewidth=2, color=color, label=probe_name)
 
     ax.set_xlabel('Time (days)')
-    ax.set_ylabel('FOS<1 penetration depth (m)')
     ax.set_title('Connected dilating zone size')
     ax.grid(True, alpha=0.3)
     ax.legend(loc='upper left', fontsize=18)
@@ -2343,9 +2442,10 @@ def plot_fracture_propagation(case_meta):
 
         plot_cavern_with_probes(ax_cavern, wall_points, sample_points, cavern_label=cav)
         plot_propagation_depth(ax_depth, time_days, fos_data, RADIAL_DISTANCES, FOS_THRESHOLD)
+        ax_depth.set_ylabel("")
 
-        add_panel_label(ax_cavern, "A")
-        add_panel_label(ax_depth, "B")
+        add_panel_label(ax_cavern, "A", fontsize=14)
+        add_panel_label(ax_depth, "B", fontsize=14)
         fig.tight_layout()
 
         safe_name = f"{cav}_{sc}_{ps}".replace(" ", "_").replace("/", "_").replace("None", "none")
@@ -2372,7 +2472,7 @@ FRACTURE_GROUPS = [
     },
     {
         "label": "group2",
-        "shapes": ["Tube-failure", "Fast-leached", "Tilt"],
+        "shapes": ["String-failure", "Fast-leached", "Tilt"],
     },
 ]
 
@@ -2455,19 +2555,19 @@ def plot_fracture_propagation_grouped(frac_cases):
             leg = ax_cav.get_legend()
             if leg is not None:
                 leg.remove()
-            add_panel_label(ax_cav, panel_letters[idx * 2])
+            add_panel_label(ax_cav, panel_letters[idx * 2], fontsize=14)
 
             plot_propagation_depth(ax_dep, t_days, fos_d, RADIAL_DISTANCES, FOS_THRESHOLD)
             ax_dep.set_title("", fontsize=1)  # clear sub-title
             ax_dep.set_xlabel("Time (days)", fontsize=22)
-            ax_dep.set_ylabel("FOS<1 penetration (m)", fontsize=22)
+            ax_dep.set_ylabel("")
             ax_dep.tick_params(axis='both', labelsize=16)
             leg_dep = ax_dep.get_legend()
             if idx == n_shapes - 1:
                 ax_dep.legend(loc='upper right', fontsize=18, frameon=True)
             elif leg_dep is not None:
                 leg_dep.remove()
-            add_panel_label(ax_dep, panel_letters[idx * 2 + 1])
+            add_panel_label(ax_dep, panel_letters[idx * 2 + 1], fontsize=14)
 
         fig.tight_layout()
 
@@ -2744,6 +2844,7 @@ def main():
             print(f"\n[CONVERGENCE] {len(conv_cases)} case(s) with required files")
             if mode == "compare_shapes":
                 plot_convergence_combined(conv_cases)
+                plot_initial_vs_final_shapes(conv_cases)
             elif mode == "compare_sizes":
                 plot_convergence_per_cavern(conv_cases, group_fn=group_cases_by_base_shape)
             elif mode in ("compare_scenarios", "compare_pressures"):
@@ -2751,6 +2852,7 @@ def main():
             else:
                 print(f"[WARN] Unknown PLOT_MODE '{PLOT_MODE}', using compare_shapes")
                 plot_convergence_combined(conv_cases)
+                plot_initial_vs_final_shapes(conv_cases)
         else:
             print("[CONVERGENCE] No cases with required files (u.xdmf + geom.msh)")
 

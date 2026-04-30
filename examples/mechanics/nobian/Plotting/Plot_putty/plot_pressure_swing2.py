@@ -809,6 +809,14 @@ def plot_fig_fos(cavern_key, cavern_label, cases, swing_colors):
         axins2.set_xlim(ax_sum.get_xlim())
         axins2.tick_params(labelsize=7)
 
+    # Share y-axis across all FOS subplots (5 probes + min summary) so the
+    # different panels can be compared on the same vertical scale.
+    ylims = [ax.get_ylim() for ax in axes]
+    y_lo = min(yl[0] for yl in ylims)
+    y_hi = max(yl[1] for yl in ylims)
+    for ax in axes:
+        ax.set_ylim(y_lo, y_hi)
+
     handles, labels = axes[0].get_legend_handles_labels()
     uniq = {}
     for h, l in zip(handles, labels):
