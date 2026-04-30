@@ -298,6 +298,8 @@ VALID_CAVERN_TYPES = [
     "asymmetric_shelf_600", "asymmetric_shelf_1200",
     "vertical_intrusion_600", "vertical_intrusion_1200",
     "spike_upper", "spike_lower", "spike_none",
+    "spike_upper_il2x", "spike_lower_il2x",
+    "spike_upper_il4x", "spike_lower_il4x",
     "dipping_interlayer", "dipping_nointerlayer",
     "A5", "A5_interlayer",
 ]
@@ -335,6 +337,12 @@ CAVERN_PARAMS = {
     "spike_upper": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 1},
     "spike_lower": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 1},
     "spike_none": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 0},
+    # Refined-interlayer spike variants — same geometry as spike_upper / spike_lower,
+    # only the mesh size inside the interlayer differs (2x and 4x finer than baseline).
+    "spike_upper_il2x": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 1},
+    "spike_lower_il2x": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 1},
+    "spike_upper_il4x": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 1},
+    "spike_lower_il4x": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 1},
     # Dipping interlayer caverns (regular 1200k capsule + 2 inclined interlayers @65°)
     "dipping_interlayer":   {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 2},
     "dipping_nointerlayer": {"z_max": 393.0, "z_center": 294.0, "height": 198.0, "n_interlayers": 0},
@@ -367,6 +375,10 @@ GRID_FOLDERS = {
     "spike_upper": "cavern_spike_upper_1200_3D",
     "spike_lower": "cavern_spike_lower_1200_3D",
     "spike_none": "cavern_spike_none_1200_3D",
+    "spike_upper_il2x": "cavern_spike_upper_il2x_1200_3D",
+    "spike_lower_il2x": "cavern_spike_lower_il2x_1200_3D",
+    "spike_upper_il4x": "cavern_spike_upper_il4x_1200_3D",
+    "spike_lower_il4x": "cavern_spike_lower_il4x_1200_3D",
     "dipping_interlayer":   "cavern_dipping_interlayer_1200_3D",
     "dipping_nointerlayer": "cavern_dipping_nointerlayer_1200_3D",
     "A5": "cavern_A5_3D",

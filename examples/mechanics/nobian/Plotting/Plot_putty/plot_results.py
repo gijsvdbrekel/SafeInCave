@@ -162,6 +162,11 @@ CAVERN_COLORS = {
     "Homogeneous":             "#1f77b4",
     "Heterogeneous_above":     "#d62728",
     "Heterogeneous_below":     "#2ca02c",
+    # Refined-interlayer spike variants (same hue as baseline, slightly desaturated)
+    "Heterogeneous_above_il2x": "#fb6a4a",
+    "Heterogeneous_above_il4x": "#a50f15",
+    "Heterogeneous_below_il2x": "#74c476",
+    "Heterogeneous_below_il4x": "#006d2c",
     # Size-specific variants (solid = 1,200,000 m³, lighter = 600,000 m³)
     "Asymmetric (1,200,000 m³)":          "#ff7f0e",
     "Direct-circulation (1,200,000 m³)":  "#2ca02c",

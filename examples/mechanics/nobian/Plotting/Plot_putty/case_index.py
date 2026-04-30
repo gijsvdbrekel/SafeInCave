@@ -28,7 +28,7 @@ KNOWN_SCENARIOS = {
 
 # matches regular600, irregular1200, tilted600, etc.
 _CAVERN_RE = re.compile(r"(regular|irregularfine|irregular|tilted|tilt|directcirculation|reversedcirculation|asymmetric|fastleached|tubefailure)(600|1200)", re.I)
-_SPIKE_RE = re.compile(r"spike_(none|upper|lower)", re.I)
+_SPIKE_RE = re.compile(r"spike_(none|upper|lower)(_il\d+x)?", re.I)
 
 def _safe_read_json(path: str):
     try:
@@ -41,10 +41,12 @@ def _infer_case_name_from_path(case_path: str) -> str:
     return os.path.basename(case_path.rstrip("/"))
 
 def _infer_cavern_type_from_case_name(case_name: str) -> str | None:
-    # Try spike pattern first (no size suffix)
+    # Try spike pattern first (no size suffix). Optional _il<N>x suffix marks
+    # a refined-interlayer mesh variant (e.g. spike_upper_il2x).
     ms = _SPIKE_RE.search(case_name)
     if ms:
-        return f"spike_{ms.group(1).lower()}"
+        suffix = (ms.group(2) or "").lower()
+        return f"spike_{ms.group(1).lower()}{suffix}"
     m = _CAVERN_RE.search(case_name)
     if not m:
         return None
@@ -86,6 +88,12 @@ def _nice_cavern_label(cavern_type_or_group: str) -> str:
         return "Heterogeneous_above"
     if low == "spike_lower":
         return "Heterogeneous_below"
+    if low.startswith("spike_upper_il"):
+        m_il = re.search(r"_il(\d+)x$", low)
+        return f"Heterogeneous_above_il{m_il.group(1)}x" if m_il else "Heterogeneous_above"
+    if low.startswith("spike_lower_il"):
+        m_il = re.search(r"_il(\d+)x$", low)
+        return f"Heterogeneous_below_il{m_il.group(1)}x" if m_il else "Heterogeneous_below"
     return (cavern_type_or_group or "").split("_")[0] if cavern_type_or_group else "Unknown"
 
 def read_case_metadata(case_path: str) -> dict:
