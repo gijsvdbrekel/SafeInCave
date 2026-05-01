@@ -24,6 +24,19 @@ from mpi4py import MPI
 
 import safeincave.PostProcessingTools as post
 
+# Match the global font sizing used by plot_sensitivity.py so figures from
+# both scripts share consistent letter/number sizes when placed side-by-side.
+plt.rcParams.update({
+    "font.size":        14,
+    "axes.titlesize":   16,
+    "axes.labelsize":   14,
+    "xtick.labelsize":  12,
+    "ytick.labelsize":  12,
+    "legend.fontsize":  12,
+    "figure.titlesize": 18,
+    "lines.linewidth":  2.0,
+})
+
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║                           USER CONFIGURATION                                  ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -545,13 +558,13 @@ def plot_fig_convergence(cavern_key, cavern_label, cases, swing_colors):
 
     ax_conv.set_ylabel("Convergence (dV/V0) (%)")
     ax_conv.grid(True, alpha=0.3)
-    ax_conv.legend(fontsize=9, frameon=True, loc="best")
+    ax_conv.legend(fontsize=12, frameon=True, loc="best")
 
     ax_pres.set_ylabel("Pressure (MPa)")
     ax_pres.set_xlabel("Time (days)")
     ax_pres.grid(True, alpha=0.3)
 
-    fig.suptitle(f"Volume Convergence — {cavern_label}", fontsize=13, fontweight='bold')
+    fig.suptitle(f"Volume Convergence — {cavern_label}", fontsize=18, fontweight='bold')
 
     safe_key = cavern_key.replace(" ", "_")
     outpath = os.path.join(OUT_DIR, f"swing_convergence_{safe_key}.png")
@@ -646,9 +659,9 @@ def plot_fig_stress_state(cavern_key, cavern_label, cases, swing_colors):
         if l not in uniq:
             uniq[l] = h
     fig.legend(uniq.values(), uniq.keys(), loc="upper center", bbox_to_anchor=(0.5, 0.96),
-               ncol=min(6, len(uniq)), frameon=True, fontsize=9)
+               ncol=min(6, len(uniq)), frameon=True, fontsize=12)
 
-    fig.suptitle(f"Stress State — {cavern_label}", fontsize=13, fontweight='bold', y=0.99)
+    fig.suptitle(f"Stress State — {cavern_label}", fontsize=18, fontweight='bold', y=0.99)
     fig.tight_layout(rect=[0, 0, 1, 0.92])
 
     safe_key = cavern_key.replace(" ", "_")
@@ -823,9 +836,9 @@ def plot_fig_fos(cavern_key, cavern_label, cases, swing_colors):
         if l not in uniq:
             uniq[l] = h
     fig.legend(uniq.values(), uniq.keys(), loc="upper center", bbox_to_anchor=(0.5, 0.96),
-               ncol=min(6, len(uniq)), frameon=True, fontsize=9)
+               ncol=min(6, len(uniq)), frameon=True, fontsize=12)
 
-    fig.suptitle(f"Factor of Safety — {cavern_label}", fontsize=13, fontweight='bold', y=0.99)
+    fig.suptitle(f"Factor of Safety — {cavern_label}", fontsize=18, fontweight='bold', y=0.99)
     fig.tight_layout(rect=[0, 0, 1, 0.92])
 
     safe_key = cavern_key.replace(" ", "_")
