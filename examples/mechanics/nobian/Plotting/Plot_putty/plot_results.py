@@ -1688,21 +1688,23 @@ def plot_initial_vs_final_shapes(cases):
         ("regular",            "Regular"),
         ("directcirculation",  "Direct-circulation"),
         ("reversedcirculation","Reversed-circulation"),
-        ("tubefailure",        "Tube-failure"),
-        ("tilted",             "Tilted"),
+        ("stringfailure",      "String-failure"),
+        ("tilt",               "Tilt"),
         ("fastleached",        "Fast-leached"),
     ]
 
+    def _norm(label):
+        return _strip_size(label).lower().replace("-", "").replace(" ", "")
+
     by_base = {}
     for c in cases:
-        cav_full = c.get("cavern_label", "")
-        base = _strip_size(cav_full).lower().replace("-", "").replace(" ", "")
-        if base not in by_base:
+        base = _norm(c.get("cavern_label", ""))
+        if base and base not in by_base:
             by_base[base] = c
 
     nrows, ncols = 2, 3
     fig, axes = plt.subplots(nrows, ncols,
-                             figsize=(5.4 * ncols, 4.6 * nrows),
+                             figsize=(4.5 * ncols, 5.6 * nrows),
                              squeeze=False)
 
     for i, (base_key, display) in enumerate(SHAPE_ORDER):
