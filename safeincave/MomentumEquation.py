@@ -1066,6 +1066,8 @@ class LinearMomentumMixed(LinearMomentumBase):
         self.eps_rhs_tilde = do.fem.Function(self.DG0_3x3)
         self.eps_ne_vol = do.fem.Function(self.DG0_1)
         self.eps_th_vol = do.fem.Function(self.DG0_1)
+        self.eps_0_vol = do.fem.Function(self.DG0_1)
+        self.eps_0_tilde = do.fem.Function(self.DG0_3x3)
         self.K = do.fem.Function(self.DG0_1)
         self.E = do.fem.Function(self.DG0_1)
         self.E_star = do.fem.Function(self.DG0_1)
@@ -1116,8 +1118,31 @@ class LinearMomentumMixed(LinearMomentumBase):
         return stress_to
     
     def apply_initial_stress(self, sig0: to.Tensor) -> None:
-        pass
+        """
+        Set the initial element-wise stress.
 
+        Parameters
+        ----------
+        sig0 : torch.Tensor
+            Initial stress per element, shape ``(n_elems, 3, 3)``.
+
+        Returns
+        -------
+        None
+
+        Side Effects
+        ------------
+        Sets :attr:`sig` field.
+        """
+        eps0_to = dotdot_torch(self.mat.C_inv, sig0)
+        eps_0_tilde_to = self.compute_eps_tilde(eps0_to)
+        eps_0_vol_to = to.einsum("bii->b", eps0_to)
+
+        self.eps_0.x.array[:] = to.flatten(eps0_to)
+        self.eps_0_tilde.x.array[:] = to.flatten(eps_0_tilde_to)
+        self.eps_0_vol.x.array[:] = to.flatten(eps_0_vol_to)
+        self.sig.x.array[:] = to.flatten(sig0)
+    
     def compute_eps_k_ne_vol(self, eps_k_ne):
         eps_k_ne_vol = to.einsum("bii->b", eps_k_ne)
         return eps_k_ne_vol
@@ -1229,8 +1254,8 @@ class LinearMomentumMixed(LinearMomentumBase):
         A.assemble()
 
         # Build linear form
-        b_u = ufl.inner(dotdot_ufl(self.CT_tilde, self.eps_rhs_tilde), epsilon(self.u_))*self.dx
-        b_p = self.K*(phi2*(self.T_vol*self.p_k + self.B_vol) - self.eps_ne_vol - self.eps_th_vol)*self.p_*self.dx
+        b_u = ufl.inner(dotdot_ufl(self.CT_tilde, self.eps_rhs_tilde - self.eps_0_tilde), epsilon(self.u_))*self.dx
+        b_p = self.K*(phi2*(self.T_vol*self.p_k + self.B_vol) + self.eps_0_vol - self.eps_ne_vol - self.eps_th_vol)*self.p_*self.dx
         # b_p = bp*self.p_*self.dx
         linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + b_u + b_p)
         b = do.fem.petsc.assemble_vector(linear_form)
