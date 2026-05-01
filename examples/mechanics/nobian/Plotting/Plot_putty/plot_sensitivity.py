@@ -57,15 +57,44 @@ from plot_results import (
 # =============================================================================
 
 plt.rcParams.update({
-    "font.size":        18,
-    "axes.titlesize":   22,
-    "axes.labelsize":   20,
-    "xtick.labelsize":  18,
-    "ytick.labelsize":  18,
-    "legend.fontsize":  16,
-    "figure.titlesize": 24,
+    "font.size":        14,
+    "axes.titlesize":   16,
+    "axes.labelsize":   14,
+    "xtick.labelsize":  12,
+    "ytick.labelsize":  12,
+    "legend.fontsize":  12,
+    "figure.titlesize": 18,
     "lines.linewidth":  2.0,
 })
+
+# =============================================================================
+# CANONICAL CASE LABELS (used across every figure)
+# =============================================================================
+# Map raw case names → human-readable labels used in legends/axes throughout.
+CASE_LABELS = {
+    "md_B_baseline":        "MunsonDawson_baseline",
+    "md_B_no_transient":    "MunsonDawson_noHardening",
+    "md_B_no_reverse":      "MunsonDawson_noRecovery",
+    "md_B_steady_state":    "MunsonDawson_SteadyState",
+    "sic_B_baseline":       "TUD2023_baseline",
+    "no_kelvin":            "TUD2023_noKelvin",
+    "no_desai":             "TUD2023_noDesai",
+    "no_kelvin_no_desai":   "TUD2023_SteadyState",
+    "no_pressure_solution": "no_pressure_solution",
+    "md_A_baseline":        "MunsonDawson_A",
+    "no_leaching":          "no_leaching",
+    "tilted_cavern":        "tilted_cavern",
+    "volume_600":           "volume_600",
+    "dt_half":              "dt_half",
+    "dt_double":            "dt_double",
+    "amplitude_half":       "amplitude_half",
+    "amplitude_double":     "amplitude_double",
+}
+
+
+def case_label(name):
+    """Return the canonical display label for a raw case name."""
+    return CASE_LABELS.get(name, name)
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SIM_ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "output"))
@@ -81,27 +110,20 @@ DIMENSIONS = {
     "creep_toggles": {
         "title": "MD creep-mechanism toggles",
         "cases": ["md_B_baseline", "md_B_no_transient", "md_B_no_reverse", "md_B_steady_state"],
-        "labels": {
-            "md_B_baseline":     "MD full (baseline)",
-            "md_B_no_transient": "No transient (α_w=β_w=0)",
-            "md_B_no_reverse":   "No reverse (δ=0)",
-            "md_B_steady_state": "Steady-state only",
-        },
+        "labels": {k: case_label(k) for k in
+                   ["md_B_baseline", "md_B_no_transient", "md_B_no_reverse", "md_B_steady_state"]},
     },
     "constitutive": {
         "title": "Constitutive model: MD vs TUD2023, scenario A vs B",
         "cases": ["md_B_baseline", "sic_B_baseline", "md_A_baseline"],
-        "labels": {
-            "md_B_baseline":  "MD_B",
-            "sic_B_baseline": "TUD2023_B",
-            "md_A_baseline":  "MD_A",
-        },
+        "labels": {k: case_label(k) for k in
+                   ["md_B_baseline", "sic_B_baseline", "md_A_baseline"]},
     },
     "startup": {
         "title": "Startup: leaching vs equilibrium",
         "cases": ["md_B_baseline", "no_leaching"],
         "labels": {
-            "md_B_baseline": "Leaching phase (baseline)",
+            "md_B_baseline": case_label("md_B_baseline"),
             "no_leaching":   "Equilibrium startup",
         },
     },
@@ -109,28 +131,23 @@ DIMENSIONS = {
         "title": "Cavern geometry & volume",
         "cases": ["md_B_baseline", "tilted_cavern", "volume_600"],
         "labels": {
-            "md_B_baseline":  "Regular 1,200,000 m³ (baseline)",
+            "md_B_baseline":  f"{case_label('md_B_baseline')} (Regular 1,200,000 m³)",
             "tilted_cavern":  "Tilted 1,200,000 m³",
             "volume_600":     "Regular 600,000 m³",
         },
     },
     "secondary_creep": {
         "title": "Secondary creep mechanisms",
-        "cases": ["md_B_baseline", "sic_B_baseline", "no_pressure_solution", "no_kelvin", "no_desai", "no_kelvin_no_desai"],
-        "labels": {
-            "md_B_baseline":        "Baseline (MD)",
-            "sic_B_baseline":       "Baseline (TUD2023)",
-            "no_pressure_solution": "No pressure-solution",
-            "no_kelvin":            "No Kelvin (TUD2023)",
-            "no_desai":             "No Desai (TUD2023)",
-            "no_kelvin_no_desai":   "No Kelvin + No Desai (TUD2023)",
-        },
+        # Baseline MD removed per user request — TUD2023 baseline is the reference.
+        "cases": ["sic_B_baseline", "no_pressure_solution", "no_kelvin", "no_desai", "no_kelvin_no_desai"],
+        "labels": {k: case_label(k) for k in
+                   ["sic_B_baseline", "no_pressure_solution", "no_kelvin", "no_desai", "no_kelvin_no_desai"]},
     },
     "timestep": {
         "title": "Numerical time-step",
         "cases": ["md_B_baseline", "dt_half", "dt_double"],
         "labels": {
-            "md_B_baseline": "dt = 2 h (baseline)",
+            "md_B_baseline": f"{case_label('md_B_baseline')} (dt = 2 h)",
             "dt_half":       "dt = 1 h",
             "dt_double":     "dt = 4 h",
         },
@@ -139,10 +156,23 @@ DIMENSIONS = {
         "title": "Pressure amplitude scaling",
         "cases": ["md_B_baseline", "amplitude_half", "amplitude_double"],
         "labels": {
-            "md_B_baseline":     "1.0× amplitude (baseline)",
+            "md_B_baseline":     f"{case_label('md_B_baseline')} (1.0× amplitude)",
             "amplitude_half":    "0.5× amplitude",
             "amplitude_double":  "2.0× amplitude",
         },
+    },
+}
+
+# Per-dimension explicit linestyle override:
+# secondary_creep — keep TUD2023_baseline solid, all others dashed/dotted variants
+# so subtle differences become readable.
+DIMENSION_LINESTYLES = {
+    "secondary_creep": {
+        "sic_B_baseline":       "-",     # baseline solid
+        "no_pressure_solution": "--",
+        "no_kelvin":            "-.",
+        "no_desai":             ":",
+        "no_kelvin_no_desai":   (0, (3, 1, 1, 1, 1, 1)),  # dash-dot-dot
     },
 }
 
@@ -150,10 +180,18 @@ DIMENSIONS = {
 _COLOR_CYCLE = plt.get_cmap("tab10").colors
 
 
-def _case_style(idx):
-    """Return (color, linestyle) for the idx-th case in a dimension."""
+def _case_style(idx, dim_key=None, case_name=None):
+    """Return (color, linestyle) for a case.
+
+    If `dim_key` has an explicit override in DIMENSION_LINESTYLES and `case_name`
+    is in that override, use the prescribed linestyle. Otherwise cycle.
+    """
     ls_cycle = ["-", "--", "-.", ":"]
-    return _COLOR_CYCLE[idx % len(_COLOR_CYCLE)], ls_cycle[idx % len(ls_cycle)]
+    color = _COLOR_CYCLE[idx % len(_COLOR_CYCLE)]
+    override = DIMENSION_LINESTYLES.get(dim_key, {}) if dim_key else {}
+    if case_name in override:
+        return color, override[case_name]
+    return color, ls_cycle[idx % len(ls_cycle)]
 
 
 # =============================================================================
@@ -288,6 +326,17 @@ def _save(fig, dim_key, stem):
     plt.close(fig)
 
 
+def _legend_on_top(ax, ncol=None):
+    """Place the legend above the axes, centred."""
+    handles, labels = ax.get_legend_handles_labels()
+    if not handles:
+        return
+    n = ncol if ncol is not None else min(len(handles), 3)
+    ax.legend(handles, labels, loc="lower center",
+              bbox_to_anchor=(0.5, 1.02), ncol=n,
+              frameon=False, handlelength=2.5)
+
+
 def plot_convergence_overlay(dim_key, discovered):
     spec, cases = _resolve_dim_cases(dim_key, discovered)
     if not cases:
@@ -302,7 +351,7 @@ def plot_convergence_overlay(dim_key, discovered):
         except Exception as e:
             warnings.warn(f"[{dim_key}/{name}] convergence failed: {e}")
             continue
-        color, ls = _case_style(i)
+        color, ls = _case_style(i, dim_key=dim_key, case_name=name)
         label = spec["labels"].get(name, name)
         ax.plot(t_d, conv, color=color, linestyle=ls, label=label)
 
@@ -315,10 +364,9 @@ def plot_convergence_overlay(dim_key, discovered):
                 pressure_drawn = True
 
     ax.set_xlabel("Time (days)")
-    ax.set_ylabel("Volume convergence ΔV/V₀ (%)")
-    ax.set_title(spec["title"])
+    ax.set_ylabel("ΔV/V₀ (%)")
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", framealpha=0.9)
+    _legend_on_top(ax)
     _save(fig, dim_key, "convergence_overlay")
 
 
@@ -334,27 +382,24 @@ def plot_convergence_rate(dim_key, discovered):
             warnings.warn(f"[{dim_key}/{name}] convergence failed: {e}")
             continue
         rate = compute_convergence_rate(t_d, conv, window=11)
-        color, ls = _case_style(i)
+        color, ls = _case_style(i, dim_key=dim_key, case_name=name)
         label = spec["labels"].get(name, name)
         ax.plot(t_d, rate, color=color, linestyle=ls, label=label)
 
     ax.set_xlabel("Time (days)")
-    ax.set_ylabel("d(ΔV/V₀)/dt (%/day)")
-    ax.set_title(f"{spec['title']} — convergence rate")
+    ax.set_ylabel("Convergence rate (%/day)")
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", framealpha=0.9)
+    _legend_on_top(ax)
     _save(fig, dim_key, "convergence_rate")
 
 
 def plot_strain_rate_probes(dim_key, discovered):
-    """Three-panel figure: roof / mid / floor displacement-rate norms."""
+    """Mid-wall displacement rate ‖u̇‖ as a single panel."""
     spec, cases = _resolve_dim_cases(dim_key, discovered)
     if not cases:
         return
 
-    probe_names = ["roof", "mid", "floor"]
-
-    fig, axes = plt.subplots(3, 1, figsize=(6.3, 8.0), sharex=True)
+    fig, ax = plt.subplots(figsize=(6.3, 4.0))
 
     for i, (name, rec) in enumerate(cases):
         try:
@@ -365,28 +410,20 @@ def plot_strain_rate_probes(dim_key, discovered):
 
         z = wall[:, 2]
         z_min, z_max = float(z.min()), float(z.max())
-        probes = {
-            "floor": wall[int(np.argmin(np.abs(z - z_min)))],
-            "mid":   wall[int(np.argmin(np.abs(z - 0.5 * (z_min + z_max))))],
-            "roof":  wall[int(np.argmin(np.abs(z - z_max)))],
-        }
-        color, ls = _case_style(i)
+        mid_probe = wall[int(np.argmin(np.abs(z - 0.5 * (z_min + z_max))))]
+
+        t_d, speed = compute_strain_rate_timeseries(rec["case_path"], mid_probe)
+        if t_d is None:
+            continue
+        color, ls = _case_style(i, dim_key=dim_key, case_name=name)
         label = spec["labels"].get(name, name)
+        ax.plot(t_d, speed, color=color, linestyle=ls, label=label)
 
-        for ax, pname in zip(axes, probe_names):
-            t_d, speed = compute_strain_rate_timeseries(rec["case_path"], probes[pname])
-            if t_d is None:
-                continue
-            ax.plot(t_d, speed, color=color, linestyle=ls, label=label if pname == "roof" else None)
-
-    for ax, pname in zip(axes, probe_names):
-        ax.set_ylabel(f"‖u̇‖ at {pname} (m/s)")
-        ax.grid(True, alpha=0.3)
-        ax.set_yscale("log")
-
-    axes[-1].set_xlabel("Time (days)")
-    axes[0].set_title(f"{spec['title']} — wall displacement rate")
-    axes[0].legend(loc="best", framealpha=0.9)
+    ax.set_xlabel("Time (days)")
+    ax.set_ylabel("Mid-wall displacement rate (m/s)")
+    ax.set_yscale("log")
+    ax.grid(True, alpha=0.3)
+    _legend_on_top(ax)
     _save(fig, dim_key, "strain_rate_probes")
 
 
@@ -429,16 +466,15 @@ def plot_fos_overlay(dim_key, discovered):
         t, fos = _compute_fos_timeseries(rec["case_path"])
         if t is None:
             continue
-        color, ls = _case_style(i)
+        color, ls = _case_style(i, dim_key=dim_key, case_name=name)
         label = spec["labels"].get(name, name)
         ax.plot(t, fos, color=color, linestyle=ls, label=label)
 
     ax.axhline(1.0, color="k", linewidth=0.8, linestyle=":")
     ax.set_xlabel("Time (days)")
     ax.set_ylabel("Global-min FOS")
-    ax.set_title(f"{spec['title']} — factor of safety")
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", framealpha=0.9)
+    _legend_on_top(ax)
     _save(fig, dim_key, "fos_overlay")
 
 
@@ -482,7 +518,7 @@ def plot_mc_failure_overlay(dim_key, discovered):
         yield_lhs = tau_max - (c_Pa * np.cos(phi) + np.maximum(p_mean, 0.0) * np.sin(phi))
         failed = (yield_lhs >= 0).sum(axis=1)
 
-        color, ls = _case_style(i)
+        color, ls = _case_style(i, dim_key=dim_key, case_name=name)
         label = spec["labels"].get(name, name)
         ax.plot(np.asarray(t_sig, float) / DAY, failed,
                 color=color, linestyle=ls, label=label)
@@ -495,9 +531,8 @@ def plot_mc_failure_overlay(dim_key, discovered):
 
     ax.set_xlabel("Time (days)")
     ax.set_ylabel(f"Failed interlayer cells (c={c_MPa} MPa, φ={phi_deg}°)")
-    ax.set_title(f"{spec['title']} — MC failure count")
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="best", framealpha=0.9)
+    _legend_on_top(ax)
     _save(fig, dim_key, "mc_failure_overlay")
 
 
@@ -506,7 +541,11 @@ def plot_mc_failure_overlay(dim_key, discovered):
 # =============================================================================
 
 def plot_profiling_bars(discovered):
-    """Stacked horizontal bars: ct / ksp / assemble / other seconds per case."""
+    """Stacked horizontal bars: ct / ksp / assemble / other CPU hours per case.
+
+    Time is reported in hours (same accumulated CPU time recorded by the
+    profiler — this is wall time spent inside the wrapped methods).
+    """
     rows = []
     for name, rec in discovered.items():
         payload = load_profiling(rec["case_path"])
@@ -525,11 +564,12 @@ def plot_profiling_bars(discovered):
         return
 
     rows.sort(key=lambda r: r[-1])
-    names = [r[0] for r in rows]
-    ct = np.array([r[1] for r in rows])
-    asmbl = np.array([r[2] for r in rows])
-    ksp = np.array([r[3] for r in rows])
-    other = np.array([r[4] for r in rows])
+    names = [case_label(r[0]) for r in rows]
+    HR = 3600.0
+    ct = np.array([r[1] for r in rows]) / HR
+    asmbl = np.array([r[2] for r in rows]) / HR
+    ksp = np.array([r[3] for r in rows]) / HR
+    other = np.array([r[4] for r in rows]) / HR
 
     fig, ax = plt.subplots(figsize=(9.0, max(3.0, 0.5 * len(rows) + 1.5)))
     y = np.arange(len(rows))
@@ -545,8 +585,7 @@ def plot_profiling_bars(discovered):
 
     ax.set_yticks(y)
     ax.set_yticklabels(names)
-    ax.set_xlabel("Wall time (s)")
-    ax.set_title("CPU profile per sensitivity case")
+    ax.set_xlabel("CPU time (h)")
     ax.legend(loc="lower right")
     ax.grid(True, axis="x", alpha=0.3)
 
@@ -583,7 +622,7 @@ def plot_newton_histogram(discovered):
     for ax, (name, niters) in zip(axes.flat, cases):
         bins = np.arange(niters.min(), niters.max() + 2) - 0.5
         ax.hist(niters, bins=bins, color="#4c72b0", edgecolor="white")
-        ax.set_title(name, fontsize=11)
+        ax.set_title(case_label(name), fontsize=10)
         ax.set_xlabel("Newton iters")
         ax.set_ylabel("Steps")
         ax.grid(True, alpha=0.3)
@@ -600,7 +639,13 @@ def plot_newton_histogram(discovered):
 
 
 def plot_walltime_vs_newton(discovered):
-    """Scatter of wall time vs total Newton iterations — one point per case."""
+    """Scatter of CPU time (hours) vs total Newton iterations — one point per case.
+
+    Each case is coloured and labelled in a legend on top of the plot, so points
+    that overlap remain identifiable without text running off the figure.
+    Note: this is the wall-clock time of the run (single-process), which equals
+    CPU time for a serial solve.
+    """
     pts = []
     for name, rec in discovered.items():
         payload = load_profiling(rec["case_path"])
@@ -616,16 +661,21 @@ def plot_walltime_vs_newton(discovered):
         print("[profiling] no wall-time / Newton data — skipping walltime_vs_newton")
         return
 
-    fig, ax = plt.subplots(figsize=(6.3, 5.0))
-    for name, wall, total_n in pts:
-        ax.scatter(total_n, wall, s=60)
-        ax.annotate(name, (total_n, wall), xytext=(4, 4),
-                    textcoords="offset points", fontsize=9)
+    HR = 3600.0
+    fig, ax = plt.subplots(figsize=(7.5, 5.0))
+
+    n_pts = len(pts)
+    cmap = plt.get_cmap("tab10") if n_pts <= 10 else plt.get_cmap("tab20")
+    for i, (name, wall, total_n) in enumerate(pts):
+        ax.scatter(total_n, wall / HR, s=80,
+                   color=cmap(i % cmap.N),
+                   label=case_label(name),
+                   edgecolor="black", linewidth=0.5)
 
     ax.set_xlabel("Total Newton iterations")
-    ax.set_ylabel("Wall time (s)")
-    ax.set_title("Solver workload vs wall time")
+    ax.set_ylabel("CPU time (h)")
     ax.grid(True, alpha=0.3)
+    _legend_on_top(ax, ncol=min(n_pts, 3))
 
     for ext in ("pdf", "png"):
         fig.savefig(os.path.join(FIG_ROOT, f"walltime_vs_newton.{ext}"), bbox_inches="tight", dpi=200)

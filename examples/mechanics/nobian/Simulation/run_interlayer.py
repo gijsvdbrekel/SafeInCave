@@ -27,6 +27,10 @@ import csv
 # ║      * "spike_upper"    - Upper tilted interlayer spike (1 interlayer)        ║
 # ║      * "spike_lower"    - Lower tilted interlayer spike (1 interlayer)        ║
 # ║      * "spike_none"     - Regular capsule, no interlayers (control)           ║
+# ║      * "spike_upper_il2x" / "spike_lower_il2x" - same shape, interlayer 2x    ║
+# ║        finer mesh (il_size = 2.25 m)                                          ║
+# ║      * "spike_upper_il4x" / "spike_lower_il4x" - same shape, interlayer 4x    ║
+# ║        finer mesh (il_size = 1.125 m)                                         ║
 # ║  - For Zuidwending A5 cavern (~965k m³, real depth 1140-1510m):               ║
 # ║      * "A5"             - Homogeneous salt (no interlayers)                   ║
 # ║      * "A5_interlayer"  - Heterogeneous with 2 interlayers (0.2m thick)       ║
@@ -71,7 +75,7 @@ EQUILIBRIUM_DT_HOURS = 0.5
 #   "A5"                     - Zuidwending cavern A5, homogeneous (~1.000.000 m³, depth 1140-1510m)
 #   "A5_interlayer"          - Zuidwending cavern A5 with 2 interlayers (~1.000.000 m³)
 
-CAVERN_TYPE = "spike_none"
+CAVERN_TYPE = "spike_upper_il2x"
 
 # ── INTERLAYER MATERIAL SELECTION ──────────────────────────────────────────────
 # Choose the material for each interlayer (used for all heterogeneous cavern types)
