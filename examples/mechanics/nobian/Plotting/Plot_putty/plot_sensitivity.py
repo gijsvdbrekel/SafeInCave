@@ -6,11 +6,12 @@ Companion to plot_results.py. Consumes `*_sens_<tag>` case folders produced by
 profiling summaries.
 
 Per-dimension overlays (one call per dimension):
-    plot_convergence_overlay    — ΔV/V₀ (%) vs time, pressure on twin axis
-    plot_convergence_rate       — dΔV/dt, smoothed
-    plot_strain_rate_probes     — |ε̇_creep| at roof / mid / floor
-    plot_fos_overlay            — global-min FOS vs time
-    plot_mc_failure_overlay     — MC-failed interlayer cell count (skips gracefully)
+    plot_convergence_overlay      — ΔV/V₀ (%) vs time, pressure on twin axis
+    plot_convergence_rate         — dΔV/dt, smoothed
+    plot_total_strain_rate_probe  — equivalent strain rate from eps_tot at mid-wall
+    plot_vp_strain_rate_probe     — equivalent strain rate from eps_vp at mid-wall
+    plot_fos_overlay              — global-min FOS vs time
+    plot_mc_failure_overlay       — MC-failed interlayer cell count (skips gracefully)
 
 Aggregate profiling (one call total):
     plot_profiling_bars         — stacked h-bars: ct / ksp / assemble / other
@@ -261,38 +262,56 @@ def compute_convergence_rate(t_days, conv_pct, window=5):
     return rate
 
 
-def compute_strain_rate_timeseries(case_folder, probe_xyz, normalize_per_sec=True):
-    """
-    Compute the norm of the displacement-rate vector at a probe point, used as
-    a proxy for local creep strain-rate. Returns (t_days, speed) where speed is
-    in 1/s if normalize_per_sec else dimensionless displacement step norm.
+def _path_strain_xdmf(case_folder, field_name):
+    """Path to a DG0 strain tensor XDMF (`eps_tot` or `eps_vp`)."""
+    candidates = [
+        os.path.join(case_folder, "operation", field_name, f"{field_name}.xdmf"),
+        os.path.join(case_folder, "operation", f"{field_name}.xdmf"),
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
 
-    Uses the displacement field (`u.xdmf`) which already reflects creep.
-    Finite-differences ||du/dt|| at the closest node to probe_xyz.
-    """
-    from scipy.spatial import cKDTree
 
-    u_xdmf = path_u_xdmf(case_folder)
-    if not os.path.isfile(u_xdmf):
+def compute_eq_strain_rate_timeseries(case_folder, probe_xyz, field_name="eps_tot"):
+    """
+    Equivalent (von Mises) strain rate at the cell closest to `probe_xyz`,
+    computed by finite-differencing the equivalent strain stored in the
+    DG0 tensor field `<field_name>` (e.g. `eps_tot`, `eps_vp`).
+
+    Equivalent strain:
+        ε_eq = sqrt( (2/3) · ε_dev : ε_dev )
+
+    where ε_dev = ε − (1/3) tr(ε) I. The rate is dε_eq / dt in 1/s.
+
+    Returns (t_days, eps_rate). Both arrays have length Nt; the first sample
+    is NaN (no backward difference available).
+    """
+    xdmf = _path_strain_xdmf(case_folder, field_name)
+    if xdmf is None:
         return None, None
 
-    points, time_list, u_field = post.read_node_vector(u_xdmf)
+    centroids, time_list, eps = post.read_cell_tensor(xdmf)
     t = np.asarray(time_list, float)
     if len(t) < 2:
         return None, None
 
-    tree = cKDTree(points)
-    _, idx = tree.query(np.asarray(probe_xyz, float))
+    idx = post.find_closest_point(np.asarray(probe_xyz, float), centroids)
+    e = eps[:, idx, :, :]                              # (Nt, 3, 3)
+    tr = e[:, 0, 0] + e[:, 1, 1] + e[:, 2, 2]
+    dev = e.copy()
+    dev[:, 0, 0] -= tr / 3.0
+    dev[:, 1, 1] -= tr / 3.0
+    dev[:, 2, 2] -= tr / 3.0
+    eps_eq = np.sqrt((2.0 / 3.0) * np.einsum("tij,tij->t", dev, dev))
 
-    u = u_field[:, idx, :]  # (Nt, 3)
-    du = np.diff(u, axis=0)
+    deps = np.diff(eps_eq)
     dt = np.diff(t)
     dt = np.where(dt > 0, dt, np.nan)
-
-    speed = np.linalg.norm(du, axis=1) / (dt if normalize_per_sec else 1.0)
-    # Forward-fill onto original time axis (pad first sample with NaN)
-    speed_full = np.concatenate([[np.nan], speed])
-    return t / DAY, speed_full
+    rate = deps / dt
+    rate_full = np.concatenate([[np.nan], rate])
+    return t / DAY, rate_full
 
 
 # =============================================================================
@@ -393,13 +412,14 @@ def plot_convergence_rate(dim_key, discovered):
     _save(fig, dim_key, "convergence_rate")
 
 
-def plot_strain_rate_probes(dim_key, discovered):
-    """Mid-wall displacement rate ‖u̇‖ as a single panel."""
+def _plot_eq_strain_rate(dim_key, discovered, field_name, ylabel, stem):
+    """Mid-wall equivalent strain rate from a DG0 strain field."""
     spec, cases = _resolve_dim_cases(dim_key, discovered)
     if not cases:
         return
 
     fig, ax = plt.subplots(figsize=(6.3, 4.0))
+    any_drawn = False
 
     for i, (name, rec) in enumerate(cases):
         try:
@@ -412,19 +432,48 @@ def plot_strain_rate_probes(dim_key, discovered):
         z_min, z_max = float(z.min()), float(z.max())
         mid_probe = wall[int(np.argmin(np.abs(z - 0.5 * (z_min + z_max))))]
 
-        t_d, speed = compute_strain_rate_timeseries(rec["case_path"], mid_probe)
+        t_d, rate = compute_eq_strain_rate_timeseries(
+            rec["case_path"], mid_probe, field_name=field_name
+        )
         if t_d is None:
+            warnings.warn(f"[{dim_key}/{name}] {field_name} not available — skipping")
             continue
         color, ls = _case_style(i, dim_key=dim_key, case_name=name)
         label = spec["labels"].get(name, name)
-        ax.plot(t_d, speed, color=color, linestyle=ls, label=label)
+        # Plot magnitude on log scale
+        ax.plot(t_d, np.abs(rate), color=color, linestyle=ls, label=label)
+        any_drawn = True
+
+    if not any_drawn:
+        plt.close(fig)
+        return
 
     ax.set_xlabel("Time (days)")
-    ax.set_ylabel("Mid-wall displacement rate (m/s)")
+    ax.set_ylabel(ylabel)
     ax.set_yscale("log")
     ax.grid(True, alpha=0.3)
     _legend_on_top(ax)
-    _save(fig, dim_key, "strain_rate_probes")
+    _save(fig, dim_key, stem)
+
+
+def plot_total_strain_rate_probe(dim_key, discovered):
+    """Mid-wall total equivalent strain rate (from `eps_tot`)."""
+    _plot_eq_strain_rate(
+        dim_key, discovered,
+        field_name="eps_tot",
+        ylabel="Mid-wall total strain rate (1/s)",
+        stem="strain_rate_total",
+    )
+
+
+def plot_vp_strain_rate_probe(dim_key, discovered):
+    """Mid-wall viscoplastic equivalent strain rate (from `eps_vp`)."""
+    _plot_eq_strain_rate(
+        dim_key, discovered,
+        field_name="eps_vp",
+        ylabel="Mid-wall viscoplastic strain rate (1/s)",
+        stem="strain_rate_vp",
+    )
 
 
 def _compute_fos_timeseries(case_folder):
@@ -768,7 +817,8 @@ def main():
         plot_convergence_overlay(dim_key, discovered)
         plot_convergence_rate(dim_key, discovered)
         if not args.skip_heavy:
-            plot_strain_rate_probes(dim_key, discovered)
+            plot_total_strain_rate_probe(dim_key, discovered)
+            plot_vp_strain_rate_probe(dim_key, discovered)
             plot_fos_overlay(dim_key, discovered)
             plot_mc_failure_overlay(dim_key, discovered)
 
