@@ -1677,80 +1677,80 @@ def plot_convergence_per_cavern(cases, group_fn=None):
 
 
 def plot_initial_vs_final_shapes(cases):
-    """compare_shapes companion figure: one subplot per cavern showing the
-    initial (black) and final (colored, amplified) wall profiles overlaid.
-    Subplots are arranged in a grid; the pressure schedule sits at the bottom
-    spanning all columns.
+    """2x3 grid of cavern profiles: one cavern per subplot, initial wall in
+    black and final (amplified) wall in the cavern's signature colour. The
+    cavern order is fixed: top row = regular, direct-circulation,
+    reversed-circulation; bottom row = tube-failure, tilted, fast-leached.
+    Y-axis is depth from surface (m), with the axis inverted so the cavern is
+    drawn the right way up.
     """
-    seen = set()
-    cav_cases = []
+    SHAPE_ORDER = [
+        ("regular",            "Regular"),
+        ("directcirculation",  "Direct-circulation"),
+        ("reversedcirculation","Reversed-circulation"),
+        ("tubefailure",        "Tube-failure"),
+        ("tilted",             "Tilted"),
+        ("fastleached",        "Fast-leached"),
+    ]
+
+    by_base = {}
     for c in cases:
-        cav = c.get("cavern_label")
-        if cav not in seen:
-            seen.add(cav)
-            cav_cases.append(c)
+        cav_full = c.get("cavern_label", "")
+        base = _strip_size(cav_full).lower().replace("-", "").replace(" ", "")
+        if base not in by_base:
+            by_base[base] = c
 
-    n = len(cav_cases)
-    if n == 0:
-        print("[INITIAL-FINAL] No cases to plot.")
-        return
+    nrows, ncols = 2, 3
+    fig, axes = plt.subplots(nrows, ncols,
+                             figsize=(5.4 * ncols, 4.6 * nrows),
+                             squeeze=False)
 
-    ncols = 3
-    nrows = int(np.ceil(n / ncols))
-
-    fig = plt.figure(figsize=(5.6 * ncols, 4.8 * nrows + 3.0))
-    gs = fig.add_gridspec(nrows + 1, ncols,
-                          height_ratios=[3.0] * nrows + [1.4],
-                          hspace=0.40, wspace=0.25)
-
-    for i, c in enumerate(cav_cases):
+    for i, (base_key, display) in enumerate(SHAPE_ORDER):
         r, k = divmod(i, ncols)
-        ax = fig.add_subplot(gs[r, k])
+        ax = axes[r][k]
+
+        c = by_base.get(base_key)
+        if c is None:
+            ax.text(0.5, 0.5, f"No data\n({display})", ha="center",
+                    va="center", transform=ax.transAxes, fontsize=12,
+                    color="#666666")
+            ax.set_title(display, fontsize=14)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            continue
+
         cav_full = c.get("cavern_label")
         sc = c.get("scenario_preset")
         ps = c.get("pressure_scenario")
         col, _ls = get_case_color_and_style(cav_full, sc, ps)
+
         try:
             wp_init, wp_final = load_wall_points_initial_final(c["case_path"])
         except Exception as e:
             print(f"[WALL-PROFILE SKIP] {cav_full}: {e}")
             ax.text(0.5, 0.5, "No data", ha="center", va="center",
                     transform=ax.transAxes)
-            ax.set_title(_strip_size(cav_full), fontsize=14)
+            ax.set_title(display, fontsize=14)
             continue
+
         u_delta = wp_final - wp_init
         wp_final_amp = wp_init + WALL_PROFILE_AMPLIFICATION * u_delta
 
-        ax.plot(wp_init[:, 0], wp_init[:, 2], color='black',
+        depth_init = z_mesh_to_depth_m(wp_init[:, 2], cav_full)
+        depth_final = z_mesh_to_depth_m(wp_final_amp[:, 2], cav_full)
+
+        ax.plot(wp_init[:, 0], depth_init, color='black',
                 linewidth=1.8, label='Initial')
-        ax.plot(wp_final_amp[:, 0], wp_final_amp[:, 2], color=col,
+        ax.plot(wp_final_amp[:, 0], depth_final, color=col,
                 linewidth=1.8, label='Final')
-        ax.set_title(_strip_size(cav_full), fontsize=14)
+
+        ax.set_title(display, fontsize=14)
         ax.set_xlabel("x (m)")
         if k == 0:
-            ax.set_ylabel("Height z (m)")
+            ax.set_ylabel("Depth (m)")
         ax.grid(True, alpha=0.3)
+        ax.invert_yaxis()
         ax.legend(loc='best', fontsize=10, frameon=True)
-
-    ax_p = fig.add_subplot(gs[nrows, :])
-    _plotted_pressures = set()
-    for c in cases:
-        ps = c.get("pressure_scenario")
-        if ps in _plotted_pressures:
-            continue
-        _plotted_pressures.add(ps)
-        tH, pMPa = read_pressure_schedule(c["case_path"])
-        if tH is not None:
-            ax_p.plot(tH / 24.0, pMPa, linewidth=1.7, color='black',
-                      label=PRESSURE_LABELS.get(ps, ps))
-    if not _plotted_pressures:
-        ax_p.text(0.5, 0.5, "No pressure_schedule.json found.",
-                  ha="center", va="center", transform=ax_p.transAxes)
-    if len(_plotted_pressures) > 1:
-        ax_p.legend(fontsize=12, frameon=True, loc="upper right")
-    ax_p.set_ylabel("Pressure (MPa)")
-    ax_p.set_xlabel("Time (days)")
-    ax_p.grid(True, alpha=0.3)
 
     fig.text(0.99, 0.005,
              f"Final wall displacement ×{WALL_PROFILE_AMPLIFICATION:g}",
