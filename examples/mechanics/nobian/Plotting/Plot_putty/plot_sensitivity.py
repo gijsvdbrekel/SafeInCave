@@ -116,7 +116,8 @@ DIMENSIONS = {
     },
     "constitutive": {
         "title": "Constitutive model: MD vs TUD2023, scenario A vs B",
-        "cases": ["md_B_baseline", "sic_B_baseline", "md_A_baseline"],
+        # Order matters: TUD2023 (solid) drawn first so MD (dashed) sits on top.
+        "cases": ["sic_B_baseline", "md_A_baseline", "md_B_baseline"],
         "labels": {
             "md_B_baseline":  "MD",
             "sic_B_baseline": "TUD2023",
