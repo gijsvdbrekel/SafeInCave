@@ -117,8 +117,11 @@ DIMENSIONS = {
     "constitutive": {
         "title": "Constitutive model: MD vs TUD2023, scenario A vs B",
         "cases": ["md_B_baseline", "sic_B_baseline", "md_A_baseline"],
-        "labels": {k: case_label(k) for k in
-                   ["md_B_baseline", "sic_B_baseline", "md_A_baseline"]},
+        "labels": {
+            "md_B_baseline":  "MD",
+            "sic_B_baseline": "TUD2023",
+            "md_A_baseline":  case_label("md_A_baseline"),
+        },
     },
     "startup": {
         "title": "Startup: leaching vs equilibrium",
@@ -167,6 +170,7 @@ DIMENSIONS = {
 # Per-dimension explicit linestyle override:
 # secondary_creep — keep TUD2023_baseline solid, all others dashed/dotted variants
 # so subtle differences become readable.
+# constitutive — TUD2023 solid, MD dashed for direct visual comparison.
 DIMENSION_LINESTYLES = {
     "secondary_creep": {
         "sic_B_baseline":       "-",     # baseline solid
@@ -174,6 +178,19 @@ DIMENSION_LINESTYLES = {
         "no_kelvin":            "-.",
         "no_desai":             ":",
         "no_kelvin_no_desai":   (0, (3, 1, 1, 1, 1, 1)),  # dash-dot-dot
+    },
+    "constitutive": {
+        "sic_B_baseline": "-",
+        "md_B_baseline":  "--",
+    },
+}
+
+# Per-dimension explicit colour override.
+# constitutive — TUD2023 green, MD red.
+DIMENSION_COLORS = {
+    "constitutive": {
+        "sic_B_baseline": "tab:green",
+        "md_B_baseline":  "tab:red",
     },
 }
 
@@ -184,14 +201,18 @@ _COLOR_CYCLE = plt.get_cmap("tab10").colors
 def _case_style(idx, dim_key=None, case_name=None):
     """Return (color, linestyle) for a case.
 
-    If `dim_key` has an explicit override in DIMENSION_LINESTYLES and `case_name`
-    is in that override, use the prescribed linestyle. Otherwise cycle.
+    If `dim_key` has an explicit override in DIMENSION_LINESTYLES /
+    DIMENSION_COLORS and `case_name` is present, use the prescribed value.
+    Otherwise cycle.
     """
     ls_cycle = ["-", "--", "-.", ":"]
     color = _COLOR_CYCLE[idx % len(_COLOR_CYCLE)]
-    override = DIMENSION_LINESTYLES.get(dim_key, {}) if dim_key else {}
-    if case_name in override:
-        return color, override[case_name]
+    color_override = DIMENSION_COLORS.get(dim_key, {}) if dim_key else {}
+    if case_name in color_override:
+        color = color_override[case_name]
+    ls_override = DIMENSION_LINESTYLES.get(dim_key, {}) if dim_key else {}
+    if case_name in ls_override:
+        return color, ls_override[case_name]
     return color, ls_cycle[idx % len(ls_cycle)]
 
 
