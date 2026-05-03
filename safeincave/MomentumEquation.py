@@ -1077,6 +1077,7 @@ class LinearMomentumMixed(LinearMomentumBase):
     def create_pytorch_fields(self):
         self.eps_rhs_to = to.zeros((self.n_elems, 3, 3))
         self.eps_rhs_tilde_to = to.zeros((self.n_elems, 3, 3))
+        self.eps_0_tilde_to = to.zeros((self.n_elems, 3, 3))
 
     def create_trial_test_functions(self):
         self.du, self.dp = ufl.TrialFunctions(self.V)
@@ -1113,7 +1114,9 @@ class LinearMomentumMixed(LinearMomentumBase):
         eps_tilde = self.compute_eps_tilde(eps_tot)
         I = to.eye(3).expand(self.n_elems, -1, -1)
         pI = self.p_to[:,None,None]*I
-        stress_to = dotdot_torch(self.mat.CT_tilde, eps_tilde - self.eps_rhs_tilde_to + dotdot_torch(self.mat.C_tilde_inv, pI))
+        eps_aux = eps_tilde - self.eps_rhs_tilde_to + self.eps_0_tilde_to
+        eps_aux += dotdot_torch(self.mat.C_tilde_inv, pI)
+        stress_to = dotdot_torch(self.mat.CT_tilde, eps_aux)
         self.sig.x.array[:] = to.flatten(stress_to)
         return stress_to
     
@@ -1135,11 +1138,11 @@ class LinearMomentumMixed(LinearMomentumBase):
         Sets :attr:`sig` field.
         """
         eps0_to = dotdot_torch(self.mat.C_inv, sig0)
-        eps_0_tilde_to = self.compute_eps_tilde(eps0_to)
+        self.eps_0_tilde_to = self.compute_eps_tilde(eps0_to)
         eps_0_vol_to = to.einsum("bii->b", eps0_to)
 
         self.eps_0.x.array[:] = to.flatten(eps0_to)
-        self.eps_0_tilde.x.array[:] = to.flatten(eps_0_tilde_to)
+        self.eps_0_tilde.x.array[:] = to.flatten(self.eps_0_tilde_to)
         self.eps_0_vol.x.array[:] = to.flatten(eps_0_vol_to)
         self.sig.x.array[:] = to.flatten(sig0)
     
