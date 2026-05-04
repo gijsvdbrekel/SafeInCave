@@ -14,7 +14,7 @@ __version__ = "2.1.0"
 from .Grid import GridHandlerGMSH
 from .HeatEquation import HeatDiffusion
 from .MomentumEquation import LinearMomentumBase, LinearMomentum, LinearMomentumMixed
-from .MaterialProps import Material, NonElasticElement, Spring, Thermoelastic, Viscoelastic, DislocationCreep, PressureSolutionCreep, ViscoplasticDesai
+from .MaterialProps import Material, NonElasticElement, Spring, Thermoelastic, Viscoelastic, DislocationCreep, PressureSolutionCreep, ViscoplasticDesai, MunsonDawsonCreep
 from .OutputHandler import SaveFields
 from .Thermodynamics import CavernThermodynamics
 from . import CavernBC
@@ -41,6 +41,7 @@ __all__ = [
     "DislocationCreep",
     "PressureSolutionCreep",
     "ViscoplasticDesai",
+    "MunsonDawsonCreep",
     "SaveFields",
     "Simulator_TM",
     "Simulator_T",
