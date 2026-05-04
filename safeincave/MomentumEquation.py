@@ -118,6 +118,7 @@ class LinearMomentumBase(ABC):
         self.Temp = to.zeros(self.n_elems, dtype=to.float64)
         self.sig = do.fem.Function(self.DG0_3x3)
         self.eps_tot = do.fem.Function(self.DG0_3x3)
+        self.eps_0 = do.fem.Function(self.DG0_3x3)
         self.u = do.fem.Function(self.CG1_3x1)
         self.q_elems = do.fem.Function(self.DG0_1)
         self.q_nodes = do.fem.Function(self.CG1_1)
@@ -353,8 +354,8 @@ class LinearMomentumBase(ABC):
         eps_th = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
         deltaT = self.Temp - self.T0
         for elem_th in self.mat.elems_th:
-        	elem_th.compute_eps_th(deltaT)
-        	eps_th += elem_th.eps_th
+            elem_th.compute_eps_th(deltaT)
+            eps_th += elem_th.eps_th
         return eps_th
 
     def compute_eps_ne_k(self, dt: float) -> to.Tensor:
@@ -373,8 +374,8 @@ class LinearMomentumBase(ABC):
         """
         eps_ne_k = to.zeros((self.n_elems, 3, 3), dtype=to.float64)
         for elem_ne in self.mat.elems_ne:
-        	elem_ne.compute_eps_ne_k(dt*self.theta, dt*(1 - self.theta))
-        	eps_ne_k += elem_ne.eps_ne_k
+            elem_ne.compute_eps_ne_k(dt*self.theta, dt*(1 - self.theta))
+            eps_ne_k += elem_ne.eps_ne_k
         return eps_ne_k
 
     def compute_eps_ne_rate(self, stress: to.Tensor, dt: float) -> None:
@@ -393,7 +394,7 @@ class LinearMomentumBase(ABC):
         None
         """
         for elem_ne in self.mat.elems_ne:
-        	elem_ne.compute_eps_ne_rate(stress, dt*self.theta, self.Temp, return_eps_ne=False)
+            elem_ne.compute_eps_ne_rate(stress, dt*self.theta, self.Temp, return_eps_ne=False)
 
     def update_eps_ne_rate_old(self) -> None:
         """
@@ -404,7 +405,7 @@ class LinearMomentumBase(ABC):
         None
         """
         for elem_ne in self.mat.elems_ne:
-        	elem_ne.update_eps_ne_rate_old()
+            elem_ne.update_eps_ne_rate_old()
 
     def update_eps_ne_old(self, stress: to.Tensor, stress_k: to.Tensor, dt: float) -> None:
         """
@@ -424,7 +425,7 @@ class LinearMomentumBase(ABC):
         None
         """
         for elem_ne in self.mat.elems_ne:
-        	elem_ne.update_eps_ne_old(stress, stress_k, dt*(1-self.theta))
+            elem_ne.update_eps_ne_old(stress, stress_k, dt*(1-self.theta))
 
     def increment_internal_variables(self, stress: to.Tensor, stress_k: to.Tensor, dt: float) -> None:
         """
@@ -441,7 +442,7 @@ class LinearMomentumBase(ABC):
         None
         """
         for elem_ne in self.mat.elems_ne:
-        	elem_ne.increment_internal_variables(stress, stress_k, dt)
+            elem_ne.increment_internal_variables(stress, stress_k, dt)
 
     def update_internal_variables(self) -> None:
         """
@@ -452,7 +453,7 @@ class LinearMomentumBase(ABC):
         None
         """
         for elem_ne in self.mat.elems_ne:
-        	elem_ne.update_internal_variables()
+            elem_ne.update_internal_variables()
 
     def create_solution_vector(self) -> None:
         """
@@ -661,6 +662,26 @@ class LinearMomentumBase(ABC):
         """
         pass
 
+    @abstractmethod
+    def apply_initial_stress(self, sig0: to.Tensor) -> None:
+        """
+        Set the initial element-wise stress.
+
+        Parameters
+        ----------
+        sig0 : torch.Tensor
+            Initial stress per element, shape ``(n_elems, 3, 3)``.
+
+        Returns
+        -------
+        None
+
+        Side Effects
+        ------------
+        Sets :attr:`sig` field.
+        """
+        pass
+
 
 
 
@@ -703,6 +724,7 @@ class LinearMomentum(LinearMomentumBase):
         self.C = do.fem.Function(self.DG0_6x6)
         self.CT = do.fem.Function(self.DG0_6x6)
         self.eps_rhs = do.fem.Function(self.DG0_3x3)
+        self.eps_0 = do.fem.Function(self.DG0_3x3)
 
     def create_pytorch_fields(self) -> None:
         """
@@ -717,6 +739,7 @@ class LinearMomentum(LinearMomentumBase):
         Creates :attr:`eps_rhs_to` with shape ``(n_elems, 3, 3)``.
         """
         self.eps_rhs_to = to.zeros((self.n_elems, 3, 3))
+        self.eps0_to = to.zeros((self.n_elems, 3, 3))
 
     def create_trial_test_functions(self) -> None:
         """
@@ -822,9 +845,32 @@ class LinearMomentum(LinearMomentumBase):
         ------------
         Copies the stress into :attr:`sig`.
         """
-        stress_to = dotdot_torch(self.mat.CT, eps_tot_to - self.eps_rhs_to)
+        stress_to = dotdot_torch(self.mat.CT, self.eps0_to + eps_tot_to - self.eps_rhs_to)
+        # stress_to = dotdot_torch(self.mat.CT, eps_tot_to - self.eps_rhs_to)
         self.sig.x.array[:] = to.flatten(stress_to)
         return stress_to
+    
+    def apply_initial_stress(self, sig0: to.Tensor) -> None:
+        """
+        Set the initial element-wise stress.
+
+        Parameters
+        ----------
+        sig0 : torch.Tensor
+            Initial stress per element, shape ``(n_elems, 3, 3)``.
+
+        Returns
+        -------
+        None
+
+        Side Effects
+        ------------
+        Sets :attr:`sig` field.
+        """
+        self.eps0_to = dotdot_torch(self.mat.C_inv, sig0)
+        self.eps_0.x.array[:] = to.flatten(self.eps0_to)
+        # self.eps_tot.x.array[:] = to.flatten(self.eps0_to)
+        self.sig.x.array[:] = to.flatten(sig0)
 
     def compute_eps_rhs(self, dt: float, stress_k: to.Tensor) -> None:
         """
@@ -870,7 +916,8 @@ class LinearMomentum(LinearMomentumBase):
         A.assemble()
 
         # Build linear form
-        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + sum(self.bc.cavern_bcs))
+        b_rhs = ufl.inner(dotdot_ufl(self.C, -self.eps_0), epsilon(self.u_))*self.dx
+        linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + sum(self.bc.cavern_bcs) + b_rhs)
         b = fem_petsc.assemble_vector(linear_form)
         fem_petsc.apply_lifting(b, [bilinear_form], [self.bc.dirichlet_bcs])
         b.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
@@ -964,7 +1011,7 @@ class LinearMomentum(LinearMomentumBase):
         A.assemble()
 
         # Build linear form
-        b_rhs = ufl.inner(dotdot_ufl(self.CT, self.eps_rhs), epsilon(self.u_))*self.dx
+        b_rhs = ufl.inner(dotdot_ufl(self.CT, self.eps_rhs - self.eps_0), epsilon(self.u_))*self.dx
         linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + sum(self.bc.cavern_bcs) + b_rhs)
         b = fem_petsc.assemble_vector(linear_form)
         fem_petsc.apply_lifting(b, [bilinear_form], [self.bc.dirichlet_bcs])
@@ -1015,6 +1062,8 @@ class LinearMomentumMixed(LinearMomentumBase):
         self.eps_rhs_tilde = do.fem.Function(self.DG0_3x3)
         self.eps_ne_vol = do.fem.Function(self.DG0_1)
         self.eps_th_vol = do.fem.Function(self.DG0_1)
+        self.eps_0_vol = do.fem.Function(self.DG0_1)
+        self.eps_0_tilde = do.fem.Function(self.DG0_3x3)
         self.K = do.fem.Function(self.DG0_1)
         self.E = do.fem.Function(self.DG0_1)
         self.E_star = do.fem.Function(self.DG0_1)
@@ -1024,6 +1073,7 @@ class LinearMomentumMixed(LinearMomentumBase):
     def create_pytorch_fields(self):
         self.eps_rhs_to = to.zeros((self.n_elems, 3, 3))
         self.eps_rhs_tilde_to = to.zeros((self.n_elems, 3, 3))
+        self.eps_0_tilde_to = to.zeros((self.n_elems, 3, 3))
 
     def create_trial_test_functions(self):
         self.du, self.dp = ufl.TrialFunctions(self.V)
@@ -1060,10 +1110,38 @@ class LinearMomentumMixed(LinearMomentumBase):
         eps_tilde = self.compute_eps_tilde(eps_tot)
         I = to.eye(3).expand(self.n_elems, -1, -1)
         pI = self.p_to[:,None,None]*I
-        stress_to = dotdot_torch(self.mat.CT_tilde, eps_tilde - self.eps_rhs_tilde_to + dotdot_torch(self.mat.C_tilde_inv, pI))
+        eps_aux = eps_tilde - self.eps_rhs_tilde_to + self.eps_0_tilde_to
+        eps_aux += dotdot_torch(self.mat.C_tilde_inv, pI)
+        stress_to = dotdot_torch(self.mat.CT_tilde, eps_aux)
         self.sig.x.array[:] = to.flatten(stress_to)
         return stress_to
+    
+    def apply_initial_stress(self, sig0: to.Tensor) -> None:
+        """
+        Set the initial element-wise stress.
 
+        Parameters
+        ----------
+        sig0 : torch.Tensor
+            Initial stress per element, shape ``(n_elems, 3, 3)``.
+
+        Returns
+        -------
+        None
+
+        Side Effects
+        ------------
+        Sets :attr:`sig` field.
+        """
+        eps0_to = dotdot_torch(self.mat.C_inv, sig0)
+        self.eps_0_tilde_to = self.compute_eps_tilde(eps0_to)
+        eps_0_vol_to = to.einsum("bii->b", eps0_to)
+
+        self.eps_0.x.array[:] = to.flatten(eps0_to)
+        self.eps_0_tilde.x.array[:] = to.flatten(self.eps_0_tilde_to)
+        self.eps_0_vol.x.array[:] = to.flatten(eps_0_vol_to)
+        self.sig.x.array[:] = to.flatten(sig0)
+    
     def compute_eps_k_ne_vol(self, eps_k_ne):
         eps_k_ne_vol = to.einsum("bii->b", eps_k_ne)
         return eps_k_ne_vol
@@ -1172,9 +1250,8 @@ class LinearMomentumMixed(LinearMomentumBase):
         A.assemble()
 
         # Build linear form
-        b_u = ufl.inner(dotdot_ufl(self.CT_tilde, self.eps_rhs_tilde), epsilon(self.u_))*self.dx
-        b_p = self.K*(phi2*(self.T_vol*self.p_k + self.B_vol) - self.eps_ne_vol - self.eps_th_vol)*self.p_*self.dx
-        # b_p = bp*self.p_*self.dx
+        b_u = ufl.inner(dotdot_ufl(self.CT_tilde, self.eps_rhs_tilde - self.eps_0_tilde), epsilon(self.u_))*self.dx
+        b_p = self.K*(phi2*(self.T_vol*self.p_k + self.B_vol) + self.eps_0_vol - self.eps_ne_vol - self.eps_th_vol)*self.p_*self.dx
         linear_form = do.fem.form(self.b_body + sum(self.bc.neumann_bcs) + sum(self.bc.cavern_bcs) + b_u + b_p)
         b = do.fem.petsc.assemble_vector(linear_form)
         do.fem.petsc.apply_lifting(b, [bilinear_form], [self.bc.dirichlet_bcs])

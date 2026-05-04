@@ -15,7 +15,7 @@
 # the License.
 
 from numpy.typing import NDArray
-from typing import Callable
+from typing import Callable, Any
 from .Grid import GridHandlerGMSH
 import numpy as np
 import torch as to
@@ -28,7 +28,7 @@ UFLVector3 = ufl.core.expr.Expr  # Shape (3,)
 UFLVector6 = ufl.core.expr.Expr  # Shape (6,)
 UFLTensor3x3 = ufl.core.expr.Expr  # Shape (3,3)
 UFLMatrix6x6 = ufl.core.expr.Expr  # Shape (6,6)
-Fn = Callable[[float, float, float], float]
+Fn = Callable[[float, float, float], Any]
 
 # Useful units
 GPa = 1e9
@@ -284,27 +284,30 @@ def dotdot_torch(C_voigt: to.Tensor, eps_tensor: to.Tensor) -> to.Tensor:
 
 def create_field_nodes(grid: GridHandlerGMSH, fun: Fn) -> to.Tensor:
 	"""
-    Sample a scalar field at mesh nodes using a Python callable.
+    Sample a N-dimensional field at mesh nodes using a Python callable.
 
     Parameters
     ----------
     grid : GridHandlerGMSH
         Grid handler with attributes `mesh` and `n_nodes`. Assumes
         `grid.mesh.geometry.x` provides an array of node coordinates of shape (N, 3).
-    fun : Callable[[float, float, float], float]
+    fun : Callable[[float, float, float], Any]
         Function evaluated as `fun(x, y, z)` at each node.
 
     Returns
     -------
     torch.Tensor
-        1D tensor of length `grid.n_nodes` with dtype `torch.float64`.
+		Tensor with dimension `(grid.n_nodes, Any)` with dtype `torch.float64`.
 
     Notes
     -----
     This evaluates `fun` in a Python loop; it is not vectorized.
     """
+	dummy = fun(0,0,0)  # to check the return shape
+	shape_fun = np.shape(dummy)
+	shape = (grid.n_nodes,) + shape_fun
+	field = to.zeros(shape, dtype=to.float64)
 	coordinates = grid.mesh.geometry.x
-	field = to.zeros(grid.n_nodes, dtype=to.float64)
 	for i, coord in enumerate(coordinates):
 		x, y, z = coord
 		field[i] = fun(x, y, z)
@@ -312,27 +315,30 @@ def create_field_nodes(grid: GridHandlerGMSH, fun: Fn) -> to.Tensor:
 
 def create_field_elems(grid: GridHandlerGMSH, fun: Fn) -> to.Tensor:
 	"""
-    Sample a scalar field at element centroids using a Python callable.
+    Sample a N-dimensional field at element centroids using a Python callable.
 
     Parameters
     ----------
     grid : GridHandlerGMSH
         Grid handler with attributes `mesh` and `n_elems`. Assumes a tetrahedral
         mesh where the 3→0 connectivity returns 4 vertex indices per cell.
-    fun : Callable[[float, float, float], float]
+    fun : Callable[[float, float, float], Any]
         Function evaluated as `fun(x, y, z)` at each cell centroid.
 
     Returns
     -------
     torch.Tensor
-        1D tensor of length `grid.n_elems` with dtype `torch.float64`.
+        Tensor with dimension `(grid.n_elems, Any)` with dtype `torch.float64`.
 
     Notes
     -----
     The centroid is computed as the arithmetic mean of the 4 vertex coordinates
     for each tetrahedral cell. This evaluates `fun` in a Python loop.
     """
-	field = to.zeros(grid.n_elems, dtype=to.float64)
+	dummy = fun(0,0,0)  # to check the return shape
+	shape_fun = np.shape(dummy)
+	shape = (grid.n_elems,) + shape_fun
+	field = to.zeros(shape, dtype=to.float64)
 	coordinates = grid.mesh.geometry.x
 	conn_aux = grid.mesh.topology.connectivity(3, 0)
 	conn = conn_aux.array.reshape((grid.n_elems, 4))
@@ -341,3 +347,22 @@ def create_field_elems(grid: GridHandlerGMSH, fun: Fn) -> to.Tensor:
 		x = sum(coordinates[v] for v in cell_vertices) / len(cell_vertices)
 		field[i] = fun(x[0], x[1], x[2])
 	return field
+
+
+def apply_grey_theme(fig, axes, transparent=True, grid_color="0.92", back_color='0.85'):
+	fig.patch.set_facecolor("#212121ff")
+	if transparent:
+		fig.patch.set_alpha(0.0)
+	for ax in axes:
+		if ax != None:
+			ax.grid(True, color=grid_color)
+			ax.set_axisbelow(True)
+			ax.spines['bottom'].set_color('black')
+			ax.spines['top'].set_color('black')
+			ax.spines['right'].set_color('black')
+			ax.spines['left'].set_color('black')
+			ax.tick_params(axis='x', colors='black', which='both')
+			ax.tick_params(axis='y', colors='black', which='both')
+			ax.yaxis.label.set_color('black')
+			ax.xaxis.label.set_color('black')
+			ax.set_facecolor(back_color)
