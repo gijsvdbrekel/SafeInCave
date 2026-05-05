@@ -57,11 +57,11 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["tilted1200"],
-    "pressure": ["industry"],
-    "scenario": [ "MD_B"],
+    "caverns": ["regular1200"],
+    "pressure": ["industry", "transport", "power_generation"],
+    "scenario": ["MD_B"],
     "n_cycles": None,
-    "operation_days": None,
+    "operation_days": 365,
     "case_contains": None,
 }
 
@@ -90,15 +90,15 @@ SELECT = {
 #                         Linestyle = solid for 1,200,000 m³, dashed for 600,000 m³.
 #                         Label = "TUD2023_B (1,200,000 m³)" etc.
 
-PLOT_MODE = "compare_scenarios"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
+PLOT_MODE = "compare_pressures"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
 
 FIGURES = {
-    "convergence": False,          # Figure 1: volume convergence
-    "stress_state": False,         # Figure 2: p-q stress paths
-    "fos": True,                  # Figure 3: FOS over time
+    "convergence": False,           # Figure 1: volume convergence
+    "stress_state": False,          # Figure 2: p-q stress paths
+    "fos": False,                   # Figure 3: FOS over time
     "fracture_propagation": False, # Figure 4: dilatancy zone analysis
-    "fos_summary": False,          # Figure 5: global min FOS + 4 pressure profiles
-    "mc_failure": False,            # Figure 6: Mohr-Coulomb failure (interlayer cases)
+    "fos_summary": True,          # Figure 5: global min FOS + 4 pressure profiles
+    "mc_failure": False,           # Figure 6: Mohr-Coulomb failure (interlayer cases)
 }
 
 # Stress state options
@@ -887,8 +887,14 @@ def _downsample_xy(x, y, max_points=1200):
     return np.asarray(x)[idx], np.asarray(y)[idx]
 
 
-def _rolling_quantile_band(y, window=31, qlo=0.1, qhi=0.9):
-    """Rolling quantile band + median for oscillatory series."""
+def _rolling_quantile_band(y, window=31, qlo=0.0, qhi=1.0):
+    """Rolling quantile band + median for oscillatory series.
+
+    Default qlo=0.0, qhi=1.0 makes the shaded band span the rolling minimum to
+    rolling maximum (100% of values per window), so cycle troughs and peaks are
+    fully visible — essential for FoS, where the trough is the safety-relevant
+    instant.
+    """
     y = np.asarray(y)
     n = len(y)
     lo = np.empty(n)
@@ -2429,7 +2435,6 @@ def plot_fos_summary(cases):
         if row == len(ordered) - 1:
             ax_p.set_xlabel("Time (days)")
 
-    fig.suptitle("FOS Summary & Pressure Profiles", fontsize=20, fontweight='bold')
     fig.tight_layout(rect=[0, 0, 1, 0.95])
 
     outname = f"fos_summary_pressure={SELECT.get('pressure')}_scenario={SELECT.get('scenario')}.png"

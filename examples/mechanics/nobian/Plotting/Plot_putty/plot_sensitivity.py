@@ -51,6 +51,9 @@ from plot_results import (
     DAY,
     HOUR,
     MPA,
+    q_dil_devries,
+    _psi_from_voigt6,
+    tensor33_to_voigt6,
 )
 
 # =============================================================================
@@ -499,7 +502,11 @@ def plot_vp_strain_rate_probe(dim_key, discovered):
 
 
 def _compute_fos_timeseries(case_folder):
-    """Minimal FOS-min-global computation for the sensitivity overlay."""
+    """De Vries (2005) field-minimum FOS time series.
+
+    Mirrors the pipeline used in plot_results.py so the sensitivity overlay
+    sits on the same FoS scale as the rest of the thesis.
+    """
     try:
         t_pq, p_elems, q_elems = load_p_q(case_folder)
     except Exception as e:
@@ -512,20 +519,22 @@ def _compute_fos_timeseries(case_folder):
         return None, None
 
     n = min(len(t_pq), len(t_sig))
-    t = t_pq[:n] / DAY
-    p = p_elems[:n]
-    q = q_elems[:n]
+    t_days = t_pq[:n] / DAY
 
-    # Simple Mohr-Coulomb-flavoured FOS proxy: (c·cosφ + p·sinφ) / (q/√3)
-    # Using salt bulk params as coarse reference — thesis uses full field FOS,
-    # which we approximate here for overlay legibility.
-    c = 4.0e6    # Pa
-    phi = np.deg2rad(35.0)
-    num = c * np.cos(phi) + np.maximum(p, 0.0) * np.sin(phi)
-    den = np.maximum(q, 1.0) / np.sqrt(3.0)
-    FOS = num / den
+    p_MPa = -p_elems[:n] / MPA              # compression positive
+    q_MPa = q_elems[:n] / MPA
+    sig33_MPa = -sig_vals[:n] / MPA         # compression positive
+
+    sig_voigt = tensor33_to_voigt6(sig33_MPa)
+    psi = _psi_from_voigt6(sig_voigt)
+    q_boundary = q_dil_devries(p_MPa, psi)
+
+    q_safe = np.where(q_MPa < 1e-3, 1e-3, q_MPa)
+    FOS = q_boundary / q_safe
+    FOS = np.where(q_MPa < 1e-3, 100.0, FOS)
+
     fos_min = np.nanmin(np.where(np.isfinite(FOS), FOS, np.nan), axis=1)
-    return t, fos_min
+    return t_days, fos_min
 
 
 def plot_fos_overlay(dim_key, discovered):
