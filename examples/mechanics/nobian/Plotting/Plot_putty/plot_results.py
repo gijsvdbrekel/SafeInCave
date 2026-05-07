@@ -288,6 +288,14 @@ PROBE_COLORS = {
     "bottom":       "#ff7f00",
 }
 
+PROBE_LINESTYLES = {
+    "top":          "-",
+    "quarter":      "--",
+    "mid":          "-",
+    "threequarter": "--",
+    "bottom":       "-",
+}
+
 CAVERN_ORDER = [
     "Asymmetric", "Direct-circulation", "Regular", "Reversed-circulation",
     "Tilt", "Fast-leached", "String-failure", "IrregularFine",
@@ -1367,6 +1375,12 @@ def compute_global_dilation_penetration(case_folder, wall_points,
         axis=1
     )
 
+    # Contiguity parameters (mesh-size aware): the salt fine_size is ~4.5 m, so
+    # adjacent cells are within ~5 m. We use 8 m to tolerate one cell of
+    # mesh irregularity.
+    GAP_THRESHOLD_M = 8.0
+    NEAR_WALL_THRESH_M = 8.0
+
     Nt, nc = fos_mask.shape
     region_depths = {name: np.zeros(Nt) for name in region_names}
     for r, name in enumerate(region_names):
@@ -1377,8 +1391,25 @@ def compute_global_dilation_penetration(case_folder, wall_points,
         fos_sel = fos_mask[:, sel]                       # (Nt, n_in_region)
         for t in range(Nt):
             f = fos_sel[t]
-            if f.any():
-                region_depths[name][t] = float(d_sel[f].max())
+            if not f.any():
+                continue
+            # Walk outward from the wall along sorted failing-cell distances.
+            # Require dilation to start within NEAR_WALL_THRESH_M of the wall,
+            # and stop at the first gap larger than GAP_THRESHOLD_M. This
+            # prevents far-field outliers (e.g. boundary artifacts) from
+            # being reported as penetration depth.
+            d_failing = np.sort(d_sel[f])
+            if d_failing[0] > NEAR_WALL_THRESH_M:
+                continue
+            depth = float(d_failing[0])
+            prev = depth
+            for i in range(1, d_failing.size):
+                if d_failing[i] - prev <= GAP_THRESHOLD_M:
+                    depth = float(d_failing[i])
+                    prev = depth
+                else:
+                    break
+            region_depths[name][t] = depth
 
     return time_days, region_depths
 
@@ -2493,8 +2524,9 @@ def plot_propagation_depth_global(ax, time_days, region_depths):
         if region_name not in region_depths:
             continue
         color = PROBE_COLORS.get(region_name, 'gray')
+        ls = PROBE_LINESTYLES.get(region_name, '-')
         ax.plot(time_days, region_depths[region_name],
-                linewidth=2, color=color, label=region_name)
+                linewidth=2, color=color, linestyle=ls, label=region_name)
 
     ax.set_xlabel('Time (days)')
     ax.set_title('Connected dilating zone size')
@@ -2579,6 +2611,49 @@ FRACTURE_GROUPS = [
 ]
 
 
+def _shade_dilatancy_bands(ax, wall_points, cavern_label, region_depths):
+    """Shade the salt side of the cavern wall with the five region colours.
+
+    Each band's vertical (z-fraction) extent matches the assignment used in
+    ``compute_global_dilation_penetration``; its horizontal extent is the
+    maximum contiguous dilatancy depth seen for that region over the whole
+    simulation. This makes the cavern plot show, at a glance, what the
+    coloured curves on the right panel represent.
+    """
+    region_order = ["bottom", "threequarter", "mid", "quarter", "top"]
+    fracs = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+    edges = np.concatenate(([0.0], 0.5 * (fracs[:-1] + fracs[1:]), [1.0]))
+
+    z_w = wall_points[:, 2]
+    x_w = wall_points[:, 0]
+    z_min, z_max = float(z_w.min()), float(z_w.max())
+    span = max(z_max - z_min, 1e-12)
+
+    order = np.argsort(z_w)
+    z_sorted = z_w[order]
+    x_sorted = x_w[order]
+    z_frac_sorted = (z_sorted - z_min) / span
+
+    for i, region in enumerate(region_order):
+        if region not in region_depths:
+            continue
+        depth_series = region_depths[region]
+        max_depth = float(np.max(depth_series)) if len(depth_series) else 0.0
+        if max_depth <= 0:
+            continue
+        f_lo, f_hi = edges[i], edges[i + 1]
+        m = (z_frac_sorted >= f_lo) & (z_frac_sorted <= f_hi)
+        if not m.any():
+            continue
+        z_band = z_sorted[m]
+        x_band = x_sorted[m]
+        y_band = z_mesh_to_depth_m(z_band, cavern_label) \
+            if cavern_label is not None else z_band
+        ax.fill_betweenx(y_band, x_band, x_band + max_depth,
+                         color=PROBE_COLORS.get(region, 'gray'),
+                         alpha=0.30, linewidth=0, zorder=1)
+
+
 def plot_fracture_propagation_grouped(frac_cases):
     """Create two grouped dilatancy zone figures, 3 cavern shapes each.
 
@@ -2625,14 +2700,18 @@ def plot_fracture_propagation_grouped(frac_cases):
             continue
 
         n_shapes = len(group_data)
-        # 2 subplots per shape (cavern profile + dilating zone), arranged in columns
-        fig, axes = plt.subplots(1, n_shapes * 2, figsize=(7.0 * n_shapes, 9),
-                                 gridspec_kw={"width_ratios": [0.8, 1.0] * n_shapes,
-                                              "wspace": 0.15})
+        # Wider cavern subplot so the shaded dilatancy-band overlay fits on the salt side
+        fig, axes = plt.subplots(1, n_shapes * 2, figsize=(7.5 * n_shapes, 9),
+                                 gridspec_kw={"width_ratios": [1.4, 1.0] * n_shapes,
+                                              "wspace": 0.20})
         if n_shapes * 2 == 2:
             axes = [axes[0], axes[1]]
 
         panel_letters = ["A", "B", "C", "D", "E", "F"]
+        title_fs = 14
+        axlabel_fs = 14
+        tick_fs = 16
+        panel_fs = 12
         dep_axes = []
         for idx, (shape_name, wall_pts, _samp_pts, t_days, region_depths) in enumerate(group_data):
             ax_cav = axes[idx * 2]
@@ -2648,34 +2727,43 @@ def plot_fracture_propagation_grouped(frac_cases):
                         break
 
             plot_cavern_with_probes(ax_cav, wall_pts, None, cavern_label=cav_full)
-            ax_cav.set_title(shape_name, fontsize=22, fontweight='bold', pad=6)
-            ax_cav.set_xlabel("Radial distance (m)", fontsize=22)
-            ax_cav.set_ylabel("Depth (m)", fontsize=22)
-            ax_cav.tick_params(axis='both', labelsize=16)
+            _shade_dilatancy_bands(ax_cav, wall_pts, cav_full, region_depths)
+            ax_cav.set_title(shape_name, fontsize=title_fs, fontweight='bold', pad=6)
+            ax_cav.set_xlabel("Radial distance (m)", fontsize=axlabel_fs)
+            ax_cav.set_ylabel("Depth (m)", fontsize=axlabel_fs)
+            ax_cav.tick_params(axis='both', labelsize=tick_fs)
             leg = ax_cav.get_legend()
             if leg is not None:
                 leg.remove()
-            add_panel_label(ax_cav, panel_letters[idx * 2], fontsize=14)
+            add_panel_label(ax_cav, panel_letters[idx * 2], fontsize=panel_fs)
 
             plot_propagation_depth_global(ax_dep, t_days, region_depths)
             ax_dep.set_title("", fontsize=1)  # clear sub-title
-            ax_dep.set_xlabel("Time (days)", fontsize=22)
-            ax_dep.set_ylabel("Dilatancy zone depth (m)" if idx == 0 else "",
-                             fontsize=22)
-            ax_dep.tick_params(axis='both', labelsize=16)
+            ax_dep.set_xlabel("Time (days)", fontsize=axlabel_fs)
+            ax_dep.set_ylabel("")
+            ax_dep.tick_params(axis='both', labelsize=tick_fs)
             leg_dep = ax_dep.get_legend()
-            if idx == n_shapes - 1:
-                ax_dep.legend(loc='upper right', fontsize=18, frameon=True)
-            elif leg_dep is not None:
+            if leg_dep is not None:
                 leg_dep.remove()
-            add_panel_label(ax_dep, panel_letters[idx * 2 + 1], fontsize=14)
+            add_panel_label(ax_dep, panel_letters[idx * 2 + 1], fontsize=panel_fs)
 
         if dep_axes:
-            y_max = max(ax.get_ylim()[1] for ax in dep_axes)
             for ax in dep_axes:
-                ax.set_ylim(0.0, y_max)
+                ax.set_ylim(0.0, 20.0)
 
-        fig.tight_layout()
+        # Single legend above the row of subplots
+        region_order = ["top", "quarter", "mid", "threequarter", "bottom"]
+        legend_handles = [
+            plt.Line2D([0], [0],
+                       color=PROBE_COLORS.get(r, 'gray'),
+                       linestyle=PROBE_LINESTYLES.get(r, '-'),
+                       linewidth=2, label=r)
+            for r in region_order
+        ]
+        fig.legend(handles=legend_handles, loc='upper center', ncol=5,
+                   fontsize=13, frameon=True, bbox_to_anchor=(0.5, 0.99))
+
+        fig.tight_layout(rect=[0, 0, 1, 0.94])
 
         outname = f"dilatancy_zone_{group_label}.png"
         outpath = os.path.join(OUT_DIR, outname)
