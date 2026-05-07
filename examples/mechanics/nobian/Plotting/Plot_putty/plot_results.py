@@ -2756,10 +2756,8 @@ def plot_fracture_propagation_grouped(frac_cases):
             add_panel_label(ax_dep, panel_letters[idx * 2 + 1], fontsize=panel_fs)
 
         if dep_axes:
-            y_max = max(ax.get_ylim()[1] for ax in dep_axes)
-            y_max = max(y_max, 5.0)
             for ax in dep_axes:
-                ax.set_ylim(0.0, y_max)
+                ax.set_ylim(0.0, 35.0)
 
         # Single legend above the row of subplots
         region_order = ["top", "quarter", "mid", "threequarter", "bottom"]
