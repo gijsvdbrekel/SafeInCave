@@ -290,7 +290,7 @@ PROBE_COLORS = {
 
 PROBE_LINESTYLES = {
     "top":          "-",
-    "quarter":      "--",
+    "quarter":      "-",
     "mid":          ":",
     "threequarter": "-.",
     "bottom":       (0, (5, 1)),
@@ -2738,7 +2738,7 @@ def plot_fracture_propagation_grouped(frac_cases):
             _shade_dilatancy_bands(ax_cav, wall_pts, cav_full, region_depths)
             ax_cav.set_title(shape_name, fontsize=title_fs, fontweight='bold', pad=6)
             ax_cav.set_xlabel("Radial distance (m)", fontsize=axlabel_fs)
-            ax_cav.set_ylabel("Depth (m)", fontsize=axlabel_fs)
+            ax_cav.set_ylabel("Depth (m)" if idx == 0 else "", fontsize=axlabel_fs)
             ax_cav.tick_params(axis='both', labelsize=tick_fs)
             leg = ax_cav.get_legend()
             if leg is not None:
