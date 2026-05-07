@@ -291,9 +291,17 @@ PROBE_COLORS = {
 PROBE_LINESTYLES = {
     "top":          "-",
     "quarter":      "--",
-    "mid":          "-",
-    "threequarter": "--",
-    "bottom":       "-",
+    "mid":          ":",
+    "threequarter": "-.",
+    "bottom":       (0, (5, 1)),
+}
+
+PROBE_LINEWIDTHS = {
+    "top":          2.2,
+    "quarter":      2.0,
+    "mid":          2.6,
+    "threequarter": 2.0,
+    "bottom":       2.2,
 }
 
 CAVERN_ORDER = [
@@ -1375,16 +1383,19 @@ def compute_global_dilation_penetration(case_folder, wall_points,
         axis=1
     )
 
-    # Contiguity parameters (mesh-size aware): the salt fine_size is ~4.5 m, so
-    # adjacent cells are within ~5 m. We use 8 m to tolerate one cell of
-    # mesh irregularity.
-    GAP_THRESHOLD_M = 8.0
-    NEAR_WALL_THRESH_M = 8.0
+    # Contiguity parameters. The salt fine_size near the cavern wall is
+    # ~4.5 m, so we use a tight gap threshold and only consider cells within
+    # MAX_RADIAL_M of the wall. Cells beyond that distance are far-field and
+    # not part of the dilatancy zone even if their FOS<1 (typically a sign
+    # of outer-boundary numerical artifacts).
+    GAP_THRESHOLD_M = 5.0
+    NEAR_WALL_THRESH_M = 5.0
+    MAX_RADIAL_M = 30.0
 
     Nt, nc = fos_mask.shape
     region_depths = {name: np.zeros(Nt) for name in region_names}
     for r, name in enumerate(region_names):
-        sel = region_idx == r
+        sel = (region_idx == r) & (dist_to_wall <= MAX_RADIAL_M)
         if not sel.any():
             continue
         d_sel = dist_to_wall[sel]
@@ -1393,12 +1404,8 @@ def compute_global_dilation_penetration(case_folder, wall_points,
             f = fos_sel[t]
             if not f.any():
                 continue
-            # Walk outward from the wall along sorted failing-cell distances.
-            # Require dilation to start within NEAR_WALL_THRESH_M of the wall,
-            # and stop at the first gap larger than GAP_THRESHOLD_M. This
-            # prevents far-field outliers (e.g. boundary artifacts) from
-            # being reported as penetration depth.
             d_failing = np.sort(d_sel[f])
+            # Dilation must reach close to the wall to count as connected
             if d_failing[0] > NEAR_WALL_THRESH_M:
                 continue
             depth = float(d_failing[0])
@@ -2525,8 +2532,9 @@ def plot_propagation_depth_global(ax, time_days, region_depths):
             continue
         color = PROBE_COLORS.get(region_name, 'gray')
         ls = PROBE_LINESTYLES.get(region_name, '-')
+        lw = PROBE_LINEWIDTHS.get(region_name, 2.0)
         ax.plot(time_days, region_depths[region_name],
-                linewidth=2, color=color, linestyle=ls, label=region_name)
+                linewidth=lw, color=color, linestyle=ls, label=region_name)
 
     ax.set_xlabel('Time (days)')
     ax.set_title('Connected dilating zone size')
@@ -2748,8 +2756,10 @@ def plot_fracture_propagation_grouped(frac_cases):
             add_panel_label(ax_dep, panel_letters[idx * 2 + 1], fontsize=panel_fs)
 
         if dep_axes:
+            y_max = max(ax.get_ylim()[1] for ax in dep_axes)
+            y_max = max(y_max, 5.0)
             for ax in dep_axes:
-                ax.set_ylim(0.0, 20.0)
+                ax.set_ylim(0.0, y_max)
 
         # Single legend above the row of subplots
         region_order = ["top", "quarter", "mid", "threequarter", "bottom"]
@@ -2757,7 +2767,8 @@ def plot_fracture_propagation_grouped(frac_cases):
             plt.Line2D([0], [0],
                        color=PROBE_COLORS.get(r, 'gray'),
                        linestyle=PROBE_LINESTYLES.get(r, '-'),
-                       linewidth=2, label=r)
+                       linewidth=PROBE_LINEWIDTHS.get(r, 2.0),
+                       label=r)
             for r in region_order
         ]
         fig.legend(handles=legend_handles, loc='upper center', ncol=5,
