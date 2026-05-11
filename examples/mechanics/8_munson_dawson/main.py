@@ -10,7 +10,7 @@ Two parameter sets are provided below. Switch with the SCENARIO flag:
                     (Van den Brekel, 2026, thesis dataset).
     "A":            CCC Zuidwending dataset.
 
-Geometry: an irregular salt-cavern mesh (grids/cavern_irregular_original).
+Geometry: an irregular salt-cavern mesh (grids/cavern_irregular).
 Two-phase simulation (mirrors the Spring + Desai pattern in Old/main.py):
     1. Equilibrium phase (10 hours): linear elastic only (Spring), settles
        gravity and boundary tractions under a constant cavern pressure of
@@ -202,7 +202,7 @@ def attach_outputs(mom_eq, folder):
 
 def main():
     # Grid
-    grid_path = os.path.join("..", "..", "grids", "cavern_irregular_original")
+    grid_path = os.path.join("..", "..", "..", "grids", "cavern_irregular")
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Momentum equation (theta=0.5 -> Crank-Nicolson)

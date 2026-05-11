@@ -138,7 +138,7 @@ def plot_convergence(ax, wall: WallProfileData, t_step: int):
 
 
 def plot_logo(ax):
-    logo_path = os.path.join("..", "..", "assets", "logo_2.png")
+    logo_path = os.path.join("..", "..", "..", "assets", "logo_2.png")
     if os.path.exists(logo_path):
         img = plt.imread(logo_path)
         ax.imshow(img)
