@@ -10,22 +10,12 @@ Two parameter sets are provided below. Switch with the SCENARIO flag:
                     (Van den Brekel, 2026, thesis dataset).
     "A":            CCC Zuidwending dataset.
 
-Geometry: an irregular salt-cavern mesh (grids/cavern_irregular).
-Two-phase simulation (mirrors the Spring + Desai pattern in Old/main.py):
-    1. Equilibrium phase (10 hours): linear elastic only (Spring), settles
-       gravity and boundary tractions under a constant cavern pressure of
-       10 MPa.
-    2. Operation phase (30 days):    MunsonDawson is added with its
-       internal hardening variable zeta initialised to eps_t_star at the
-       equilibrium stress (analogous to Desai's compute_initial_hardening).
-       This puts MD in steady-state at t = 0 of operation (F = 1), so the
-       transient hardening branch does not blow up against the already-
-       built deviatoric stress. The cavern pressure then cycles twice
-       between p_max=10 MPa and p_min=7 MPa (15 days per cycle).
+Geometry: grids/cavern_irregular. Operation phase only (30 days, dt=2 h),
+with two pressure cycles between 10 MPa and 7 MPa. The initial elastic
+stress is obtained from a one-shot solve_elastic_response() and used to
+initialise MD's zeta in steady state.
 
-Run from this directory:
-    python main.py
-Outputs are written to ./output/munson_dawson_example/{equilibrium,operation}.
+Run: python main.py  -> outputs in ./output/munson_dawson_example/
 """
 
 import safeincave as sf
@@ -43,10 +33,7 @@ sec_per_year = 365.25 * 24.0 * 3600.0
 
 
 def build_elastic_material(mom_eq):
-    """Spring-only material used during the equilibrium phase.
-
-    Returns the material plus (salt_density, E0, nu0) so the operation
-    phase can re-use the same elastic constants when building MD."""
+    """Spring-only material. Returns (mat, salt_density, E0, nu0)."""
 
     mat = sf.Material(mom_eq.n_elems)
 
@@ -101,14 +88,8 @@ def build_munson_dawson(mom_eq, scenario, E0, nu0):
 
 
 def initialize_md_steady_state(md, mom_eq, T_kelvin):
-    """Set MD's internal variable zeta to eps_t_star at the current
-    (equilibrium) stress state.
-
-    This is the MD analogue of Desai.compute_initial_hardening:
-    starting the operation phase with zeta = eps_t_star(sigma_eq) makes
-    the transient factor F = exp(Delta * (1 - zeta/eps_t_star)^2) = 1, so
-    the steep transient hardening branch does not amplify the rate when
-    MD is suddenly exposed to the equilibrium deviatoric stress."""
+    """Set zeta = eps_t_star at the current stress so F = 1 at t = 0
+    (MD analogue of Desai.compute_initial_hardening)."""
 
     stress = ut.numpy2torch(
         mom_eq.sig.x.array.reshape((mom_eq.n_elems, 3, 3)))
@@ -135,12 +116,8 @@ def initialize_md_steady_state(md, mom_eq, T_kelvin):
 def build_bcs(mom_eq, t_final, salt_density, g_vec,
               side_burden, over_burden,
               cavern_values, cavern_times, gas_density):
-    """Standard cavern BCs: symmetry on West/South/Bottom, lithostatic
-    Neumann on East/North/Top, gas pressure on the Cavern surface.
-
-    `cavern_values` and `cavern_times` are paired sequences defining the
-    cavern-pressure schedule (linear interpolation between consecutive
-    points). For a constant pressure pass two equal values."""
+    """Cavern BCs: symmetry (W/S/B), lithostatic Neumann (E/N/Top),
+    cavern-pressure Neumann from (cavern_values, cavern_times)."""
 
     bc_west = momBC.DirichletBC(
         boundary_name="West", component=0,
@@ -215,7 +192,7 @@ def main():
     mom_solver.setTolerances(rtol=1e-10, max_it=100)
     mom_eq.set_solver(mom_solver)
 
-    # Material — Spring only for now (MD attached after equilibrium)
+    # Elastic-only material first
     mat, salt_density, E0, nu0 = build_elastic_material(mom_eq)
     mom_eq.set_material(mat)
 
@@ -224,60 +201,24 @@ def main():
     g_vec = [0.0, 0.0, g]
     mom_eq.build_body_force(g_vec)
 
-    # Initial temperature (isothermal — MD uses Arrhenius with R=8.32)
+    # Isothermal temperature
     T_kelvin = 298.0
     T0_field = T_kelvin * to.ones(mom_eq.n_elems)
     mom_eq.set_T0(T0_field)
     mom_eq.set_T(T0_field)
 
-    # Boundary-load magnitudes (same in both phases)
+    # Boundary-load magnitudes
     side_burden = 10.0 * ut.MPa
     over_burden = 10.0 * ut.MPa
     p_max       = 10.0 * ut.MPa
     p_min       = 7.0  * ut.MPa
     gas_density = 0.082
 
-    output_root = os.path.join("output", "munson_dawson_example")
-
-    # ------------------------------------------------------------------ #
-    # Phase 1: equilibrium (10 hours, dt=0.5 h)
-    # ------------------------------------------------------------------ #
-    tc_eq = sf.TimeController(
-        dt=0.5, initial_time=0.0, final_time=10.0, time_unit="hour")
-
-    bc_eq = build_bcs(
-        mom_eq, t_final=tc_eq.t_final,
-        salt_density=salt_density, g_vec=g_vec,
-        side_burden=side_burden, over_burden=over_burden,
-        cavern_values=[p_max, p_max],
-        cavern_times=[0.0, tc_eq.t_final],
-        gas_density=gas_density)
-    mom_eq.set_boundary_conditions(bc_eq)
-
-    out_eq_folder = os.path.join(output_root, "equilibrium")
-    if MPI.COMM_WORLD.rank == 0:
-        print(f"[Phase 1 / equilibrium] output -> {out_eq_folder}")
-    out_eq = attach_outputs(mom_eq, out_eq_folder)
-
-    sim_eq = sf.Simulator_M(mom_eq, tc_eq, [out_eq], True)
-    sim_eq.run()
-
-    # ------------------------------------------------------------------ #
-    # Attach MunsonDawson, initialised in steady state at the
-    # equilibrium stress (analogous to Desai.compute_initial_hardening)
-    # ------------------------------------------------------------------ #
-    md = build_munson_dawson(mom_eq, SCENARIO, E0, nu0)
-    initialize_md_steady_state(md, mom_eq, T_kelvin=T_kelvin)
-    mom_eq.mat.add_to_non_elastic(md)
-
-    # ------------------------------------------------------------------ #
-    # Phase 2: operation (30 days, dt=2 h)
-    # ------------------------------------------------------------------ #
+    # Operation BCs: 2 cycles between p_max and p_min over 30 days
+    # (each 15-day cycle: 2 d ramp down, 11 d hold low, 2 d ramp up).
     tc_op = sf.TimeController(
         dt=2.0, initial_time=0.0, final_time=30.0, time_unit="day")
 
-    # Cavern pressure schedule: 2 cycles over 30 days.
-    # Each 15-day cycle = ramp down (2 d) -> hold low (11 d) -> ramp up (2 d).
     cavern_values = [p_max, p_min, p_min, p_max,
                      p_min, p_min, p_max]
     cavern_times = [0.0,
@@ -297,12 +238,22 @@ def main():
         gas_density=gas_density)
     mom_eq.set_boundary_conditions(bc_op)
 
-    out_op_folder = os.path.join(output_root, "operation")
-    if MPI.COMM_WORLD.rank == 0:
-        print(f"[Phase 2 / operation]   output -> {out_op_folder}")
-    out_op = attach_outputs(mom_eq, out_op_folder)
+    # One-shot elastic solve -> mom_eq.sig holds the initial stress field.
+    mom_eq.bc.update_dirichlet(0.0)
+    mom_eq.bc.update_neumann(0.0)
+    mom_eq.solve_elastic_response()
 
-    sim_op = sf.Simulator_M(mom_eq, tc_op, [out_op], False)
+    # Build MD, init zeta from elastic stress, then attach
+    md = build_munson_dawson(mom_eq, SCENARIO, E0, nu0)
+    initialize_md_steady_state(md, mom_eq, T_kelvin=T_kelvin)
+    mom_eq.mat.add_to_non_elastic(md)
+
+    out_folder = os.path.join("output", "munson_dawson_example")
+    if MPI.COMM_WORLD.rank == 0:
+        print(f"[operation] output -> {out_folder}")
+    out_op = attach_outputs(mom_eq, out_folder)
+
+    sim_op = sf.Simulator_M(mom_eq, tc_op, [out_op], compute_elastic_response=False)
     sim_op.run()
 
 

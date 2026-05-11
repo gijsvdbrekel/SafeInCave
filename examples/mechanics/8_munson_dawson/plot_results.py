@@ -9,7 +9,7 @@ Mirrors examples/mechanics/nobian/Old/plot_results.py:
     - dilatancy boundary overlay on the stress-path panels
     - interactive time-step slider
 
-Reads from ./output/munson_dawson_example/operation/
+Reads from ./output/munson_dawson_example/
 """
 
 import safeincave as sf
@@ -303,7 +303,7 @@ def main():
      ax0, ax00, ax01, ax02, ax10, ax11, ax12, ax30, ax31, ax32) = create_layout()
 
     # Folder to load the results from
-    output_folder = os.path.join("output", "munson_dawson_example", "operation")
+    output_folder = os.path.join("output", "munson_dawson_example")
 
     # Probe points around the cavern wall (same six z-levels as Old/plot_results.py,
     # which were chosen from the cavern_irregular profile points).
