@@ -238,10 +238,12 @@ def main():
         gas_density=gas_density)
     mom_eq.set_boundary_conditions(bc_op)
 
-    # One-shot elastic solve -> mom_eq.sig holds the initial stress field.
+    # One-shot elastic solve -> populate mom_eq.sig with the initial stress.
     mom_eq.bc.update_dirichlet(0.0)
     mom_eq.bc.update_neumann(0.0)
     mom_eq.solve_elastic_response()
+    eps_tot = mom_eq.compute_total_strain()
+    mom_eq.compute_elastic_stress(eps_tot)
 
     # Build MD, init zeta from elastic stress, then attach
     md = build_munson_dawson(mom_eq, SCENARIO, E0, nu0)
