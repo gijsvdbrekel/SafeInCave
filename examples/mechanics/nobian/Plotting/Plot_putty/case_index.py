@@ -84,16 +84,21 @@ def _nice_cavern_label(cavern_type_or_group: str) -> str:
         return f"String-failure{size_tag}"
     if low == "spike_none":
         return "Homogeneous"
+    # il4x is the reference (mesh-converged) case → plain "Heterogeneous_*".
+    # il2x and the original (no suffix) are coarser variants and get explicit
+    # coarseness markers in the legend.
     if low == "spike_upper":
-        return "Heterogeneous_above"
+        return "Heterogeneous_above (4× coarser)"
     if low == "spike_lower":
+        return "Heterogeneous_below (4× coarser)"
+    if low == "spike_upper_il2x":
+        return "Heterogeneous_above (2× coarser)"
+    if low == "spike_lower_il2x":
+        return "Heterogeneous_below (2× coarser)"
+    if low == "spike_upper_il4x":
+        return "Heterogeneous_above"
+    if low == "spike_lower_il4x":
         return "Heterogeneous_below"
-    if low.startswith("spike_upper_il"):
-        m_il = re.search(r"_il(\d+)x$", low)
-        return f"Heterogeneous_above_il{m_il.group(1)}x" if m_il else "Heterogeneous_above"
-    if low.startswith("spike_lower_il"):
-        m_il = re.search(r"_il(\d+)x$", low)
-        return f"Heterogeneous_below_il{m_il.group(1)}x" if m_il else "Heterogeneous_below"
     return (cavern_type_or_group or "").split("_")[0] if cavern_type_or_group else "Unknown"
 
 def read_case_metadata(case_path: str) -> dict:

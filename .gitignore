@@ -198,4 +198,5 @@ cython_debug/
 **/jit*/
 *.pyc
 thesis
-examples/mechanics/nobian/Simulation/nan_diagnostic.pt
+# NaN diagnostic dumps (any directory, any rank suffix)
+**/nan_diagnostic*.pt

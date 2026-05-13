@@ -160,13 +160,15 @@ CAVERN_COLORS = {
     "Fast-leached":            "#d62728",
     "String-failure":          "#bcbd22",
     "Homogeneous":             "#1f77b4",
-    "Heterogeneous_above":     "#d62728",
-    "Heterogeneous_below":     "#2ca02c",
-    # Refined-interlayer spike variants (same hue as baseline, slightly desaturated)
-    "Heterogeneous_above_il2x": "#fb6a4a",
-    "Heterogeneous_above_il4x": "#a50f15",
-    "Heterogeneous_below_il2x": "#74c476",
-    "Heterogeneous_below_il4x": "#006d2c",
+    # Reference (il4x, mesh-converged) keeps the primary red / green.
+    # Coarser-interlayer variants use categorically distinct hues so that
+    # an above-vs-above (or below-vs-below) mesh-comparison plot is readable.
+    "Heterogeneous_above":                  "#d62728",  # red
+    "Heterogeneous_above (2× coarser)":     "#ff7f0e",  # orange
+    "Heterogeneous_above (4× coarser)":     "#e377c2",  # pink/magenta
+    "Heterogeneous_below":                  "#2ca02c",  # green
+    "Heterogeneous_below (2× coarser)":     "#17becf",  # cyan
+    "Heterogeneous_below (4× coarser)":     "#9467bd",  # purple
     # Size-specific variants (solid = 1,200,000 m³, lighter = 600,000 m³)
     "Asymmetric (1,200,000 m³)":          "#ff7f0e",
     "Direct-circulation (1,200,000 m³)":  "#2ca02c",
@@ -307,7 +309,13 @@ PROBE_LINEWIDTHS = {
 CAVERN_ORDER = [
     "Asymmetric", "Direct-circulation", "Regular", "Reversed-circulation",
     "Tilt", "Fast-leached", "String-failure", "IrregularFine",
-    "Homogeneous", "Heterogeneous_above", "Heterogeneous_below",
+    "Homogeneous",
+    "Heterogeneous_above",
+    "Heterogeneous_above (2× coarser)",
+    "Heterogeneous_above (4× coarser)",
+    "Heterogeneous_below",
+    "Heterogeneous_below (2× coarser)",
+    "Heterogeneous_below (4× coarser)",
     "Asymmetric (1,200,000 m³)", "Direct-circulation (1,200,000 m³)", "Regular (1,200,000 m³)",
     "Reversed-circulation (1,200,000 m³)", "Tilt (1,200,000 m³)", "Fast-leached (1,200,000 m³)",
     "String-failure (1,200,000 m³)", "IrregularFine (1,200,000 m³)",
