@@ -2937,12 +2937,14 @@ def plot_mc_failure_combined(cases, c_MPa=4.0, phi_deg=35.0):
 
     pressure_plotted = False
     total_vol_by_label = {}  # for footer annotation: label -> total interlayer volume
+    print("[MC FAILURE] case -> legend label -> color  (verify case-to-line attribution):")
     for c in cases:
         label = get_case_label(c)
         color, _ = get_case_color_and_style(
             c.get("cavern_label"), c.get("scenario_preset"),
             c.get("pressure_scenario"))
         ls = "-"  # always solid for MC failure plot
+        print(f"  {os.path.basename(c['case_path']):60s}  ->  {label!r:42s}  ->  {color}")
 
         try:
             t_days, f_max_il, frac_failed_vol, fos_mc_min_il, has_il, total_il_vol = \
