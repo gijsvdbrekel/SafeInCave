@@ -183,11 +183,11 @@ def main():
     grid = sf.GridHandlerGMSH("geom", grid_path)
 
     # Momentum equation (theta=0.5 -> Crank-Nicolson)
-    mom_eq = sf.LinearMomentum(grid, theta=0.5)
+    mom_eq = sf.LinearMomentumMixed(grid, theta=0.5)
 
     # Linear solver: same as examples/.../Simulation/Run.py
     mom_solver = PETSc.KSP().create(grid.mesh.comm)
-    mom_solver.setType("cg")
+    mom_solver.setType("gmres")
     mom_solver.getPC().setType("asm")
     mom_solver.setTolerances(rtol=1e-10, max_it=100)
     mom_eq.set_solver(mom_solver)
@@ -241,6 +241,7 @@ def main():
     # One-shot elastic solve -> populate mom_eq.sig with the initial stress.
     mom_eq.bc.update_dirichlet(0.0)
     mom_eq.bc.update_neumann(0.0)
+    mom_eq.bc.update_cavern_bcs(sf.CavernBC.CavernHandler())
     mom_eq.solve_elastic_response()
     eps_tot = mom_eq.compute_total_strain()
     mom_eq.compute_elastic_stress(eps_tot)
