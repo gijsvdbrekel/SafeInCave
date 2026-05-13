@@ -57,7 +57,7 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["regular1200"],
+    "caverns": ["spike_upper", "spike_upper_il2x", "spike_upper_il4x"],
     "pressure": ["industry", "transport", "power_generation"],
     "scenario": ["MD_B"],
     "n_cycles": None,
