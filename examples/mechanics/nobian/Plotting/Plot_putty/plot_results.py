@@ -57,11 +57,11 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["spike_upper", "spike_upper_il2x", "spike_upper_il4x"],
-    "pressure": ["industry", "transport", "power_generation"],
-    "scenario": ["MD_B"],
+    "caverns": ["spike_none"],
+    "pressure": ["csv"],
+    "scenario": ["MD_A"],
     "n_cycles": None,
-    "operation_days": 365,
+    "operation_days": 1825,
     "case_contains": None,
 }
 
@@ -93,12 +93,12 @@ SELECT = {
 PLOT_MODE = "compare_pressures"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
 
 FIGURES = {
-    "convergence": False,           # Figure 1: volume convergence
-    "stress_state": False,          # Figure 2: p-q stress paths
-    "fos": False,                   # Figure 3: FOS over time
-    "fracture_propagation": False, # Figure 4: dilatancy zone analysis
-    "fos_summary": True,          # Figure 5: global min FOS + 4 pressure profiles
-    "mc_failure": False,           # Figure 6: Mohr-Coulomb failure (interlayer cases)
+    "convergence": True,            # Figure 1: volume convergence
+    "stress_state": True,           # Figure 2: p-q stress paths
+    "fos": True,                    # Figure 3: FOS over time
+    "fracture_propagation": True,   # Figure 4: dilatancy zone analysis
+    "fos_summary": False,           # Figure 5: global min FOS + 4 pressure profiles
+    "mc_failure": False,            # Figure 6: Mohr-Coulomb failure (interlayer cases)
 }
 
 # Stress state options
@@ -1310,9 +1310,13 @@ def tensor33_to_voigt6(sig33):
 
 
 def compute_FOS_point(p_mpa, q_mpa, psi=None, q_tol_MPa=1e-3):
-    """Compute FOS at individual points (for fracture propagation)."""
+    """Compute FOS at individual points (for fracture propagation).
+
+    Default psi corresponds to triaxial compression (+pi/6) — the larger
+    q_dil boundary in the convention used by q_dil_devries.
+    """
     if psi is None:
-        psi = -np.pi / 6.0
+        psi = np.pi / 6.0
     q_boundary = q_dil_devries(p_mpa, psi)
     q_safe = np.where(q_mpa < q_tol_MPa, q_tol_MPa, q_mpa)
     FOS = q_boundary / q_safe
@@ -2951,14 +2955,12 @@ def plot_mc_failure_combined(cases, c_MPa=4.0, phi_deg=35.0):
 
     pressure_plotted = False
     total_vol_by_label = {}  # for footer annotation: label -> total interlayer volume
-    print("[MC FAILURE] case -> legend label -> color  (verify case-to-line attribution):")
     for c in cases:
         label = get_case_label(c)
         color, _ = get_case_color_and_style(
             c.get("cavern_label"), c.get("scenario_preset"),
             c.get("pressure_scenario"))
         ls = "-"  # always solid for MC failure plot
-        print(f"  {os.path.basename(c['case_path']):60s}  ->  {label!r:42s}  ->  {color}")
 
         try:
             t_days, f_max_il, frac_failed_vol, fos_mc_min_il, has_il, total_il_vol = \
