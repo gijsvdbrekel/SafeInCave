@@ -483,12 +483,15 @@ def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=40.0, 
     def q_from_sqrtJ2(sqrtJ2):
         return np.sqrt(3.0) * sqrtJ2
 
+    # Dilatancy boundaries use a dedicated grayscale palette so they never
+    # collide with cavern or scenario colours in the legend. Line-style alone
+    # distinguishes individual boundary criteria. (Matches plot_results.py.)
     boundary_styles = {
-        "ratigan_027":  {"color": "#7570b3", "linestyle": "--", "linewidth": 1.3, "alpha": 0.85},
-        "ratigan_018":  {"color": "#7570b3", "linestyle": ":",  "linewidth": 1.3, "alpha": 0.85},
-        "spiers":       {"color": "#66a61e", "linestyle": "-.", "linewidth": 1.3, "alpha": 0.85},
-        "devries_comp": {"color": "#e7298a", "linestyle": "-",  "linewidth": 1.5, "alpha": 0.90},
-        "devries_ext":  {"color": "#e7298a", "linestyle": "--", "linewidth": 1.5, "alpha": 0.90},
+        "ratigan_027":  {"color": "#000000", "linestyle": "--", "linewidth": 1.6, "alpha": 0.95},
+        "ratigan_018":  {"color": "#000000", "linestyle": ":",  "linewidth": 1.6, "alpha": 0.95},
+        "spiers":       {"color": "#555555", "linestyle": "-.", "linewidth": 1.6, "alpha": 0.95},
+        "devries_comp": {"color": "#888888", "linestyle": "-",  "linewidth": 1.8, "alpha": 1.00},
+        "devries_ext":  {"color": "#888888", "linestyle": "--", "linewidth": 1.8, "alpha": 1.00},
     }
 
     if "ratigan_027" in show_boundaries:
