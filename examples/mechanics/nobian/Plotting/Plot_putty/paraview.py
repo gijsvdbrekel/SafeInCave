@@ -386,7 +386,12 @@ def compute_stress_quantities(sig_3x3, centroids):
 
 
 def compute_lode_angle(sig_3x3):
-    """Compute Lode angle psi from stress tensor (Pa). Shape: (n_cells,)."""
+    """Compute Lode angle psi from stress tensor (Pa). Shape: (n_cells,).
+
+    Sign convention (consistent with the De Vries formula in q_dil_rd):
+        psi = +pi/6  ->  triaxial compression  (sigma_1 > sigma_2 = sigma_3, compression-positive)
+        psi = -pi/6  ->  triaxial extension    (sigma_1 = sigma_2 > sigma_3)
+    """
     sig = 0.5 * (sig_3x3 + np.swapaxes(sig_3x3, -1, -2))
     sig_eff = -sig  # compression positive
     vals = np.linalg.eigvalsh(sig_eff)
@@ -400,7 +405,7 @@ def compute_lode_angle(sig_3x3):
     x = (3.0 * np.sqrt(3.0) / 2.0) * (J3 / (J2_safe**1.5))
     x = np.clip(x, -1.0, 1.0)
     theta = (1.0 / 3.0) * np.arccos(x)
-    return theta - np.pi / 6.0
+    return np.pi / 6.0 - theta
 
 
 def q_dil_rd(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):

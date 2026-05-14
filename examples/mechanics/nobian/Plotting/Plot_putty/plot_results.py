@@ -874,8 +874,11 @@ def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=40.0, 
         sqrtJ2_ = D1 * ((I1_MPa / (sgn * sigma_ref)) ** m) / denom + T0
         return np.sqrt(3.0) * sqrtJ2_
 
-    psi_comp = -np.pi / 6.0
-    psi_ext = np.pi / 6.0
+    # De Vries convention used in this codebase:
+    # psi = +pi/6 -> triaxial compression (larger q_dil, the upper boundary)
+    # psi = -pi/6 -> triaxial extension   (smaller q_dil, the lower boundary)
+    psi_comp = np.pi / 6.0
+    psi_ext = -np.pi / 6.0
 
     if "devries_comp" in show_boundaries:
         ax.plot(p, devries_q(I1, psi_comp), label="De Vries 2005 (comp)",
@@ -1015,7 +1018,12 @@ def load_sig(case_folder):
 
 
 def _psi_from_tensor33(sig_Pa, compression_positive=True):
-    """Compute Lode angle from (nt, nc, 3, 3) stress tensor via eigenvalues."""
+    """Compute Lode angle from (nt, nc, 3, 3) stress tensor via eigenvalues.
+
+    Sign convention (consistent with the De Vries formula in q_dil_rd):
+        psi = +pi/6  ->  triaxial compression  (sigma_1 > sigma_2 = sigma_3)
+        psi = -pi/6  ->  triaxial extension    (sigma_1 = sigma_2 > sigma_3)
+    """
     sig = 0.5 * (sig_Pa + np.swapaxes(sig_Pa, -1, -2))
     sig_eff = -sig if compression_positive else sig
     vals = np.linalg.eigvalsh(sig_eff)
@@ -1029,7 +1037,7 @@ def _psi_from_tensor33(sig_Pa, compression_positive=True):
     x = (3.0*np.sqrt(3.0)/2.0) * (J3 / (J2_safe**1.5))
     x = np.clip(x, -1.0, 1.0)
     theta = (1.0/3.0) * np.arccos(x)
-    psi = theta - np.pi/6.0
+    psi = np.pi/6.0 - theta
     return psi
 
 
@@ -1188,7 +1196,13 @@ def write_fos_xdmf_from_sig(case_folder: str, sig_xdmf_path: str, time_list: np.
 # =============================================================================
 
 def _psi_from_voigt6(sig_voigt):
-    """Compute Lode angle from (..., 6) Voigt notation [s11,s22,s33,s12,s13,s23]."""
+    """Compute Lode angle from (..., 6) Voigt notation [s11,s22,s33,s12,s13,s23].
+
+    Sign convention (consistent with q_dil_devries):
+        psi = +pi/6  ->  triaxial compression  (sigma_1 > sigma_2 = sigma_3, compression-positive)
+        psi = -pi/6  ->  triaxial extension    (sigma_1 = sigma_2 > sigma_3)
+    Expects sig_voigt in compression-positive convention (callers pass -sig33/MPa).
+    """
     s11 = sig_voigt[..., 0]
     s22 = sig_voigt[..., 1]
     s33 = sig_voigt[..., 2]
@@ -1211,7 +1225,7 @@ def _psi_from_voigt6(sig_voigt):
     sqrtJ2 = np.sqrt(J2)
     arg = (3.0 * np.sqrt(3.0) / 2.0) * J3 / (sqrtJ2**3)
     arg = np.clip(arg, -1.0, 1.0)
-    psi = -(1.0 / 3.0) * np.arcsin(arg)
+    psi = (1.0 / 3.0) * np.arcsin(arg)
     return psi
 
 

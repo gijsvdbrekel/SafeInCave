@@ -393,6 +393,13 @@ def read_stress_paths(case_folder, probes_dict):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def compute_psi_from_sigma(sig_voigt):
+    """Compute Lode angle from (..., 6) Voigt notation [s11,s22,s33,s12,s13,s23].
+
+    Sign convention (consistent with q_dil_devries):
+        psi = +pi/6  ->  triaxial compression  (sigma_1 > sigma_2 = sigma_3, compression-positive)
+        psi = -pi/6  ->  triaxial extension    (sigma_1 = sigma_2 > sigma_3)
+    Expects sig_voigt in compression-positive convention.
+    """
     s11, s22, s33 = sig_voigt[..., 0], sig_voigt[..., 1], sig_voigt[..., 2]
     s12, s13, s23 = sig_voigt[..., 3], sig_voigt[..., 4], sig_voigt[..., 5]
     p = (s11 + s22 + s33) / 3.0
@@ -404,7 +411,7 @@ def compute_psi_from_sigma(sig_voigt):
           + s13 * (s12 * s23 - dev22 * s13))
     sqrtJ2 = np.sqrt(J2)
     arg = np.clip((3.0 * np.sqrt(3.0) / 2.0) * J3 / (sqrtJ2**3), -1.0, 1.0)
-    return -(1.0 / 3.0) * np.arcsin(arg)
+    return (1.0 / 3.0) * np.arcsin(arg)
 
 
 def q_dil_devries(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):
@@ -503,11 +510,13 @@ def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=40.0, 
         sqrtJ2_ = D1 * ((I1_MPa / (sgn * sigma_ref)) ** m) / denom + T0
         return np.sqrt(3.0) * sqrtJ2_
 
+    # De Vries convention used in this codebase:
+    # psi = +pi/6 -> compression (upper boundary), psi = -pi/6 -> extension (lower boundary)
     if "devries_comp" in show_boundaries:
-        ax.plot(p, devries_q(I1, -np.pi / 6.0), label="De Vries 2005 (comp)", **boundary_styles["devries_comp"])
+        ax.plot(p, devries_q(I1, np.pi / 6.0), label="De Vries 2005 (comp)", **boundary_styles["devries_comp"])
 
     if "devries_ext" in show_boundaries:
-        ax.plot(p, devries_q(I1, np.pi / 6.0), label="De Vries 2005 (ext)", **boundary_styles["devries_ext"])
+        ax.plot(p, devries_q(I1, -np.pi / 6.0), label="De Vries 2005 (ext)", **boundary_styles["devries_ext"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
