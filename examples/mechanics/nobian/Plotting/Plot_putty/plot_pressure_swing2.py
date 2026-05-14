@@ -55,6 +55,13 @@ CAVERN = None
 # SWING_BARS = [10, 12, 14, 16, 18, 20]
 SWING_BARS = None
 
+# SCENARIO: Filter for a specific material scenario, or None for all.
+#   Accepts the canonical preset names: "MD_A", "MD_B", "MD_B_freecalibr",
+#   "TUD2023_A", "TUD2023_B", "TUD2023_B_freecalibr".
+#   Matched against the SA_MD / SB_MD / SA_SIC / SB_SIC tags embedded in the
+#   case folder name by run_*.py (SIC -> TUD2023). Set to None to ignore.
+SCENARIO = "MD_A"
+
 # Dilatancy boundaries to show on p-q plots
 SHOW_DILATANCY = ["ratigan_027", "spiers", "devries_comp", "devries_ext"]
 
@@ -161,6 +168,28 @@ def _nice_cavern_label(cavern_key):
 # CASE DISCOVERY
 # ══════════════════════════════════════════════════════════════════════════════
 
+# SA_MD / SB_SIC etc. → canonical preset name. Mirrors case_index._SA_MAP so
+# folder names produced by run_*.py classify the same way here. Longest tags
+# first so "SB_freecalibr_*" matches before "SB_*".
+_SCENARIO_TAGS = [
+    ("sb_freecalibr_sic", "TUD2023_B_freecalibr"),
+    ("sb_freecalibr_md",  "MD_B_freecalibr"),
+    ("sa_sic", "TUD2023_A"),
+    ("sa_md",  "MD_A"),
+    ("sb_sic", "TUD2023_B"),
+    ("sb_md",  "MD_B"),
+]
+
+
+def _detect_scenario(name):
+    """Return canonical scenario preset from a case folder name, or None."""
+    low = name.lower()
+    for tag, preset in _SCENARIO_TAGS:
+        if f"_{tag}_" in low or low.endswith(f"_{tag}"):
+            return preset
+    return None
+
+
 def discover_swing_cases(root):
     """
     Find all case_swing_*bar_* folders, extract swing amplitude and cavern key.
@@ -184,6 +213,7 @@ def discover_swing_cases(root):
                 "swing_mpa": swing_bar / 10.0,
                 "cavern_key": cavern_key,
                 "cavern_label": _nice_cavern_label(cavern_key),
+                "scenario_preset": _detect_scenario(name),
                 "case_path": os.path.join(root, name),
                 "case_name": name,
             })
@@ -879,11 +909,18 @@ def main():
     if SWING_BARS is not None:
         all_swing = [c for c in all_swing if c["swing_bar"] in SWING_BARS]
 
+    if SCENARIO is not None:
+        scenario_low = SCENARIO.lower()
+        all_swing = [c for c in all_swing
+                     if (c.get("scenario_preset") or "").lower() == scenario_low]
+
     if not all_swing:
         print(f"[ERROR] No swing cases found in {ROOT}")
         print("  Expected folders like: case_swing_10bar_regular1200/")
         if CAVERN is not None:
             print(f"  (filtered for CAVERN = '{CAVERN}')")
+        if SCENARIO is not None:
+            print(f"  (filtered for SCENARIO = '{SCENARIO}')")
         return
 
     cavern_groups = {}
