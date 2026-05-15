@@ -425,9 +425,6 @@ def read_stress_paths(case_folder, probes_dict):
 def compute_psi_from_sigma(sig_voigt):
     """Compute Lode angle from (..., 6) Voigt notation [s11,s22,s33,s12,s13,s23].
 
-    Sign convention (consistent with q_dil_devries):
-        psi = +pi/6  ->  triaxial compression  (sigma_1 > sigma_2 = sigma_3, compression-positive)
-        psi = -pi/6  ->  triaxial extension    (sigma_1 = sigma_2 > sigma_3)
     Expects sig_voigt in compression-positive convention.
     """
     s11, s22, s33 = sig_voigt[..., 0], sig_voigt[..., 1], sig_voigt[..., 2]
@@ -441,7 +438,7 @@ def compute_psi_from_sigma(sig_voigt):
           + s13 * (s12 * s23 - dev22 * s13))
     sqrtJ2 = np.sqrt(J2)
     arg = np.clip((3.0 * np.sqrt(3.0) / 2.0) * J3 / (sqrtJ2**3), -1.0, 1.0)
-    return (1.0 / 3.0) * np.arcsin(arg)
+    return -(1.0 / 3.0) * np.arcsin(arg)
 
 
 def q_dil_devries(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):

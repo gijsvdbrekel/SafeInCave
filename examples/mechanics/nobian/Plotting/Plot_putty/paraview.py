@@ -46,7 +46,7 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 #   "case_contains"  - Substring match in case name or None
 
 SELECT = {
-    "caverns": ["spike_none", "spike_upper", "spike_lower"],
+    "caverns": ["spike_none", "spike_lower_il4x", "spike_upper_il4x"],
     "pressure": None,
     "scenario": None,
     "n_cycles": None,
@@ -386,12 +386,7 @@ def compute_stress_quantities(sig_3x3, centroids):
 
 
 def compute_lode_angle(sig_3x3):
-    """Compute Lode angle psi from stress tensor (Pa). Shape: (n_cells,).
-
-    Sign convention (consistent with the De Vries formula in q_dil_rd):
-        psi = +pi/6  ->  triaxial compression  (sigma_1 > sigma_2 = sigma_3, compression-positive)
-        psi = -pi/6  ->  triaxial extension    (sigma_1 = sigma_2 > sigma_3)
-    """
+    """Compute Lode angle psi from stress tensor (Pa). Shape: (n_cells,)."""
     sig = 0.5 * (sig_3x3 + np.swapaxes(sig_3x3, -1, -2))
     sig_eff = -sig  # compression positive
     vals = np.linalg.eigvalsh(sig_eff)
@@ -405,7 +400,7 @@ def compute_lode_angle(sig_3x3):
     x = (3.0 * np.sqrt(3.0) / 2.0) * (J3 / (J2_safe**1.5))
     x = np.clip(x, -1.0, 1.0)
     theta = (1.0 / 3.0) * np.arccos(x)
-    return np.pi / 6.0 - theta
+    return theta - np.pi / 6.0
 
 
 def q_dil_rd(p_MPa, psi, D1=0.683, D2=0.512, m=0.75, T0=1.5, sigma_ref=1.0):
@@ -623,6 +618,24 @@ def process_case(case_folder, phase, timestep_sel):
     convergence_cell_list = []
     volume_data_list = []
 
+    # Per-cell max-over-time accumulators (for headline damage-map XDMF written
+    # after the loop). Tracks the worst state each cell ever reached.
+    n_surf = len(parent_idx)
+    max_acc_surf = {
+        "fos_min":   np.full(n_surf, np.inf),
+        "u_mag_max": np.zeros(n_surf),
+    }
+    max_acc_vol = {
+        "fos_min":   np.full(n_cells, np.inf),
+        "u_mag_max": np.zeros(n_cells),
+    }
+    if has_eps_vp:
+        max_acc_surf["eps_vp_eq_max"] = np.zeros(n_surf)
+        max_acc_vol["eps_vp_eq_max"]  = np.zeros(n_cells)
+    if has_interlayer:
+        max_acc_vol["f_MC_max"]    = np.full(n_cells, -np.inf)
+        max_acc_vol["ever_failed"] = np.zeros(n_cells, dtype=np.float64)
+
     for step_k in steps:
         # -- Read sig tensor --
         t_sig, sig_3x3 = read_tensor_timestep(sig_path, step_k)
@@ -706,6 +719,20 @@ def process_case(case_folder, phase, timestep_sel):
 
         section_data_list.append(sect)
 
+        # ---- Update per-cell max-over-time accumulators ----
+        np.minimum(max_acc_vol["fos_min"],  fos,                       out=max_acc_vol["fos_min"])
+        np.maximum(max_acc_vol["u_mag_max"], u_mag_cell * 1000.0,      out=max_acc_vol["u_mag_max"])
+        np.minimum(max_acc_surf["fos_min"], fos[parent_idx],           out=max_acc_surf["fos_min"])
+        np.maximum(max_acc_surf["u_mag_max"], u_mag_cell[parent_idx] * 1000.0,
+                   out=max_acc_surf["u_mag_max"])
+        if has_eps_vp:
+            np.maximum(max_acc_vol["eps_vp_eq_max"],  eps_vp_eq,             out=max_acc_vol["eps_vp_eq_max"])
+            np.maximum(max_acc_surf["eps_vp_eq_max"], eps_vp_eq[parent_idx], out=max_acc_surf["eps_vp_eq_max"])
+        if has_interlayer:
+            np.maximum(max_acc_vol["f_MC_max"], np.nan_to_num(f_MC, nan=-np.inf),
+                       out=max_acc_vol["f_MC_max"])
+            max_acc_vol["ever_failed"] = np.maximum(max_acc_vol["ever_failed"], failed.astype(np.float64))
+
         # ---- Build convergence data (incremental from t=0) ----
         u_incr = u_data - u_ref  # subtract reference to get convergence signal
         u_incr_mag = np.linalg.norm(u_incr, axis=1)
@@ -730,6 +757,25 @@ def process_case(case_folder, phase, timestep_sel):
     # 2. Cavern surface (clean surface colored by scalars)
     surface_out = os.path.join(case_folder, "cavern_surface.xdmf")
     write_surface_xdmf(surface_out, points, tri_array, times, surface_data_list)
+
+    # 2b. Cavern surface — max-over-time aggregation (single timestep).
+    # Direct headline "damage map": min FOS, max u, max eps_vp per surface cell.
+    # Replace inf in fos_min with a finite sentinel so ParaView colormaps cleanly.
+    surf_max_data = {k: v.copy() for k, v in max_acc_surf.items()}
+    surf_max_data["fos_min"][~np.isfinite(surf_max_data["fos_min"])] = 1e3
+    surface_max_out = os.path.join(case_folder, "cavern_surface_max.xdmf")
+    write_surface_xdmf(surface_max_out, points, tri_array,
+                       [times[-1] if times else 0.0], [surf_max_data])
+
+    # 2c. Full-volume max-over-time (for cross-sections / threshold filters).
+    vol_max_data = {k: v.copy() for k, v in max_acc_vol.items()}
+    vol_max_data["fos_min"][~np.isfinite(vol_max_data["fos_min"])] = 1e3
+    if has_interlayer:
+        vol_max_data["f_MC_max"][~np.isfinite(vol_max_data["f_MC_max"])] = 0.0
+    volume_max_out = os.path.join(case_folder, "paraview_volume_max.xdmf")
+    write_section_xdmf(volume_max_out, points, cells_tetra,
+                       np.ones(n_cells, dtype=bool),
+                       [times[-1] if times else 0.0], [vol_max_data])
 
     # 3. Cross-section (vertical slice with stress arrows)
     section_out = os.path.join(case_folder, "cross_section.xdmf")

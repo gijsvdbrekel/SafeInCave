@@ -94,11 +94,13 @@ PLOT_MODE = "compare_pressures"    # "compare_shapes", "compare_scenarios", "com
 
 FIGURES = {
     "convergence": False,            # Figure 1: volume convergence
-    "stress_state": False,           # Figure 2: p-q stress paths
+    "stress_state": True,           # Figure 2: p-q stress paths
     "fos": False,                    # Figure 3: FOS over time
     "fracture_propagation": False,   # Figure 4: dilatancy zone analysis
-    "fos_summary": True,           # Figure 5: global min FOS + 4 pressure profiles
+    "fos_summary": False,           # Figure 5: global min FOS + 4 pressure profiles
     "mc_failure": False,            # Figure 6: Mohr-Coulomb failure (interlayer cases)
+    "interlayer_comparison": False,  # Figure 7: convergence + max f_MC across spike cases
+    "interlayer_stress_paths": False,# Figure 8: p-q stress paths across spike cases
 }
 
 # Stress state options
@@ -1018,12 +1020,7 @@ def load_sig(case_folder):
 
 
 def _psi_from_tensor33(sig_Pa, compression_positive=True):
-    """Compute Lode angle from (nt, nc, 3, 3) stress tensor via eigenvalues.
-
-    Sign convention (consistent with the De Vries formula in q_dil_rd):
-        psi = +pi/6  ->  triaxial compression  (sigma_1 > sigma_2 = sigma_3)
-        psi = -pi/6  ->  triaxial extension    (sigma_1 = sigma_2 > sigma_3)
-    """
+    """Compute Lode angle from (nt, nc, 3, 3) stress tensor via eigenvalues."""
     sig = 0.5 * (sig_Pa + np.swapaxes(sig_Pa, -1, -2))
     sig_eff = -sig if compression_positive else sig
     vals = np.linalg.eigvalsh(sig_eff)
@@ -1037,7 +1034,7 @@ def _psi_from_tensor33(sig_Pa, compression_positive=True):
     x = (3.0*np.sqrt(3.0)/2.0) * (J3 / (J2_safe**1.5))
     x = np.clip(x, -1.0, 1.0)
     theta = (1.0/3.0) * np.arccos(x)
-    psi = np.pi/6.0 - theta
+    psi = theta - np.pi/6.0
     return psi
 
 
@@ -1198,9 +1195,6 @@ def write_fos_xdmf_from_sig(case_folder: str, sig_xdmf_path: str, time_list: np.
 def _psi_from_voigt6(sig_voigt):
     """Compute Lode angle from (..., 6) Voigt notation [s11,s22,s33,s12,s13,s23].
 
-    Sign convention (consistent with q_dil_devries):
-        psi = +pi/6  ->  triaxial compression  (sigma_1 > sigma_2 = sigma_3, compression-positive)
-        psi = -pi/6  ->  triaxial extension    (sigma_1 = sigma_2 > sigma_3)
     Expects sig_voigt in compression-positive convention (callers pass -sig33/MPa).
     """
     s11 = sig_voigt[..., 0]
@@ -1225,7 +1219,7 @@ def _psi_from_voigt6(sig_voigt):
     sqrtJ2 = np.sqrt(J2)
     arg = (3.0 * np.sqrt(3.0) / 2.0) * J3 / (sqrtJ2**3)
     arg = np.clip(arg, -1.0, 1.0)
-    psi = (1.0 / 3.0) * np.arcsin(arg)
+    psi = -(1.0 / 3.0) * np.arcsin(arg)
     return psi
 
 
@@ -1310,13 +1304,9 @@ def tensor33_to_voigt6(sig33):
 
 
 def compute_FOS_point(p_mpa, q_mpa, psi=None, q_tol_MPa=1e-3):
-    """Compute FOS at individual points (for fracture propagation).
-
-    Default psi corresponds to triaxial compression (+pi/6) — the larger
-    q_dil boundary in the convention used by q_dil_devries.
-    """
+    """Compute FOS at individual points (for fracture propagation)."""
     if psi is None:
-        psi = np.pi / 6.0
+        psi = -np.pi / 6.0
     q_boundary = q_dil_devries(p_mpa, psi)
     q_safe = np.where(q_mpa < q_tol_MPa, q_tol_MPa, q_mpa)
     FOS = q_boundary / q_safe
@@ -1628,14 +1618,26 @@ def plot_convergence_per_cavern(cases, group_fn=None):
     (spanning both rows) = wall profile, initial vs final. The wall panel uses
     non-equal aspect so sub-percent radial displacements remain visible.
     """
+    # In compare_pressures mode the pressure scheme IS the comparison variable
+    # (one curve per scheme already), so the dedicated pressure-schedule panel
+    # is redundant — drop it and let the convergence panel take the full height.
+    mode = PLOT_MODE.lower().replace(" ", "_")
+    show_pressure_panel = (mode != "compare_pressures")
+
     groups = (group_fn or group_cases_by_cavern)(cases)
     for cav_label, cav_cases in groups.items():
         fig = plt.figure(figsize=(22, 10))
-        gs = fig.add_gridspec(2, 2, width_ratios=[2.4, 1.0],
-                              height_ratios=[2.2, 1.0], hspace=0.12, wspace=0.18)
-        ax1 = fig.add_subplot(gs[0, 0])
-        ax2 = fig.add_subplot(gs[1, 0], sharex=ax1)
-        ax3 = fig.add_subplot(gs[:, 1])
+        if show_pressure_panel:
+            gs = fig.add_gridspec(2, 2, width_ratios=[2.4, 1.0],
+                                  height_ratios=[2.2, 1.0], hspace=0.12, wspace=0.18)
+            ax1 = fig.add_subplot(gs[0, 0])
+            ax2 = fig.add_subplot(gs[1, 0], sharex=ax1)
+            ax3 = fig.add_subplot(gs[:, 1])
+        else:
+            gs = fig.add_gridspec(1, 2, width_ratios=[2.4, 1.0], wspace=0.18)
+            ax1 = fig.add_subplot(gs[0, 0])
+            ax2 = None
+            ax3 = fig.add_subplot(gs[0, 1])
 
         for c in cav_cases:
             cav_full = c.get("cavern_label", cav_label)
@@ -1668,23 +1670,27 @@ def plot_convergence_per_cavern(cases, group_fn=None):
 
         # Plot pressure schedule(s) — overlay all distinct schedules.
         # Use a neutral colour (black) so it never clashes with a scenario line above.
-        _plotted_pressures = set()
-        for c in cav_cases:
-            ps = c.get("pressure_scenario")
-            if ps in _plotted_pressures:
-                continue
-            _plotted_pressures.add(ps)
-            tH, pMPa = read_pressure_schedule(c["case_path"])
-            if tH is not None:
-                ax2.plot(tH / 24.0, pMPa, linewidth=1.7, color='black',
-                         label=PRESSURE_LABELS.get(ps, ps))
-        if not _plotted_pressures:
-            ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
-        if len(_plotted_pressures) > 1:
-            ax2.legend(fontsize=18, frameon=True, loc="upper right")
-        ax2.set_ylabel("Pressure (MPa)")
-        ax2.set_xlabel("Time (days)")
-        ax2.grid(True, alpha=0.3)
+        if show_pressure_panel:
+            _plotted_pressures = set()
+            for c in cav_cases:
+                ps = c.get("pressure_scenario")
+                if ps in _plotted_pressures:
+                    continue
+                _plotted_pressures.add(ps)
+                tH, pMPa = read_pressure_schedule(c["case_path"])
+                if tH is not None:
+                    ax2.plot(tH / 24.0, pMPa, linewidth=1.7, color='black',
+                             label=PRESSURE_LABELS.get(ps, ps))
+            if not _plotted_pressures:
+                ax2.text(0.5, 0.5, "No pressure_schedule.json found.", ha="center", va="center", transform=ax2.transAxes)
+            if len(_plotted_pressures) > 1:
+                ax2.legend(fontsize=18, frameon=True, loc="upper right")
+            ax2.set_ylabel("Pressure (MPa)")
+            ax2.set_xlabel("Time (days)")
+            ax2.grid(True, alpha=0.3)
+        else:
+            # No pressure panel — put x-axis label on the convergence panel.
+            ax1.set_xlabel("Time (days)")
 
         # Wall profile: initial vs final shape. Displacement is amplified by
         # WALL_PROFILE_AMPLIFICATION so that <1 % radial changes are visible;
@@ -1731,9 +1737,13 @@ def plot_convergence_per_cavern(cases, group_fn=None):
                      transform=ax3.transAxes)
             ax3.axis("off")
 
-        add_panel_label(ax1, "A")
-        add_panel_label(ax2, "B")
-        add_panel_label(ax3, "C")
+        if show_pressure_panel:
+            add_panel_label(ax1, "A")
+            add_panel_label(ax2, "B")
+            add_panel_label(ax3, "C")
+        else:
+            add_panel_label(ax1, "A")
+            add_panel_label(ax3, "B")
 
         safe_cav = cav_label.replace(" ", "_")
         outname = f"convergence_{safe_cav}.png"
@@ -2052,6 +2062,11 @@ def plot_stress_per_cavern(cases, group_fn=None):
     probe_types = ["top", "quarter", "mid", "threequarter", "bottom"]
     groups = (group_fn or group_cases_by_cavern)(cases)
 
+    # In compare_pressures mode the pressure scheme is already the comparison
+    # variable, so the dedicated pressure-schedule panel (axes[5]) is redundant.
+    mode = PLOT_MODE.lower().replace(" ", "_")
+    show_pressure_panel = (mode != "compare_pressures")
+
     for cav_label, cav_cases in groups.items():
         # Build stress paths for all cases of this cavern
         stress_by_series = {}
@@ -2097,29 +2112,32 @@ def plot_stress_per_cavern(cases, group_fn=None):
 
         # Pressure subplot — overlay all distinct pressure schedules
         axp = axes[5]
-        _plotted_pressures = set()
-        for c in cav_cases:
-            ps = c.get("pressure_scenario")
-            if ps in _plotted_pressures:
-                continue
-            _plotted_pressures.add(ps)
-            tH, pMPa = read_pressure_schedule(c["case_path"])
-            if tH is not None:
-                axp.plot(tH / 24.0, pMPa, linewidth=2.0, color='black',
-                         label=PRESSURE_LABELS.get(ps, ps))
-        if not _plotted_pressures:
-            axp.text(0.5, 0.5, "No pressure_schedule.json found.",
-                     ha="center", va="center", transform=axp.transAxes)
-            axp.axis("off")
+        if not show_pressure_panel:
+            axp.set_visible(False)
         else:
-            axp.set_title("Pressure schedule", fontsize=22, fontweight='bold')
-            axp.set_xlabel("Time (days)", fontsize=22)
-            axp.set_ylabel("Pressure (MPa)", fontsize=22)
-            axp.tick_params(axis='both', labelsize=20)
-            axp.grid(True, alpha=0.3)
-            if len(_plotted_pressures) > 1:
-                axp.legend(fontsize=18, frameon=True)
-            add_panel_label(axp, panel_letters[5])
+            _plotted_pressures = set()
+            for c in cav_cases:
+                ps = c.get("pressure_scenario")
+                if ps in _plotted_pressures:
+                    continue
+                _plotted_pressures.add(ps)
+                tH, pMPa = read_pressure_schedule(c["case_path"])
+                if tH is not None:
+                    axp.plot(tH / 24.0, pMPa, linewidth=2.0, color='black',
+                             label=PRESSURE_LABELS.get(ps, ps))
+            if not _plotted_pressures:
+                axp.text(0.5, 0.5, "No pressure_schedule.json found.",
+                         ha="center", va="center", transform=axp.transAxes)
+                axp.axis("off")
+            else:
+                axp.set_title("Pressure schedule", fontsize=22, fontweight='bold')
+                axp.set_xlabel("Time (days)", fontsize=22)
+                axp.set_ylabel("Pressure (MPa)", fontsize=22)
+                axp.tick_params(axis='both', labelsize=20)
+                axp.grid(True, alpha=0.3)
+                if len(_plotted_pressures) > 1:
+                    axp.legend(fontsize=18, frameon=True)
+                add_panel_label(axp, panel_letters[5])
 
         # Legend above the figure, with section headers that separate cavern
         # geometries / scenarios from dilatancy criteria.
@@ -3026,6 +3044,142 @@ def plot_mc_failure_combined(cases, c_MPa=4.0, phi_deg=35.0):
 
 
 # =============================================================================
+# 12c. FIGURE 7 — Interlayer comparison (convergence + interlayer integrity)
+# =============================================================================
+
+def plot_interlayer_comparison(cases, c_MPa=4.0, phi_deg=35.0):
+    """Two-panel figure comparing spike_none vs spike_lower_il4x vs spike_upper_il4x.
+
+    Top    : global volume convergence (%) vs time — one line per case.
+    Bottom : max Mohr-Coulomb yield function f_MC (MPa) in the interlayer cells.
+             spike_none has no interlayer and is omitted from this panel.
+    """
+    fig, axes = plt.subplots(2, 1, figsize=(12, 9), sharex=True,
+                             gridspec_kw={"height_ratios": [1, 1]})
+    ax_conv, ax_f = axes
+
+    for c in cases:
+        label = get_case_label(c)
+        color, _ = get_case_color_and_style(
+            c.get("cavern_label"), c.get("scenario_preset"),
+            c.get("pressure_scenario"))
+        ls = "-"
+
+        # Top panel: convergence
+        try:
+            t_days, conv_pct = compute_convergence_3d_percent(c["case_path"])
+            ax_conv.plot(t_days, conv_pct, color=color, linestyle=ls,
+                         linewidth=2.0, label=label)
+        except Exception as e:
+            print(f"[WARN] interlayer-comparison convergence skipped for {c.get('case_name')}: {e}")
+
+        # Bottom panel: max f_MC over interlayer cells (only when interlayer exists)
+        try:
+            t_il, f_max_il, _, _, has_il, _ = _compute_mc_failure_timeseries(
+                c, c_MPa=c_MPa, phi_deg=phi_deg)
+            if has_il:
+                ax_f.plot(t_il, f_max_il, color=color, linestyle=ls,
+                          linewidth=2.0, label=label)
+        except Exception as e:
+            print(f"[WARN] interlayer-comparison f_MC skipped for {c.get('case_name')}: {e}")
+
+    ax_conv.set_ylabel("Volume convergence (%)", fontsize=14)
+    ax_conv.set_title("Cavern volume loss with and without the anhydrite interlayer",
+                      fontsize=16, fontweight="bold")
+    ax_conv.legend(loc="best", fontsize=12)
+    ax_conv.grid(True, alpha=0.3)
+
+    ax_f.axhline(0, color="#d62728", linewidth=1.0, linestyle="--", alpha=0.7,
+                 label=r"$f_{MC}=0$ (failure threshold)")
+    ax_f.set_xlabel("Time (days)", fontsize=14)
+    ax_f.set_ylabel(r"Max $f_{MC}$ in interlayer (MPa)", fontsize=14)
+    ax_f.set_title(rf"Mohr-Coulomb yield in anhydrite (c={c_MPa} MPa, $\varphi$={phi_deg}°)",
+                   fontsize=16)
+    ax_f.legend(loc="best", fontsize=12)
+    ax_f.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    outpath = os.path.join(OUT_DIR, "interlayer_comparison.png")
+    fig.savefig(outpath, dpi=DPI)
+    print(f"[SAVED] {outpath}")
+    if SHOW:
+        plt.show()
+    plt.close(fig)
+
+
+# =============================================================================
+# 12d. FIGURE 8 — Stress paths near the interlayer–wall intersection
+# =============================================================================
+
+def plot_interlayer_stress_paths(cases):
+    """Compare p-q stress paths across cases at five wall-probe locations.
+
+    For each of the five standard wall probes (top, quarter, mid, threequarter,
+    bottom) we plot a separate p-q panel with one curve per case. The DeVries
+    dilatancy envelope is overlaid for context. The middle three probes
+    (quarter, mid, threequarter) bracket typical interlayer crossing depths
+    for the spike geometry; top and bottom serve as references far from the
+    interlayer.
+    """
+    probe_names = ["top", "threequarter", "mid", "quarter", "bottom"]
+    fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+    axes_flat = axes.flatten()
+    # The last (6th) axis is used for a shared legend.
+    ax_legend = axes_flat[-1]
+    panel_axes = axes_flat[:-1]
+
+    # Pre-compute stress paths per case (requires the wall geometry per case).
+    # Use the case-specific wall extraction so probe coordinates match the mesh.
+    stress_by_case = {}
+    for c in cases:
+        folder = c["case_path"]
+        try:
+            wall_points = load_wall_points(folder)
+            probes = auto_generate_probes_from_wall_points(wall_points)
+            stress_by_case[c["case_name"]] = (read_stress_paths(folder, probes), c)
+        except Exception as e:
+            print(f"[WARN] interlayer-stress-paths skipped for {c.get('case_name')}: {e}")
+
+    # One panel per probe location; one curve per case.
+    legend_handles = {}
+    for ax, probe_name in zip(panel_axes, probe_names):
+        for case_name, (sp_dict, c) in stress_by_case.items():
+            if probe_name not in sp_dict:
+                continue
+            p, q = sp_dict[probe_name]
+            color, _ = get_case_color_and_style(
+                c.get("cavern_label"), c.get("scenario_preset"),
+                c.get("pressure_scenario"))
+            label = get_case_label(c)
+            line, = ax.plot(p, q, color=color, linewidth=1.4, alpha=0.9)
+            legend_handles[label] = line
+
+        plot_dilatancy_boundaries(ax, show_boundaries=SHOW_DILATANCY)
+        ax.set_title(f"Probe: {probe_name}", fontsize=13)
+        ax.set_xlabel("Mean stress p (MPa)", fontsize=11)
+        ax.set_ylabel("Von Mises q (MPa)", fontsize=11)
+        ax.grid(True, alpha=0.3)
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0)
+
+    # Shared legend on the 6th panel (no plot, just labels).
+    ax_legend.axis("off")
+    if legend_handles:
+        ax_legend.legend(legend_handles.values(), legend_handles.keys(),
+                         loc="center", fontsize=12, frameon=True)
+
+    fig.suptitle("Stress paths at cavern-wall probes — interlayer effect",
+                 fontsize=16, fontweight="bold")
+    fig.tight_layout()
+    outpath = os.path.join(OUT_DIR, "interlayer_stress_paths.png")
+    fig.savefig(outpath, dpi=DPI)
+    print(f"[SAVED] {outpath}")
+    if SHOW:
+        plt.show()
+    plt.close(fig)
+
+
+# =============================================================================
 # 13. MAIN
 # =============================================================================
 
@@ -3168,6 +3322,26 @@ def main():
             plot_mc_failure_combined(mc_cases)
         else:
             print("[MC FAILURE] No cases with required files (sig.xdmf + geom.msh)")
+
+    # --- Figure 7: Interlayer comparison (convergence + max f_MC) ---
+    if FIGURES.get("interlayer_comparison"):
+        il_cases = [c for c in cases
+                    if case_has_convergence_files(c["case_path"])
+                    and os.path.isfile(path_sig_xdmf(c["case_path"]))]
+        if il_cases:
+            print(f"\n[INTERLAYER COMPARISON] {len(il_cases)} case(s) with required files")
+            plot_interlayer_comparison(il_cases)
+        else:
+            print("[INTERLAYER COMPARISON] No cases with required files")
+
+    # --- Figure 8: Interlayer stress paths ---
+    if FIGURES.get("interlayer_stress_paths"):
+        sp_cases = [c for c in cases if case_has_stress_files(c["case_path"])]
+        if sp_cases:
+            print(f"\n[INTERLAYER STRESS PATHS] {len(sp_cases)} case(s) with required files")
+            plot_interlayer_stress_paths(sp_cases)
+        else:
+            print("[INTERLAYER STRESS PATHS] No cases with required files")
 
     print("\n[DONE]")
 
