@@ -105,7 +105,7 @@ RAMP_UP_HOURS = 336 # 2 weeks
 #   "transport"        - Trapezoidal 2-day cycle (nighttime high → daytime low)
 #   "power_generation" - Abrupt withdrawal events with gradual re-pressurisation
 #   "csv"              - Load pressure profile from CSV file
-PRESSURE_SCENARIO = "transport"
+PRESSURE_SCENARIO = "csv"
 
 # ── INDUSTRY SETTINGS (only used when PRESSURE_SCENARIO = "industry") ──────────
 # Sinusoidal schedule. With leaching: oscillates around p_leach_end + P_AMPLITUDE_MPA.
@@ -144,13 +144,13 @@ MAX_DP_MPA      = 0.2              # Max pressure change per step (MPa)
 #   "stretch" - N_CYCLES spread evenly over OPERATION_DAYS
 #   "repeat"  - Cycle pattern repeated with its native period
 #   "direct"  - (CSV only) Use hourly CSV values directly
-SCHEDULE_MODE = "stretch"
+SCHEDULE_MODE = "direct"
 
 # OPERATION_DAYS: Total simulation duration in days (operation phase only)
-OPERATION_DAYS = 365
+OPERATION_DAYS = 1825
 
 # N_CYCLES: Number of pressure cycles (industry: sinusoidal; transport: 2-day cycles)
-N_CYCLES = 180
+N_CYCLES = 99
 
 # ── TIME STEP ──────────────────────────────────────────────────────────────────
 dt_hours = 2
@@ -165,7 +165,7 @@ RESCALE_MAX_MPA = 20.0
 RAMP_HOURS = 24.0
 
 # ── MATERIAL MODEL ─────────────────────────────────────────────────────────────
-MATERIAL_SCENARIO = "B"             # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
+MATERIAL_SCENARIO = "A"             # "A" = CCC Zuidwending, "B" = calibrated, "B_freecalibr" = free calibration
 USE_MUNSON_DAWSON = True         # False = SafeInCave model (Kelvin+Desai), True = Munson-Dawson model
 
 # ── THERMAL MODEL ─────────────────────────────────────────────────────────────
