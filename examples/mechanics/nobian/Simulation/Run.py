@@ -1362,16 +1362,15 @@ def main():
 
     mom_eq.build_body_force(g_vec)
 
-    # Temperature
+    # Temperature — depth-varying geothermal profile, frozen in time.
+    # Read by the creep Arrhenius factor regardless of USE_THERMAL; the
+    # USE_THERMAL flag still controls thermoelastic strain and the heat equation.
     T_surface_K = T_SURFACE_C + 273.15
     dTdz = GEOTHERMAL_GRADIENT / 1000.0
 
-    if USE_THERMAL:
-        cell_centroids = grid.mesh.geometry.x[grid.mesh.topology.connectivity(3, 0).array].reshape(-1, 4, 3).mean(axis=1)
-        z_coords = cell_centroids[:, 2]
-        T0_field = to.tensor(T_surface_K + dTdz * (Z_SURFACE - z_coords), dtype=to.float64)
-    else:
-        T0_field = 298 * to.ones(mom_eq.n_elems)
+    cell_centroids = grid.mesh.geometry.x[grid.mesh.topology.connectivity(3, 0).array].reshape(-1, 4, 3).mean(axis=1)
+    z_coords = cell_centroids[:, 2]
+    T0_field = to.tensor(T_surface_K + dTdz * (Z_SURFACE - z_coords), dtype=to.float64)
 
     mom_eq.set_T0(T0_field)
     mom_eq.set_T(T0_field)
