@@ -211,25 +211,34 @@ def load_interlayer_mask(case_folder, n_cells_xdmf, xdmf_centroids):
     """
     msh_path = os.path.join(case_folder, "operation", "mesh", "geom.msh")
     if not os.path.isfile(msh_path):
+        print(f"[WARN] interlayer mask: msh not found at {msh_path}")
         return None
     try:
         import dolfinx as dfx
         from mpi4py import MPI
         from scipy.spatial import cKDTree
     except Exception as e:
-        print(f"[WARN] Cannot load interlayer mask (missing dolfinx/mpi4py): {e}")
+        print(f"[WARN] interlayer mask: missing dolfinx/mpi4py/scipy ({e})")
         return None
 
     try:
         mesh, cell_tags, _ = dfx.io.gmshio.read_from_msh(msh_path,
                                                          MPI.COMM_WORLD, 0)
     except Exception as e:
-        print(f"[WARN] Could not read {msh_path}: {e}")
+        print(f"[WARN] interlayer mask: could not read {msh_path}: {e}")
         return None
 
+    if cell_tags is None:
+        print(f"[WARN] interlayer mask: {msh_path} has no cell tags")
+        return None
+
+    unique_tags = sorted(set(int(t) for t in cell_tags.values))
     il_dfx_cells = np.where(np.isin(cell_tags.values,
                                     list(INTERLAYER_TAGS)))[0]
     if len(il_dfx_cells) == 0:
+        print(f"[WARN] interlayer mask: no cells with tags "
+              f"{list(INTERLAYER_TAGS)} in {msh_path} "
+              f"(present tags: {unique_tags})")
         return None
 
     tdim = mesh.topology.dim
