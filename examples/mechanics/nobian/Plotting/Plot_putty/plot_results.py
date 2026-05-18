@@ -3009,8 +3009,11 @@ def plot_mc_failure_combined(cases, c_MPa=4.0, phi_deg=35.0):
                  label="$f_{MC} = 0$ (failure threshold; $f>0$: failure)")
     ax_f.set_ylabel("Max $f_{MC}$ (MPa)")
     ax_f.set_title(f"Mohr-Coulomb yield function — interlayer cells (c={c_MPa} MPa, $\\varphi$={phi_deg}°)",
-                   fontsize=20, fontweight='bold')
-    ax_f.legend(loc='best', fontsize=16)
+                   fontsize=20, fontweight='bold', y=1.22)
+    n_entries_f = len(ax_f.get_legend_handles_labels()[0])
+    ax_f.legend(loc='lower center', bbox_to_anchor=(0.5, 1.02),
+                ncol=min(3, max(1, n_entries_f)),
+                fontsize=14, frameon=True)
 
     # Volume-fraction panel (interlayer only)
     ax_n.set_ylabel("Anhydrite in MC failure (vol. %)")
@@ -3018,14 +3021,6 @@ def plot_mc_failure_combined(cases, c_MPa=4.0, phi_deg=35.0):
     ax_n.set_title("Fraction of interlayer (anhydrite) volume in Mohr-Coulomb failure",
                    fontsize=20)
     ax_n.legend(loc='best', fontsize=16)
-
-    # Show total interlayer volume per case under the fraction panel so the
-    # reader can convert percent back to absolute m³ if needed.
-    if total_vol_by_label:
-        summary = "  ".join(f"{lbl}: {v:,.0f} m³" for lbl, v in total_vol_by_label.items())
-        ax_n.text(0.99, 0.98, f"Total interlayer volume — {summary}",
-                  transform=ax_n.transAxes, fontsize=12, style='italic',
-                  va='top', ha='right', color='#444444')
 
     # Pressure schedule panel
     ax_p.set_ylabel("P (MPa)")

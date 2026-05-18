@@ -37,6 +37,12 @@ results/
 *.h5
 *.xdmf
 
+# Auto-generated figure folders (don't push to Overleaf)
+**/figures/
+**/_figures/
+**/Plot_putty/figures/
+examples/mechanics/MaterialCalibration/figures/
+
 # but keep a small curated dataset folder
 !results/sample/**
 

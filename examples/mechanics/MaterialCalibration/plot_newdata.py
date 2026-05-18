@@ -195,7 +195,7 @@ def plot_newdata(data, fig_dir, thesis=False):
         t_sic = np.array(sic["time_hours"])
         eps_sic = np.array(sic["strain_axial_pct"])
         ax_ax.plot(t_sic / 24, eps_sic, "-", color="#1f77b4", linewidth=2.5,
-                   label="SafeInCave (total)")
+                   label="TUD2023")
 
         if SHOW_COMPONENTS:
             eps_dc = np.array(sic["strain_disloc_pct"])
@@ -357,17 +357,15 @@ def plot_newdata(data, fig_dir, thesis=False):
     plt.close(fig)
 
 
-def load_and_merge():
+def load_and_merge(variant="free"):
     """Load SIC and MD JSON files and merge into a single dict.
 
-    Tries free calibration files first, then constrained ones.
+    variant : "free" → calibration_newdata_free_{sic,md}.json (test_id ending _free)
+              "constrained" → calibration_newdata_{sic,md}.json (test_id newdata_cyclic)
     """
-    # Prefer free calibration if available
-    sic_free = os.path.join(DATA_DIR, "calibration_newdata_free_sic.json")
-    md_free = os.path.join(DATA_DIR, "calibration_newdata_free_md.json")
-    if os.path.exists(sic_free) or os.path.exists(md_free):
-        sic_path = sic_free
-        md_path = md_free
+    if variant == "free":
+        sic_path = os.path.join(DATA_DIR, "calibration_newdata_free_sic.json")
+        md_path = os.path.join(DATA_DIR, "calibration_newdata_free_md.json")
     else:
         sic_path = os.path.join(DATA_DIR, "calibration_newdata_sic.json")
         md_path = os.path.join(DATA_DIR, "calibration_newdata_md.json")
@@ -404,20 +402,25 @@ def load_and_merge():
 def main():
     os.makedirs(FIG_DIR, exist_ok=True)
 
-    data = load_and_merge()
-    if data is None:
+    any_plotted = False
+    for variant in ("free", "constrained"):
+        data = load_and_merge(variant=variant)
+        if data is None:
+            continue
+        models = []
+        if "safeincave" in data:
+            models.append("SIC")
+        if "munsondawson" in data:
+            models.append("MD")
+        print(f"Plotting {data['test_id']} ({' + '.join(models)}) ...")
+        plot_newdata(data, FIG_DIR)
+        plot_newdata(data, FIG_DIR, thesis=True)
+        any_plotted = True
+
+    if not any_plotted:
         print("[ERROR] No calibration JSON files found in output/")
         print("        Run optimize_newdata.py first.")
         return
-
-    models = []
-    if "safeincave" in data:
-        models.append("SIC")
-    if "munsondawson" in data:
-        models.append("MD")
-    print(f"Plotting {data['test_id']} ({' + '.join(models)}) ...")
-
-    plot_newdata(data, FIG_DIR)
     print("\n[DONE]")
 
 

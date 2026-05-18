@@ -47,8 +47,13 @@ def _c(calibrated):
     return " (calibr)" if calibrated else ""
 
 
-def plot_single_test(data, fig_dir):
-    """Create a 2-panel figure for one creep test, with full parameter boxes."""
+def plot_single_test(data, fig_dir, thesis=False):
+    """Create a 2-panel figure for one creep test.
+
+    thesis=False: standard figure with parameter boxes on the right.
+    thesis=True:  clean two-panel figure, no parameter boxes; saved with
+                  a `_thesis.png` suffix.
+    """
     test_id = data["test_id"]
     T_C = data["temperature_C"]
     s3 = data["sigma3_MPa"]
@@ -61,16 +66,20 @@ def plot_single_test(data, fig_dir):
     has_sic = "safeincave" in data
     has_md = "munsondawson" in data
 
-    # Wider figure to make room for parameter boxes on the right
-    fig = plt.figure(figsize=(18, 9))
-
-    # Left column: stress + strain panels.  Right column: parameter boxes.
-    gs = fig.add_gridspec(2, 2, width_ratios=[2.8, 1],
-                          height_ratios=[1, 2.5], hspace=0.08, wspace=0.25)
-    ax_sig = fig.add_subplot(gs[0, 0])
-    ax_eps = fig.add_subplot(gs[1, 0], sharex=ax_sig)
-    ax_par = fig.add_subplot(gs[:, 1])  # full-height param panel
-    ax_par.axis("off")
+    if thesis:
+        fig = plt.figure(figsize=(12, 9))
+        gs = fig.add_gridspec(2, 1, height_ratios=[1, 2.5], hspace=0.08)
+        ax_sig = fig.add_subplot(gs[0, 0])
+        ax_eps = fig.add_subplot(gs[1, 0], sharex=ax_sig)
+        ax_par = None
+    else:
+        fig = plt.figure(figsize=(18, 9))
+        gs = fig.add_gridspec(2, 2, width_ratios=[2.8, 1],
+                              height_ratios=[1, 2.5], hspace=0.08, wspace=0.25)
+        ax_sig = fig.add_subplot(gs[0, 0])
+        ax_eps = fig.add_subplot(gs[1, 0], sharex=ax_sig)
+        ax_par = fig.add_subplot(gs[:, 1])
+        ax_par.axis("off")
 
     # ── Top panel: stress schedule ──────────────────────────────────────────
     ax_sig.plot(t_lab / 24, sig_lab, "k-", linewidth=2, label="Lab $\\sigma_{diff}$")
@@ -87,7 +96,7 @@ def plot_single_test(data, fig_dir):
         t_sic = np.array(sic["time_hours"])
         eps_sic = np.array(sic["strain_total_pct"])
         ax_eps.plot(t_sic / 24, eps_sic, "-", color="#1f77b4", linewidth=2,
-                    label="SafeInCave (total)")
+                    label="TUD2023")
 
         if SHOW_COMPONENTS:
             eps_dc = np.array(sic["strain_disloc_pct"])
@@ -121,7 +130,16 @@ def plot_single_test(data, fig_dir):
     ax_eps.grid(True, alpha=0.3)
     ax_eps.legend(loc="lower right", fontsize=8, ncol=2)
 
-    # ── Right column: parameter boxes ───────────────────────────────────────
+    # ── Right column: parameter boxes (skipped in thesis mode) ──────────────
+    if thesis:
+        fig.subplots_adjust(left=0.10, right=0.97, top=0.94, bottom=0.08)
+        outpath = os.path.join(fig_dir, f"calibration_{test_id}_thesis.png")
+        fig.savefig(outpath, dpi=DPI)
+        print(f"[SAVED] {outpath}")
+        if SHOW:
+            plt.show()
+        plt.close(fig)
+        return
     gp = data.get("params", {})
     y = 0.98   # vertical cursor (top-down in axes fraction)
     fs = 7.5   # font size
@@ -285,6 +303,7 @@ def main():
             data = json.load(f)
         print(f"  Plotting {data['test_id']}...")
         plot_single_test(data, FIG_DIR)
+        plot_single_test(data, FIG_DIR, thesis=True)
         all_data.append(data)
 
     if len(all_data) > 1:
