@@ -763,6 +763,17 @@ def process_case(case_folder, phase, timestep_sel):
     # Replace inf in fos_min with a finite sentinel so ParaView colormaps cleanly.
     surf_max_data = {k: v.copy() for k, v in max_acc_surf.items()}
     surf_max_data["fos_min"][~np.isfinite(surf_max_data["fos_min"])] = 1e3
+    if has_interlayer:
+        # Salt-only variants: NaN on surface triangles whose parent volume
+        # cell is anhydrite. Color by `*_salt` to mask the interlayer with
+        # the colormap NaN color (set it to gray in the Color Map Editor).
+        il_surf = il_mask[parent_idx]
+        surf_max_data["is_interlayer"] = il_surf.astype(np.float64)
+        surf_max_data["fos_min_salt"] = np.where(il_surf, np.nan,
+                                                 surf_max_data["fos_min"])
+        if "eps_vp_eq_max" in surf_max_data:
+            surf_max_data["eps_vp_eq_max_salt"] = np.where(
+                il_surf, np.nan, surf_max_data["eps_vp_eq_max"])
     surface_max_out = os.path.join(case_folder, "cavern_surface_max.xdmf")
     write_surface_xdmf(surface_max_out, points, tri_array,
                        [times[-1] if times else 0.0], [surf_max_data])
@@ -772,6 +783,12 @@ def process_case(case_folder, phase, timestep_sel):
     vol_max_data["fos_min"][~np.isfinite(vol_max_data["fos_min"])] = 1e3
     if has_interlayer:
         vol_max_data["f_MC_max"][~np.isfinite(vol_max_data["f_MC_max"])] = 0.0
+        vol_max_data["is_interlayer"] = il_mask.astype(np.float64)
+        vol_max_data["fos_min_salt"] = np.where(il_mask, np.nan,
+                                                vol_max_data["fos_min"])
+        if "eps_vp_eq_max" in vol_max_data:
+            vol_max_data["eps_vp_eq_max_salt"] = np.where(
+                il_mask, np.nan, vol_max_data["eps_vp_eq_max"])
     volume_max_out = os.path.join(case_folder, "paraview_volume_max.xdmf")
     write_section_xdmf(volume_max_out, points, cells_tetra,
                        np.ones(n_cells, dtype=bool),
