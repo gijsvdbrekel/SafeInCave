@@ -26,6 +26,13 @@ OUT_DIR = os.path.join(GRIDS_ROOT, "..", "examples", "mechanics", "nobian", "Sim
 SHOW = True
 DPI = 180
 
+# On-screen height (inches) of each cavern panel. The two output figures each
+# hold three panels side by side at this height; the figure width follows from
+# the cavern aspect ratio. Raise for more detail, lower for a smaller image.
+# At DPI=180 a value of 6.0 yields figures ~8 in / ~1450 px tall — comfortable
+# to screenshot whole without zooming.
+TARGET_PANEL_HEIGHT_IN = 6.0
+
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║                        END OF USER CONFIGURATION                              ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -144,11 +151,24 @@ def main():
         ("group2", wall_data[3:], ["D", "E", "F"]),
     ]
 
-    # Figure size: 3 columns, 1 row, matching the data aspect ratio
-    col_width = 5.0  # inches per column
-    row_height = col_width * (z_range / x_total)
-    fig_w = col_width * 3 + 3.0  # extra for labels/margins
-    fig_h = row_height + 3.0     # extra for legend/titles/labels
+    # Figure size.
+    # The caverns are ~4x taller than wide. Deriving the figure height from that
+    # data aspect ratio (the old `row_height = col_width * z_range/x_total`)
+    # produced ~23-inch / 4000+ px tall figures, so the panels had to be zoomed
+    # far out to screenshot — shrinking the text. Instead we fix the on-screen
+    # panel height to a screenshot-friendly value and let equal-aspect render the
+    # (still true-to-shape) caverns within it. Figure width then follows from the
+    # data aspect so the three panels sit snugly side by side.
+    aspect = x_total / z_range          # data width / height  (<1: tall caverns)
+    panel_w = TARGET_PANEL_HEIGHT_IN * aspect
+
+    # Layout margins in inches (absolute, so font sizes stay well-proportioned).
+    left_m, right_m = 0.9, 0.3
+    bottom_m, top_m = 0.9, 1.2          # top_m: room for the shared legend + titles
+    wspace_in = 0.7                     # horizontal gap between panels
+
+    fig_w = left_m + 3 * panel_w + 2 * wspace_in + right_m
+    fig_h = bottom_m + TARGET_PANEL_HEIGHT_IN + top_m
 
     for group_name, group_data, panel_letters in groups:
         fig, axes = plt.subplots(1, 3, figsize=(fig_w, fig_h))
@@ -159,7 +179,7 @@ def main():
             if wp is None:
                 ax.text(0.5, 0.5, f"Missing", ha="center", va="center",
                         transform=ax.transAxes, fontsize=9)
-                ax.set_title(label, fontsize=22, fontweight='bold')
+                ax.set_title(label, fontsize=14, fontweight='bold')
                 continue
 
             # Plot wall profile
@@ -179,10 +199,15 @@ def main():
             # Shared depth-limits (deeper = bottom; note inverted axis below)
             ax.set_ylim(_z_to_depth(all_z_min - z_pad), _z_to_depth(all_z_max + z_pad))
 
-            ax.set_title(label, fontsize=22, fontweight='bold')
-            ax.set_xlabel('x (m)', fontsize=18)
-            ax.set_ylabel('Depth (m)', fontsize=18)
-            ax.tick_params(labelsize=14)
+            # Fonts are kept modest: equal-aspect makes each panel narrow
+            # (~66 m wide), so large titles/labels would overlap their neighbours.
+            ax.set_title(label, fontsize=14, fontweight='bold', pad=6)
+            ax.set_xlabel('x (m)', fontsize=13)
+            # Only the leftmost panel carries the y-axis label, otherwise the
+            # "Depth (m)" text collides with the adjacent panel's plot area.
+            if i == 0:
+                ax.set_ylabel('Depth (m)', fontsize=13)
+            ax.tick_params(labelsize=11)
             ax.set_aspect('equal')
             ax.grid(True, alpha=0.3)
             ax.text(0.02, 0.98, f"({panel_letters[i]})", transform=ax.transAxes,
@@ -190,16 +215,21 @@ def main():
                     bbox=dict(facecolor='white', alpha=0.85, edgecolor='none', pad=3),
                     zorder=100)
 
-        # Shared legend on top of figure
+        # Shared legend on top of figure. Compact spacing so all five probe
+        # entries fit within the (narrow) figure width without being clipped.
         handles, labels = axes[0].get_legend_handles_labels()
-        fig.legend(handles, labels, loc='upper center', ncol=5, fontsize=16,
-               frameon=True, bbox_to_anchor=(0.5, 0.97), markerscale=1.5)
+        fig.legend(handles, labels, loc='upper center', ncol=5, fontsize=12,
+               frameon=True, bbox_to_anchor=(0.5, 0.99), markerscale=1.0,
+               columnspacing=1.0, handletextpad=0.3, borderaxespad=0.2)
 
-        fig.subplots_adjust(left=0.05, right=0.98, bottom=0.08, top=0.88,
-                        wspace=0.25)
+        # Convert the inch-based margins to figure fractions so the panels render
+        # at the intended absolute size regardless of the (data-driven) fig size.
+        fig.subplots_adjust(left=left_m / fig_w, right=1.0 - right_m / fig_w,
+                        bottom=bottom_m / fig_h, top=1.0 - top_m / fig_h,
+                        wspace=wspace_in / panel_w)
 
         outpath = os.path.join(OUT_DIR, f"cavern_profiles_{group_name}.png")
-        fig.savefig(outpath, dpi=DPI, bbox_inches='tight')
+        fig.savefig(outpath, dpi=DPI)
         print(f"[SAVED] {outpath}")
 
         if SHOW:

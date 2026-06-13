@@ -50,9 +50,9 @@ SHOW_DILATANCY = ["ratigan_027", "spiers", "devries_comp", "devries_ext"]
 # p = 60 MPa). With PQ_ROBUST_LIMITS, a lone series far beyond all others in
 # a panel cannot stretch the x-axis: the limit is capped at PQ_MAX_STRETCH
 # times the largest maximum of the remaining series.
-PQ_AXIS_PAD = 0.06
+PQ_AXIS_PAD = 0.15
 PQ_ROBUST_LIMITS = True
-PQ_MAX_STRETCH = 1.3
+PQ_MAX_STRETCH = 1.7
 
 OUT_DIR = os.path.join(ROOT, "_figures")
 SHOW = False
@@ -487,7 +487,8 @@ def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=60.0, 
         "ratigan_018":  {"color": "#7570b3", "linestyle": ":",  "linewidth": 1.3, "alpha": 0.85},
         "spiers":       {"color": "#66a61e", "linestyle": "-.", "linewidth": 1.3, "alpha": 0.85},
         "devries_comp": {"color": "#e7298a", "linestyle": "-",  "linewidth": 1.5, "alpha": 0.90},
-        "devries_ext":  {"color": "#e7298a", "linestyle": "--", "linewidth": 1.5, "alpha": 0.90},
+        # Bold black: the safety-relevant lower (extension) boundary.
+        "devries_ext":  {"color": "#000000", "linestyle": "--", "linewidth": 3.0, "alpha": 1.00},
     }
 
     if "ratigan_027" in show_boundaries:

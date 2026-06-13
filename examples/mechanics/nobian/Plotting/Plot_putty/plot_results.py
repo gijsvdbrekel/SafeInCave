@@ -114,9 +114,9 @@ SHOW_DILATANCY = ["ratigan_027", "spiers", "devries_comp", "devries_ext"]
 # shape comparison) cannot stretch the x-axis: the limit is capped at
 # PQ_MAX_STRETCH times the largest maximum of the remaining series and the
 # outlying path runs off the right edge, annotated with its true maximum.
-PQ_AXIS_PAD = 0.06
+PQ_AXIS_PAD = 0.15
 PQ_ROBUST_LIMITS = True
-PQ_MAX_STRETCH = 1.3
+PQ_MAX_STRETCH = 1.7
 
 # FOS plot tuning (rolling quantile bands)
 FOS_MAX_POINTS = 1200       # downsample for cleaner plots
@@ -913,7 +913,9 @@ def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=60.0, 
         "ratigan_018":  {"color": "#000000", "linestyle": ":",  "linewidth": 1.6, "alpha": 0.95},
         "spiers":       {"color": "#555555", "linestyle": "-.", "linewidth": 1.6, "alpha": 0.95},
         "devries_comp": {"color": "#888888", "linestyle": "-",  "linewidth": 1.8, "alpha": 1.00},
-        "devries_ext":  {"color": "#888888", "linestyle": "--", "linewidth": 1.8, "alpha": 1.00},
+        # De Vries 2005 (ext) is the safety-relevant lower boundary, drawn bold
+        # black so it stands out clearly from the other (grayscale) criteria.
+        "devries_ext":  {"color": "#000000", "linestyle": "--", "linewidth": 3.0, "alpha": 1.00},
         "mc_anhydrite": {"color": "#333333", "linestyle": "-",  "linewidth": 1.8, "alpha": 0.95},
         "mc_mudstone":  {"color": "#333333", "linestyle": "--", "linewidth": 1.6, "alpha": 0.90},
     }
