@@ -74,6 +74,10 @@ PQ_AXIS_PAD = 0.15
 PQ_ROBUST_LIMITS = True
 PQ_MAX_STRETCH = 1.7
 
+# Fixed mean-stress (x) window for the p-q panels, so all swings share the same
+# frame and the De Vries (ext) boundary is always in view. None -> data-driven.
+PQ_XLIM = (16.0, 22.0)
+
 OUT_DIR = os.path.join(ROOT, "_figures")
 SHOW = False
 DPI = 180
@@ -509,19 +513,59 @@ def compute_FOS_per_probe(case_folder, probes_dict):
 # DILATANCY BOUNDARIES (from plot_stress_state.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def set_pq_axis_limits(ax, series, pad_frac=None, robust=None, max_stretch=None):
+def devries_ext_q(p_MPa, D1=0.683, D2=0.512, T0=1.50, m=0.75, sigma_ref=1.0):
+    """De Vries 2005 extension (lower) dilatancy boundary q (MPa) at mean stress p (MPa).
+
+    Matches the "devries_ext" curve drawn by plot_dilatancy_boundaries
+    (psi = -pi/6); used to keep that boundary in view under a fixed x-window.
+    """
+    p = np.atleast_1d(np.asarray(p_MPa, dtype=float))
+    I1 = 3.0 * p
+    psi = -np.pi / 6.0
+    sgn = np.sign(I1)
+    sgn[sgn == 0.0] = 1.0
+    denom = np.sqrt(3.0) * np.cos(psi) - D2 * np.sin(psi)
+    sqrtJ2 = D1 * ((I1 / (sgn * sigma_ref)) ** m) / denom + T0
+    return np.sqrt(3.0) * sqrtJ2
+
+
+def set_pq_axis_limits(ax, series, pad_frac=None, robust=None, max_stretch=None,
+                       xlim=None, boundary_fn=None):
     """Set p-q panel limits from the stress-path data only. (Matches plot_results.py.)
 
     series : list of (p, q, label, color) tuples with p, q in MPa. Crops the
     dilatancy boundary lines (drawn out to p = 60 MPa) to the data window. A
     lone outlying series is excluded from the x-limit when robust=True; its
     curve runs off the right edge with a small annotation of its true maximum.
+
+    If xlim=(lo, hi) is given the x-window is fixed to it and the y-limit is
+    taken from the data inside that window plus, when boundary_fn is supplied,
+    that boundary's value across the window (so e.g. De Vries ext stays visible).
     """
     pad_frac = PQ_AXIS_PAD if pad_frac is None else pad_frac
     robust = PQ_ROBUST_LIMITS if robust is None else robust
     max_stretch = PQ_MAX_STRETCH if max_stretch is None else max_stretch
 
     series = [s for s in series if len(np.atleast_1d(s[0])) > 0]
+
+    if xlim is not None:
+        x_lo, x_hi = float(xlim[0]), float(xlim[1])
+        ax.set_xlim(x_lo, x_hi)
+        q_hi = 0.0
+        for p, q, _label, _color in series:
+            p = np.atleast_1d(p)
+            q = np.atleast_1d(q)
+            mask = (p >= x_lo) & (p <= x_hi)
+            if np.any(mask):
+                q_hi = max(q_hi, float(np.nanmax(q[mask])))
+        if boundary_fn is not None:
+            xs = np.linspace(x_lo, x_hi, 50)
+            q_hi = max(q_hi, float(np.nanmax(boundary_fn(xs))))
+        if not np.isfinite(q_hi) or q_hi <= 0.0:
+            q_hi = 1.0
+        ax.set_ylim(0.0, q_hi * (1.0 + pad_frac))
+        return
+
     if not series:
         return
 
@@ -729,7 +773,7 @@ def plot_fig_stress_state(cavern_key, cavern_label, cases, swing_colors):
                        color=color, zorder=5)
             panel_series.append((px, qx, f"{bar} bar/day", color))
 
-        set_pq_axis_limits(ax, panel_series)
+        set_pq_axis_limits(ax, panel_series, xlim=PQ_XLIM, boundary_fn=devries_ext_q)
         ax.set_title(f"p-q: {ptype}")
         ax.set_xlabel("Mean stress p (MPa)")
         ax.set_ylabel("Von Mises q (MPa)")

@@ -118,6 +118,12 @@ PQ_AXIS_PAD = 0.15
 PQ_ROBUST_LIMITS = True
 PQ_MAX_STRETCH = 1.7
 
+# In compare_pressures mode the p-q panels use a fixed mean-stress (x) window
+# instead of the data-driven limits, so every probe panel shares the same frame
+# and the De Vries (ext) boundary is always in view. Set to None to fall back to
+# the automatic data-driven limits.
+PQ_PRESSURE_XLIM = (15.0, 21.0)
+
 # FOS plot tuning (rolling quantile bands)
 FOS_MAX_POINTS = 1200       # downsample for cleaner plots
 FOS_BAND_WINDOW = 7        # rolling window size (odd)
@@ -839,7 +845,25 @@ def read_stress_paths(case_folder, probes_dict):
     return out
 
 
-def set_pq_axis_limits(ax, series, pad_frac=None, robust=None, max_stretch=None):
+def devries_ext_q(p_MPa, D1=0.683, D2=0.512, T0=1.50, m=0.75, sigma_ref=1.0):
+    """De Vries 2005 extension (lower) dilatancy boundary q (MPa) at mean stress p (MPa).
+
+    Matches the curve drawn by plot_dilatancy_boundaries for "devries_ext"
+    (psi = -pi/6). Used to keep that boundary in view when a fixed x-window is
+    requested.
+    """
+    p = np.atleast_1d(np.asarray(p_MPa, dtype=float))
+    I1 = 3.0 * p
+    psi = -np.pi / 6.0
+    sgn = np.sign(I1)
+    sgn[sgn == 0.0] = 1.0
+    denom = np.sqrt(3.0) * np.cos(psi) - D2 * np.sin(psi)
+    sqrtJ2 = D1 * ((I1 / (sgn * sigma_ref)) ** m) / denom + T0
+    return np.sqrt(3.0) * sqrtJ2
+
+
+def set_pq_axis_limits(ax, series, pad_frac=None, robust=None, max_stretch=None,
+                       xlim=None, boundary_fn=None):
     """Set p-q panel limits from the stress-path data only.
 
     The dilatancy boundary lines are drawn out to p = 60 MPa; without explicit
@@ -848,18 +872,42 @@ def set_pq_axis_limits(ax, series, pad_frac=None, robust=None, max_stretch=None)
 
     series : list of (p, q, label, color) tuples with p, q in MPa.
 
-    With robust=True and at least two series, a lone series whose maximum mean
-    stress exceeds max_stretch times the largest maximum of all other series is
-    excluded from the x-limit: the cap is placed at max_stretch times that
-    second-largest maximum, the outlying curve runs off the right edge, and a
-    small annotation states its true maximum. The y-limit is computed from the
-    points that remain inside the visible x-window.
+    If xlim=(lo, hi) is given the x-window is fixed to it (no data-driven /
+    robust logic) and the y-limit is taken from the data falling inside that
+    window plus, when boundary_fn is supplied, that boundary's value across the
+    window — guaranteeing the boundary (e.g. De Vries ext) stays visible.
+
+    Otherwise, with robust=True and at least two series, a lone series whose
+    maximum mean stress exceeds max_stretch times the largest maximum of all
+    other series is excluded from the x-limit: the cap is placed at max_stretch
+    times that second-largest maximum, the outlying curve runs off the right
+    edge, and a small annotation states its true maximum. The y-limit is then
+    computed from the points that remain inside the visible x-window.
     """
     pad_frac = PQ_AXIS_PAD if pad_frac is None else pad_frac
     robust = PQ_ROBUST_LIMITS if robust is None else robust
     max_stretch = PQ_MAX_STRETCH if max_stretch is None else max_stretch
 
     series = [s for s in series if len(np.atleast_1d(s[0])) > 0]
+
+    if xlim is not None:
+        x_lo, x_hi = float(xlim[0]), float(xlim[1])
+        ax.set_xlim(x_lo, x_hi)
+        q_hi = 0.0
+        for p, q, _label, _color in series:
+            p = np.atleast_1d(p)
+            q = np.atleast_1d(q)
+            mask = (p >= x_lo) & (p <= x_hi)
+            if np.any(mask):
+                q_hi = max(q_hi, float(np.nanmax(q[mask])))
+        if boundary_fn is not None:
+            xs = np.linspace(x_lo, x_hi, 50)
+            q_hi = max(q_hi, float(np.nanmax(boundary_fn(xs))))
+        if not np.isfinite(q_hi) or q_hi <= 0.0:
+            q_hi = 1.0
+        ax.set_ylim(0.0, q_hi * (1.0 + pad_frac))
+        return
+
     if not series:
         return
 
@@ -2178,7 +2226,11 @@ def plot_stress_per_cavern(cases, group_fn=None):
                            color=color, zorder=5)
                 panel_series.append((p, q, label, color))
 
-            set_pq_axis_limits(ax, panel_series)
+            if mode == "compare_pressures" and PQ_PRESSURE_XLIM is not None:
+                set_pq_axis_limits(ax, panel_series, xlim=PQ_PRESSURE_XLIM,
+                                   boundary_fn=devries_ext_q)
+            else:
+                set_pq_axis_limits(ax, panel_series)
             ax.set_title(f"p-q stress path: {ptype}", fontsize=22, fontweight='bold')
             ax.set_xlabel("Mean stress p (MPa)", fontsize=22)
             ax.set_ylabel("Differential stress q (MPa)", fontsize=22)
