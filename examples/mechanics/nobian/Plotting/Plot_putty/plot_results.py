@@ -107,6 +107,17 @@ FIGURES = {
 # Available: "ratigan_027", "ratigan_018", "spiers", "devries_comp", "devries_ext"
 SHOW_DILATANCY = ["ratigan_027", "spiers", "devries_comp", "devries_ext"]
 
+# p-q panel axis limits follow the stress-path data instead of matplotlib's
+# autoscale (which would include the dilatancy boundary lines drawn out to
+# p = 60 MPa). With PQ_ROBUST_LIMITS, a single series lying far beyond every
+# other series in a panel (e.g. the reversed-circulation bottom probe in the
+# shape comparison) cannot stretch the x-axis: the limit is capped at
+# PQ_MAX_STRETCH times the largest maximum of the remaining series and the
+# outlying path runs off the right edge, annotated with its true maximum.
+PQ_AXIS_PAD = 0.06
+PQ_ROBUST_LIMITS = True
+PQ_MAX_STRETCH = 1.3
+
 # FOS plot tuning (rolling quantile bands)
 FOS_MAX_POINTS = 1200       # downsample for cleaner plots
 FOS_BAND_WINDOW = 7        # rolling window size (odd)
@@ -828,7 +839,63 @@ def read_stress_paths(case_folder, probes_dict):
     return out
 
 
-def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=40.0, npts=500):
+def set_pq_axis_limits(ax, series, pad_frac=None, robust=None, max_stretch=None):
+    """Set p-q panel limits from the stress-path data only.
+
+    The dilatancy boundary lines are drawn out to p = 60 MPa; without explicit
+    limits matplotlib autoscales every panel to that full extent, squeezing the
+    actual stress paths into a corner. This helper crops the view to the data.
+
+    series : list of (p, q, label, color) tuples with p, q in MPa.
+
+    With robust=True and at least two series, a lone series whose maximum mean
+    stress exceeds max_stretch times the largest maximum of all other series is
+    excluded from the x-limit: the cap is placed at max_stretch times that
+    second-largest maximum, the outlying curve runs off the right edge, and a
+    small annotation states its true maximum. The y-limit is computed from the
+    points that remain inside the visible x-window.
+    """
+    pad_frac = PQ_AXIS_PAD if pad_frac is None else pad_frac
+    robust = PQ_ROBUST_LIMITS if robust is None else robust
+    max_stretch = PQ_MAX_STRETCH if max_stretch is None else max_stretch
+
+    series = [s for s in series if len(np.atleast_1d(s[0])) > 0]
+    if not series:
+        return
+
+    p_maxs = np.array([float(np.nanmax(s[0])) for s in series])
+    p_mins = np.array([float(np.nanmin(s[0])) for s in series])
+
+    x_hi = float(np.max(p_maxs))
+    outlier = None
+    if robust and len(series) >= 2:
+        order = np.argsort(p_maxs)
+        max1 = p_maxs[order[-1]]
+        max2 = p_maxs[order[-2]]
+        if max1 > max_stretch * max2:
+            x_hi = max_stretch * max2
+            outlier = (series[order[-1]], max1)
+
+    x_lo = max(0.0, float(np.min(p_mins)))
+    dx = pad_frac * max(x_hi - x_lo, 1e-6)
+
+    q_hi = 0.0
+    for p, q, _label, _color in series:
+        mask = np.atleast_1d(p) <= x_hi + dx
+        if np.any(mask):
+            q_hi = max(q_hi, float(np.nanmax(np.atleast_1d(q)[mask])))
+
+    ax.set_xlim(max(0.0, x_lo - dx), x_hi + dx)
+    ax.set_ylim(0.0, q_hi * (1.0 + pad_frac))
+
+    if outlier is not None:
+        (_p, _q, label, color), true_max = outlier
+        ax.text(0.98, 0.02, f"{label} $\\rightarrow$ {true_max:.0f} MPa",
+                transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=13, color=color if color else "black")
+
+
+def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=60.0, npts=500):
     if show_boundaries is None:
         show_boundaries = ["ratigan_027", "ratigan_018", "spiers", "devries_comp", "devries_ext"]
 
@@ -1879,6 +1946,7 @@ def plot_stress_combined(cases, stress_by_series):
         ax = axes[i]
         plot_dilatancy_boundaries(ax, show_boundaries=SHOW_DILATANCY)
 
+        panel_series = []
         for (cav, sc, ps), d in stress_by_series.items():
             p, q = d[ptype]
             color, linestyle = get_case_color_and_style(cav, sc, ps)
@@ -1887,7 +1955,9 @@ def plot_stress_combined(cases, stress_by_series):
             ax.plot(p, q, linewidth=2.0, color=color, linestyle=linestyle, label=label)
             ax.scatter(p[-1], q[-1], s=30, edgecolors="black", linewidths=0.6,
                        color=color, zorder=5)
+            panel_series.append((p, q, label, color))
 
+        set_pq_axis_limits(ax, panel_series)
         ax.set_title(STRESS_PROBE_TITLES.get(ptype, ptype), fontsize=24, fontweight='bold', pad=6)
         ax.set_xlabel("Mean stress p (MPa)", fontsize=22)
         ax.set_ylabel("Differential stress q (MPa)", fontsize=22)
@@ -1987,6 +2057,7 @@ def plot_stress_separate(cases, stress_by_series):
             ax.scatter(p[-1], q[-1], s=40, edgecolors="black", linewidths=0.8,
                        color=color, zorder=5)
 
+            set_pq_axis_limits(ax, [(p, q, case_label, color)])
             ax.set_title(f"p-q stress path: {ptype}", fontsize=22, fontweight='bold')
             ax.set_xlabel("Mean stress p (MPa)", fontsize=22)
             ax.set_ylabel("Differential stress q (MPa)", fontsize=22)
@@ -2094,6 +2165,7 @@ def plot_stress_per_cavern(cases, group_fn=None):
             ax = axes[i]
             plot_dilatancy_boundaries(ax, show_boundaries=SHOW_DILATANCY)
 
+            panel_series = []
             for (cav, sc, ps), d in stress_by_series.items():
                 p, q = d[ptype]
                 color, linestyle = get_case_color_and_style(cav, sc, ps)
@@ -2102,7 +2174,9 @@ def plot_stress_per_cavern(cases, group_fn=None):
                 ax.plot(p, q, linewidth=2.0, color=color, linestyle=linestyle, label=label)
                 ax.scatter(p[-1], q[-1], s=30, edgecolors="black", linewidths=0.6,
                            color=color, zorder=5)
+                panel_series.append((p, q, label, color))
 
+            set_pq_axis_limits(ax, panel_series)
             ax.set_title(f"p-q stress path: {ptype}", fontsize=22, fontweight='bold')
             ax.set_xlabel("Mean stress p (MPa)", fontsize=22)
             ax.set_ylabel("Differential stress q (MPa)", fontsize=22)
@@ -3138,6 +3212,7 @@ def plot_interlayer_stress_paths(cases):
     # One panel per probe location; one curve per case.
     legend_handles = {}
     for ax, probe_name in zip(panel_axes, probe_names):
+        panel_series = []
         for case_name, (sp_dict, c) in stress_by_case.items():
             if probe_name not in sp_dict:
                 continue
@@ -3148,14 +3223,14 @@ def plot_interlayer_stress_paths(cases):
             label = get_case_label(c)
             line, = ax.plot(p, q, color=color, linewidth=1.4, alpha=0.9)
             legend_handles[label] = line
+            panel_series.append((p, q, label, color))
 
         plot_dilatancy_boundaries(ax, show_boundaries=SHOW_DILATANCY)
+        set_pq_axis_limits(ax, panel_series)
         ax.set_title(f"Probe: {probe_name}", fontsize=13)
         ax.set_xlabel("Mean stress p (MPa)", fontsize=11)
         ax.set_ylabel("Von Mises q (MPa)", fontsize=11)
         ax.grid(True, alpha=0.3)
-        ax.set_xlim(left=0)
-        ax.set_ylim(bottom=0)
 
     # Shared legend on the 6th panel (no plot, just labels).
     ax_legend.axis("off")

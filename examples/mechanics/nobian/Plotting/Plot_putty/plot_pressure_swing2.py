@@ -65,6 +65,15 @@ SCENARIO = "MD_A"
 # Dilatancy boundaries to show on p-q plots
 SHOW_DILATANCY = ["ratigan_027", "spiers", "devries_comp", "devries_ext"]
 
+# p-q panel axis limits follow the stress-path data instead of matplotlib's
+# autoscale (which would include the dilatancy boundary lines drawn out to
+# p = 60 MPa). With PQ_ROBUST_LIMITS, a lone series far beyond all others in
+# a panel cannot stretch the x-axis: the limit is capped at PQ_MAX_STRETCH
+# times the largest maximum of the remaining series.
+PQ_AXIS_PAD = 0.06
+PQ_ROBUST_LIMITS = True
+PQ_MAX_STRETCH = 1.3
+
 OUT_DIR = os.path.join(ROOT, "_figures")
 SHOW = False
 DPI = 180
@@ -500,7 +509,55 @@ def compute_FOS_per_probe(case_folder, probes_dict):
 # DILATANCY BOUNDARIES (from plot_stress_state.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=40.0, npts=500):
+def set_pq_axis_limits(ax, series, pad_frac=None, robust=None, max_stretch=None):
+    """Set p-q panel limits from the stress-path data only. (Matches plot_results.py.)
+
+    series : list of (p, q, label, color) tuples with p, q in MPa. Crops the
+    dilatancy boundary lines (drawn out to p = 60 MPa) to the data window. A
+    lone outlying series is excluded from the x-limit when robust=True; its
+    curve runs off the right edge with a small annotation of its true maximum.
+    """
+    pad_frac = PQ_AXIS_PAD if pad_frac is None else pad_frac
+    robust = PQ_ROBUST_LIMITS if robust is None else robust
+    max_stretch = PQ_MAX_STRETCH if max_stretch is None else max_stretch
+
+    series = [s for s in series if len(np.atleast_1d(s[0])) > 0]
+    if not series:
+        return
+
+    p_maxs = np.array([float(np.nanmax(s[0])) for s in series])
+    p_mins = np.array([float(np.nanmin(s[0])) for s in series])
+
+    x_hi = float(np.max(p_maxs))
+    outlier = None
+    if robust and len(series) >= 2:
+        order = np.argsort(p_maxs)
+        max1 = p_maxs[order[-1]]
+        max2 = p_maxs[order[-2]]
+        if max1 > max_stretch * max2:
+            x_hi = max_stretch * max2
+            outlier = (series[order[-1]], max1)
+
+    x_lo = max(0.0, float(np.min(p_mins)))
+    dx = pad_frac * max(x_hi - x_lo, 1e-6)
+
+    q_hi = 0.0
+    for p, q, _label, _color in series:
+        mask = np.atleast_1d(p) <= x_hi + dx
+        if np.any(mask):
+            q_hi = max(q_hi, float(np.nanmax(np.atleast_1d(q)[mask])))
+
+    ax.set_xlim(max(0.0, x_lo - dx), x_hi + dx)
+    ax.set_ylim(0.0, q_hi * (1.0 + pad_frac))
+
+    if outlier is not None:
+        (_p, _q, label, color), true_max = outlier
+        ax.text(0.98, 0.02, f"{label} $\\rightarrow$ {true_max:.0f} MPa",
+                transform=ax.transAxes, ha="right", va="bottom",
+                fontsize=11, color=color if color else "black")
+
+
+def plot_dilatancy_boundaries(ax, show_boundaries=None, p_min=0.01, p_max=60.0, npts=500):
     if show_boundaries is None:
         show_boundaries = ["ratigan_027", "ratigan_018", "spiers", "devries_comp", "devries_ext"]
 
@@ -650,6 +707,7 @@ def plot_fig_stress_state(cavern_key, cavern_label, cases, swing_colors):
         ax = axes[i]
         plot_dilatancy_boundaries(ax, show_boundaries=SHOW_DILATANCY)
 
+        panel_series = []
         for bar in sorted(stress_by_swing.keys()):
             d = stress_by_swing[bar]
             if ptype not in d:
@@ -668,7 +726,9 @@ def plot_fig_stress_state(cavern_key, cavern_label, cases, swing_colors):
             )
             ax.scatter(px[-1], qx[-1], s=30, edgecolors="black", linewidths=0.6,
                        color=color, zorder=5)
+            panel_series.append((px, qx, f"{bar} bar/day", color))
 
+        set_pq_axis_limits(ax, panel_series)
         ax.set_title(f"p-q: {ptype}")
         ax.set_xlabel("Mean stress p (MPa)")
         ax.set_ylabel("Von Mises q (MPa)")
