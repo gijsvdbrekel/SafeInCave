@@ -76,7 +76,12 @@ PQ_MAX_STRETCH = 1.7
 
 # Fixed mean-stress (x) window for the p-q panels, so all swings share the same
 # frame and the De Vries (ext) boundary is always in view. None -> data-driven.
+# Some scenarios sit in a different mean-stress range, so the window can be
+# overridden per scenario; SCENARIO not listed here falls back to PQ_XLIM.
 PQ_XLIM = (16.0, 22.0)
+PQ_XLIM_BY_SCENARIO = {
+    "MD_A": (19.0, 23.0),
+}
 
 OUT_DIR = os.path.join(ROOT, "_figures")
 SHOW = False
@@ -773,7 +778,8 @@ def plot_fig_stress_state(cavern_key, cavern_label, cases, swing_colors):
                        color=color, zorder=5)
             panel_series.append((px, qx, f"{bar} bar/day", color))
 
-        set_pq_axis_limits(ax, panel_series, xlim=PQ_XLIM, boundary_fn=devries_ext_q)
+        pq_xlim = PQ_XLIM_BY_SCENARIO.get(SCENARIO, PQ_XLIM)
+        set_pq_axis_limits(ax, panel_series, xlim=pq_xlim, boundary_fn=devries_ext_q)
         ax.set_title(f"p-q: {ptype}")
         ax.set_xlabel("Mean stress p (MPa)")
         ax.set_ylabel("Von Mises q (MPa)")
