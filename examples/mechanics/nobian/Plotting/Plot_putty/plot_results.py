@@ -2756,7 +2756,9 @@ def plot_fracture_propagation(case_meta):
 
         plot_cavern_with_probes(ax_cavern, wall_points, None, cavern_label=cav)
         plot_propagation_depth_global(ax_depth, time_days, region_depths)
-        ax_depth.set_ylabel("Dilatancy zone depth (m)")
+        # Distance the dilatant zone penetrates into the salt from the cavern
+        # wall — not geological depth (which is the cavern panel's y-axis).
+        ax_depth.set_ylabel("Distance from cavern wall (m)")
 
         add_panel_label(ax_cavern, "A", fontsize=14)
         add_panel_label(ax_depth, "B", fontsize=14)
@@ -2920,7 +2922,11 @@ def plot_fracture_propagation_grouped(frac_cases):
             plot_propagation_depth_global(ax_dep, t_days, region_depths)
             ax_dep.set_title("", fontsize=1)  # clear sub-title
             ax_dep.set_xlabel("Time (days)", fontsize=axlabel_fs)
-            ax_dep.set_ylabel("")
+            # The y-axis here is NOT geological depth (that is the cavern panels'
+            # y-axis): it is how far the dilatant zone reaches into the salt from
+            # the wall — the same quantity as the cavern panel's x-axis. Label
+            # every time panel explicitly so the two axes are never conflated.
+            ax_dep.set_ylabel("Distance from cavern wall (m)", fontsize=axlabel_fs)
             ax_dep.tick_params(axis='both', labelsize=tick_fs)
             leg_dep = ax_dep.get_legend()
             if leg_dep is not None:
