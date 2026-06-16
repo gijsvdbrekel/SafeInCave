@@ -2882,10 +2882,13 @@ def plot_fracture_propagation_grouped(frac_cases):
             continue
 
         n_shapes = len(group_data)
-        # Wider cavern subplot so the shaded dilatancy-band overlay fits on the salt side
-        fig, axes = plt.subplots(1, n_shapes * 2, figsize=(7.5 * n_shapes, 9),
+        # Wider cavern subplot so the shaded dilatancy-band overlay fits on the
+        # salt side. wspace is generous so the time panel's y-axis label
+        # ("Distance from cavern wall (m)") clears the cavern panel to its left;
+        # the figure is widened to match so panels keep their size.
+        fig, axes = plt.subplots(1, n_shapes * 2, figsize=(8.3 * n_shapes, 9),
                                  gridspec_kw={"width_ratios": [1.4, 1.0] * n_shapes,
-                                              "wspace": 0.20})
+                                              "wspace": 0.45})
         if n_shapes * 2 == 2:
             axes = [axes[0], axes[1]]
 
