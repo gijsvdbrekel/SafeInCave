@@ -50,17 +50,29 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_ROOT = os.path.normpath(os.path.join(
     SCRIPT_DIR, "..", "examples", "mechanics", "nobian", "Simulation", "output"))
 
+# ---- Product 1: CASE COMPARISON (overlay several simulations at one probe) ----
 # Cases to plot: (label, case folder [rel. to OUTPUT_ROOT or absolute], probe).
-# List several to overlay multiple simulations in one figure.
+# List several to overlay them; the animation shows each cavern side by side
+# (each with its own probe), and the p-q / pressure panels overlay all cases.
 CASES = [
     ("Industry",  "case_leaching_linear_industry(21)_365days_SB_MD_regular1200", "mid"),
     # ("Transport", "case_leaching_linear_transport(180)_365days_SB_MD_regular1200", "mid"),
 ]
 
-OUT_DIR = os.path.join(SCRIPT_DIR, "stress_state_anim")
-
 MAKE_STATIC = True           # static p-q figure with start/end markers
-MAKE_ANIMATION = True        # animated 3-panel explainer
+MAKE_ANIMATION = True        # animated explainer (caverns + p-q + pressure)
+
+# ---- Product 2: MULTI-PROBE (one case, one panel per probe) --------------------
+# A grid with one p-q panel per probe for a single simulation — like the
+# plot_results.py stress-state grid, but cleaner. Produces a static figure and
+# an animated version.
+MULTIPROBE_CASE = ("Regular - Industry",
+                   "case_leaching_linear_industry(21)_365days_SB_MD_regular1200")
+PROBES = ["top", "quarter", "mid", "threequarter", "bottom"]
+MAKE_MULTIPROBE_STATIC = True
+MAKE_MULTIPROBE_ANIM = True
+
+OUT_DIR = os.path.join(SCRIPT_DIR, "stress_state_anim")
 
 N_FRAMES_MAX = 180           # subsample the timeline to at most this many frames
 FPS = 18
@@ -299,18 +311,21 @@ def plot_static(cases, out_path):
 # ANIMATION  (3 panels: cavern + p-q + pressure; multi-case overlay)
 # =============================================================================
 
-def build_animation(cases, cavern_png):
-    fig = plt.figure(figsize=(17, 6.4))
-    gs = fig.add_gridspec(1, 3, width_ratios=[1.05, 1.25, 1.55], wspace=0.26)
-    ax_cav = fig.add_subplot(gs[0])
+def build_animation(cases, cavern_pngs):
+    n = len(cases)
+    fig = plt.figure(figsize=(16 + 1.6 * n, 6.4))
+    gs = fig.add_gridspec(1, 3, width_ratios=[0.6 * n + 0.3, 1.25, 1.55],
+                          wspace=0.24)
+    # --- Cavern panel(s): one 3D thumbnail per case, side by side. ---
+    cav_gs = gs[0].subgridspec(1, n, wspace=0.04)
+    for i, c in enumerate(cases):
+        axc = fig.add_subplot(cav_gs[0, i])
+        axc.imshow(mpimg.imread(cavern_pngs[i]))
+        axc.axis("off")
+        axc.set_title(f"{c['label']}\n(probe: {c['probe']})", fontsize=12,
+                      fontweight="bold", color=c["color"])
     ax_pq = fig.add_subplot(gs[1])
     ax_pr = fig.add_subplot(gs[2])
-
-    # --- Cavern panel: the 3D thumbnail of the first case (with its probe). ---
-    ax_cav.imshow(mpimg.imread(cavern_png))
-    ax_cav.axis("off")
-    ax_cav.set_title(f"{cases[0]['label']} - probe: {cases[0]['probe']}",
-                     fontsize=14, fontweight="bold")
 
     # --- p-q panel ---
     p_lo, p_hi, q_hi = _pq_limits(cases)
@@ -378,39 +393,184 @@ def build_animation(cases, cavern_png):
 
 
 # =============================================================================
+# MULTI-PROBE  (one case, one p-q panel per probe)
+# =============================================================================
+
+def load_case_multiprobe(label, case_rel, probe_names):
+    case_dir = case_rel if os.path.isabs(case_rel) else os.path.join(OUTPUT_ROOT, case_rel)
+    if not os.path.isdir(case_dir):
+        raise SystemExit(f"[ERROR] case not found: {case_dir}")
+    op = os.path.join(case_dir, "operation")
+    wall = load_wall_points(case_dir)
+    probes = probes_from_wall(wall)
+    pts_p, t_p, p_el = post.read_cell_scalar(os.path.join(op, "p_elems", "p_elems.xdmf"))
+    _, t_q, q_el = post.read_cell_scalar(os.path.join(op, "q_elems", "q_elems.xdmf"))
+    n = min(len(t_p), len(t_q))
+    t_days = np.asarray(t_p[:n], float) / DAY_S
+    paths = {}
+    for name in probe_names:
+        idx = post.find_closest_point(probes[name], pts_p)
+        paths[name] = (-p_el[:n, idx] / MPA, q_el[:n, idx] / MPA)
+    t_pres, p_pres = load_pressure(case_dir)
+    p_at_t = np.interp(t_days, t_pres, p_pres)
+    return dict(label=label, probes=probe_names, paths=paths, t_days=t_days,
+                p_at_t=p_at_t, probe_xyz={k: probes[k] for k in probe_names})
+
+
+def _mp_limits(mp):
+    ps = [v[0] for v in mp["paths"].values()]
+    qs = [v[1] for v in mp["paths"].values()]
+    p_lo = max(0.0, min(p.min() for p in ps) - 2.0)
+    p_hi = max(p.max() for p in ps) + 4.0
+    q_hi = 1.30 * max(q.max() for q in qs)
+    return p_lo, p_hi, q_hi
+
+
+def _mp_grid(mp):
+    """Figure + (probe-name -> axis) for a 2x3 grid: 5 probes + pressure."""
+    p_lo, p_hi, q_hi = _mp_limits(mp)
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    axes = axes.flatten()
+    probe_axes = {}
+    for ax, name in zip(axes, mp["probes"]):
+        for label, (pp, qq, st) in boundary_curves(p_lo, p_hi).items():
+            ax.plot(pp, qq, **st)
+        ax.set_xlim(p_lo, p_hi)
+        ax.set_ylim(0.0, q_hi)
+        ax.set_title(name.capitalize(), fontsize=15, fontweight="bold",
+                     color=PROBE_COLORS.get(name, "#333"))
+        ax.set_xlabel("Mean stress p (MPa)", fontsize=12)
+        ax.set_ylabel("Differential stress q (MPa)", fontsize=12)
+        ax.grid(True, alpha=0.25)
+        probe_axes[name] = ax
+    ax_pr = axes[len(mp["probes"])] if len(mp["probes"]) < 6 else None
+    fig.suptitle(f"Stress paths per probe - {mp['label']}", fontsize=18,
+                 fontweight="bold")
+    return fig, axes, probe_axes, ax_pr
+
+
+def plot_static_multiprobe(mp, out_path):
+    fig, axes, probe_axes, ax_pr = _mp_grid(mp)
+    for name, ax in probe_axes.items():
+        pp, qq = mp["paths"][name]
+        col = PROBE_COLORS.get(name, "#1f77b4")
+        ax.plot(pp, qq, color=col, lw=1.6, alpha=0.85, zorder=3)
+        ax.scatter([pp[0]], [qq[0]], s=130, facecolors="white", edgecolors=col,
+                   linewidths=2.2, zorder=5)
+        ax.scatter([pp[-1]], [qq[-1]], s=130, color=col, edgecolors="black",
+                   linewidths=1.4, zorder=6)
+    if ax_pr is not None:
+        ax_pr.plot(mp["t_days"], mp["p_at_t"], color="#1f3b57", lw=1.6)
+        ax_pr.set_title("Cavern pressure", fontsize=15, fontweight="bold")
+        ax_pr.set_xlabel("Time (days)", fontsize=12)
+        ax_pr.set_ylabel("Cavern pressure (MPa)", fontsize=12)
+        ax_pr.grid(True, alpha=0.25)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+    print(f"[SAVED] {out_path}  (start=ring, end=dot)")
+
+
+def build_animation_multiprobe(mp):
+    fig, axes, probe_axes, ax_pr = _mp_grid(mp)
+    arts = {}
+    for name, ax in probe_axes.items():
+        pp, qq = mp["paths"][name]
+        col = PROBE_COLORS.get(name, "#1f77b4")
+        ax.plot(pp[0], qq[0], "o", ms=10, mfc="white", mec=col, mew=2.0, zorder=5)
+        (line,) = ax.plot([], [], color=col, lw=2.0, zorder=4)
+        (pt,) = ax.plot([], [], "o", color=col, ms=11, mec="black", mew=1.1, zorder=6)
+        arts[name] = (line, pt)
+    if ax_pr is not None:
+        ax_pr.plot(mp["t_days"], mp["p_at_t"], color="0.75", lw=1.4)
+        (pr_line,) = ax_pr.plot([], [], color="#1f3b57", lw=2.0)
+        (pr_pt,) = ax_pr.plot([], [], "o", color="#1f3b57", ms=10, mec="white", mew=1.0)
+        pr_vline = ax_pr.axvline(mp["t_days"][0], color="0.4", ls=":", lw=1.2)
+        ax_pr.set_xlim(mp["t_days"].min(), mp["t_days"].max())
+        ax_pr.set_ylim(mp["p_at_t"].min() - 1, mp["p_at_t"].max() + 1)
+        ax_pr.set_title("Cavern pressure", fontsize=15, fontweight="bold")
+        ax_pr.set_xlabel("Time (days)", fontsize=12)
+        ax_pr.set_ylabel("Cavern pressure (MPa)", fontsize=12)
+        ax_pr.grid(True, alpha=0.25)
+    time_txt = fig.text(0.5, 0.935, "", ha="center", va="top", fontsize=14,
+                        fontweight="bold", color="#222")
+    nt = len(mp["t_days"])
+    frames = np.linspace(0, nt - 1, min(nt, N_FRAMES_MAX)).astype(int)
+
+    def update(fi):
+        k = frames[fi]
+        changed = [time_txt]
+        for name, (line, pt) in arts.items():
+            pp, qq = mp["paths"][name]
+            line.set_data(pp[:k+1], qq[:k+1])
+            pt.set_data([pp[k]], [qq[k]])
+            changed += [line, pt]
+        if ax_pr is not None:
+            pr_line.set_data(mp["t_days"][:k+1], mp["p_at_t"][:k+1])
+            pr_pt.set_data([mp["t_days"][k]], [mp["p_at_t"][k]])
+            pr_vline.set_xdata([mp["t_days"][k], mp["t_days"][k]])
+            changed += [pr_line, pr_pt, pr_vline]
+        time_txt.set_text(f"t = {mp['t_days'][k]:6.1f} days      "
+                          f"cavern pressure = {mp['p_at_t'][k]:4.1f} MPa")
+        return changed
+
+    fig.tight_layout(rect=[0, 0, 1, 0.90])
+    anim = animation.FuncAnimation(fig, update, frames=len(frames),
+                                   interval=1000 / FPS, blit=False)
+    return fig, anim
+
+
+def _save_anim(fig, anim, stem):
+    gif = os.path.join(OUT_DIR, stem + ".gif")
+    anim.save(gif, writer=animation.PillowWriter(fps=FPS), dpi=GIF_DPI)
+    print(f"[SAVED] {gif}")
+    if animation.writers.is_available("ffmpeg"):
+        mp4 = os.path.join(OUT_DIR, stem + ".mp4")
+        anim.save(mp4, writer=animation.FFMpegWriter(fps=FPS, bitrate=4000), dpi=MP4_DPI)
+        print(f"[SAVED] {mp4}")
+    else:
+        print("[INFO] ffmpeg not available - MP4 skipped (GIF written).")
+    plt.close(fig)
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
-    cases = [load_case(lbl, rel, probe, CASE_COLORS[i % len(CASE_COLORS)])
-             for i, (lbl, rel, probe) in enumerate(CASES)]
-    for c in cases:
-        print(f"[CASE] {c['label']:14s} probe={c['probe']}  "
-              f"nt={len(c['t_days'])}  p[{c['p_path'].min():.1f},{c['p_path'].max():.1f}]")
 
-    tag = "_".join(c["label"].lower().replace(" ", "") for c in cases)
+    # ---- Product 1: case comparison (overlay) ----
+    if MAKE_STATIC or MAKE_ANIMATION:
+        cases = [load_case(lbl, rel, probe, CASE_COLORS[i % len(CASE_COLORS)])
+                 for i, (lbl, rel, probe) in enumerate(CASES)]
+        for c in cases:
+            print(f"[CASE] {c['label']:14s} probe={c['probe']}  nt={len(c['t_days'])}")
+        tag = "_".join(c["label"].lower().replace(" ", "") for c in cases)
 
-    if MAKE_STATIC:
-        plot_static(cases, os.path.join(OUT_DIR, f"stress_state_static_{tag}.png"))
+        if MAKE_STATIC:
+            plot_static(cases, os.path.join(OUT_DIR, f"stress_state_static_{tag}.png"))
 
-    if MAKE_ANIMATION:
-        thumb = os.path.join(OUT_DIR, f"_cavern_{tag}.png")
-        render_cavern_thumb(cases[0]["geom"], cases[0]["probe_xyz"], thumb,
-                            PROBE_COLORS.get(cases[0]["probe"], "#4daf4a"))
-        fig, anim = build_animation(cases, thumb)
-        stem = f"stress_state_anim_{tag}"
-        gif = os.path.join(OUT_DIR, stem + ".gif")
-        anim.save(gif, writer=animation.PillowWriter(fps=FPS), dpi=GIF_DPI)
-        print(f"[SAVED] {gif}")
-        if animation.writers.is_available("ffmpeg"):
-            mp4 = os.path.join(OUT_DIR, stem + ".mp4")
-            anim.save(mp4, writer=animation.FFMpegWriter(fps=FPS, bitrate=4000),
-                      dpi=MP4_DPI)
-            print(f"[SAVED] {mp4}")
-        else:
-            print("[INFO] ffmpeg not available - MP4 skipped (GIF written).")
-        plt.close(fig)
+        if MAKE_ANIMATION:
+            thumbs = []
+            for c in cases:
+                t = os.path.join(OUT_DIR, f"_cavern_{c['label'].lower().replace(' ', '')}.png")
+                render_cavern_thumb(c["geom"], c["probe_xyz"], t, c["color"])
+                thumbs.append(t)
+            fig, anim = build_animation(cases, thumbs)
+            _save_anim(fig, anim, f"stress_state_anim_{tag}")
+
+    # ---- Product 2: multi-probe (one case, one panel per probe) ----
+    if MAKE_MULTIPROBE_STATIC or MAKE_MULTIPROBE_ANIM:
+        lbl, rel = MULTIPROBE_CASE
+        mp = load_case_multiprobe(lbl, rel, PROBES)
+        print(f"[MULTIPROBE] {lbl}  probes={PROBES}  nt={len(mp['t_days'])}")
+        mtag = lbl.lower().replace(" ", "").replace("-", "")
+        if MAKE_MULTIPROBE_STATIC:
+            plot_static_multiprobe(mp, os.path.join(OUT_DIR, f"stress_multiprobe_static_{mtag}.png"))
+        if MAKE_MULTIPROBE_ANIM:
+            fig, anim = build_animation_multiprobe(mp)
+            _save_anim(fig, anim, f"stress_multiprobe_anim_{mtag}")
 
     print("[DONE]")
 
