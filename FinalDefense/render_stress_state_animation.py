@@ -62,12 +62,16 @@ CASES = [
 MAKE_STATIC = True           # static p-q figure with start/end markers
 MAKE_ANIMATION = True        # animated explainer (caverns + p-q + pressure)
 
-# ---- Product 2: MULTI-PROBE (one case, one panel per probe) --------------------
-# A grid with one p-q panel per probe for a single simulation — like the
-# plot_results.py stress-state grid, but cleaner. Produces a static figure and
-# an animated version.
-MULTIPROBE_CASE = ("Regular - Industry",
-                   "case_leaching_linear_industry(21)_365days_SB_MD_regular1200")
+# ---- Product 2: MULTI-PROBE (one panel per probe, cases overlaid) --------------
+# A grid with one p-q panel per probe. Every case in MULTIPROBE_CASES is overlaid
+# in each probe panel (coloured per case), so you compare e.g. all probes of the
+# fast-leached cavern vs. all probes of the string-failure cavern, etc. Like the
+# plot_results.py stress-state grid, but cleaner. Static + animated.
+MULTIPROBE_CASES = [
+    ("Fast-leached",   "case_leaching_linear_industry(21)_365days_SB_MD_fastleached1200"),
+    # ("String-failure", "case_..._tubefailure1200"),
+    # ("Regular",        "case_leaching_linear_industry(21)_365days_SB_MD_regular1200"),
+]
 PROBES = ["top", "quarter", "mid", "threequarter", "bottom"]
 MAKE_MULTIPROBE_STATIC = True
 MAKE_MULTIPROBE_ANIM = True
@@ -393,16 +397,15 @@ def build_animation(cases, cavern_pngs):
 
 
 # =============================================================================
-# MULTI-PROBE  (one case, one p-q panel per probe)
+# MULTI-PROBE  (one p-q panel per probe; cases overlaid in each panel)
 # =============================================================================
 
-def load_case_multiprobe(label, case_rel, probe_names):
+def load_mp_case(label, case_rel, color, probe_names):
     case_dir = case_rel if os.path.isabs(case_rel) else os.path.join(OUTPUT_ROOT, case_rel)
     if not os.path.isdir(case_dir):
         raise SystemExit(f"[ERROR] case not found: {case_dir}")
     op = os.path.join(case_dir, "operation")
-    wall = load_wall_points(case_dir)
-    probes = probes_from_wall(wall)
+    probes = probes_from_wall(load_wall_points(case_dir))
     pts_p, t_p, p_el = post.read_cell_scalar(os.path.join(op, "p_elems", "p_elems.xdmf"))
     _, t_q, q_el = post.read_cell_scalar(os.path.join(op, "q_elems", "q_elems.xdmf"))
     n = min(len(t_p), len(t_q))
@@ -412,110 +415,124 @@ def load_case_multiprobe(label, case_rel, probe_names):
         idx = post.find_closest_point(probes[name], pts_p)
         paths[name] = (-p_el[:n, idx] / MPA, q_el[:n, idx] / MPA)
     t_pres, p_pres = load_pressure(case_dir)
-    p_at_t = np.interp(t_days, t_pres, p_pres)
-    return dict(label=label, probes=probe_names, paths=paths, t_days=t_days,
-                p_at_t=p_at_t, probe_xyz={k: probes[k] for k in probe_names})
+    return dict(label=label, color=color, paths=paths, t_days=t_days,
+                p_at_t=np.interp(t_days, t_pres, p_pres))
 
 
-def _mp_limits(mp):
-    ps = [v[0] for v in mp["paths"].values()]
-    qs = [v[1] for v in mp["paths"].values()]
-    p_lo = max(0.0, min(p.min() for p in ps) - 2.0)
-    p_hi = max(p.max() for p in ps) + 4.0
-    q_hi = 1.30 * max(q.max() for q in qs)
+def _mp_limits(mps, probe_names):
+    allp = [v[0] for mp in mps for v in mp["paths"].values()]
+    allq = [v[1] for mp in mps for v in mp["paths"].values()]
+    p_lo = max(0.0, min(p.min() for p in allp) - 2.0)
+    p_hi = max(p.max() for p in allp) + 4.0
+    q_hi = 1.30 * max(q.max() for q in allq)
     return p_lo, p_hi, q_hi
 
 
-def _mp_grid(mp):
+def _mp_grid(mps, probe_names):
     """Figure + (probe-name -> axis) for a 2x3 grid: 5 probes + pressure."""
-    p_lo, p_hi, q_hi = _mp_limits(mp)
+    p_lo, p_hi, q_hi = _mp_limits(mps, probe_names)
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
     axes = axes.flatten()
     probe_axes = {}
-    for ax, name in zip(axes, mp["probes"]):
-        for label, (pp, qq, st) in boundary_curves(p_lo, p_hi).items():
+    for ax, name in zip(axes, probe_names):
+        for _lab, (pp, qq, st) in boundary_curves(p_lo, p_hi).items():
             ax.plot(pp, qq, **st)
         ax.set_xlim(p_lo, p_hi)
         ax.set_ylim(0.0, q_hi)
-        ax.set_title(name.capitalize(), fontsize=15, fontweight="bold",
-                     color=PROBE_COLORS.get(name, "#333"))
+        ax.set_title(name.capitalize(), fontsize=15, fontweight="bold", color="#333")
         ax.set_xlabel("Mean stress p (MPa)", fontsize=12)
         ax.set_ylabel("Differential stress q (MPa)", fontsize=12)
         ax.grid(True, alpha=0.25)
         probe_axes[name] = ax
-    ax_pr = axes[len(mp["probes"])] if len(mp["probes"]) < 6 else None
-    fig.suptitle(f"Stress paths per probe - {mp['label']}", fontsize=18,
-                 fontweight="bold")
+    ax_pr = axes[len(probe_names)] if len(probe_names) < 6 else None
+    # Title on top, then one legend entry per case below it.
+    fig.suptitle("Stress paths per probe", fontsize=18, fontweight="bold", y=0.99)
+    handles = [plt.Line2D([], [], color=mp["color"], lw=3, label=mp["label"])
+               for mp in mps]
+    fig.legend(handles=handles, loc="upper center", ncol=min(len(mps), 5),
+               fontsize=12, frameon=True, bbox_to_anchor=(0.5, 0.955))
     return fig, axes, probe_axes, ax_pr
 
 
-def plot_static_multiprobe(mp, out_path):
-    fig, axes, probe_axes, ax_pr = _mp_grid(mp)
+def plot_static_multiprobe(mps, probe_names, out_path):
+    fig, axes, probe_axes, ax_pr = _mp_grid(mps, probe_names)
     for name, ax in probe_axes.items():
-        pp, qq = mp["paths"][name]
-        col = PROBE_COLORS.get(name, "#1f77b4")
-        ax.plot(pp, qq, color=col, lw=1.6, alpha=0.85, zorder=3)
-        ax.scatter([pp[0]], [qq[0]], s=130, facecolors="white", edgecolors=col,
-                   linewidths=2.2, zorder=5)
-        ax.scatter([pp[-1]], [qq[-1]], s=130, color=col, edgecolors="black",
-                   linewidths=1.4, zorder=6)
+        for mp in mps:
+            pp, qq = mp["paths"][name]
+            col = mp["color"]
+            ax.plot(pp, qq, color=col, lw=1.5, alpha=0.85, zorder=3)
+            ax.scatter([pp[0]], [qq[0]], s=110, facecolors="white", edgecolors=col,
+                       linewidths=2.2, zorder=5)
+            ax.scatter([pp[-1]], [qq[-1]], s=110, color=col, edgecolors="black",
+                       linewidths=1.3, zorder=6)
     if ax_pr is not None:
-        ax_pr.plot(mp["t_days"], mp["p_at_t"], color="#1f3b57", lw=1.6)
+        for mp in mps:
+            ax_pr.plot(mp["t_days"], mp["p_at_t"], color=mp["color"], lw=1.4)
         ax_pr.set_title("Cavern pressure", fontsize=15, fontweight="bold")
         ax_pr.set_xlabel("Time (days)", fontsize=12)
         ax_pr.set_ylabel("Cavern pressure (MPa)", fontsize=12)
         ax_pr.grid(True, alpha=0.25)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
     print(f"[SAVED] {out_path}  (start=ring, end=dot)")
 
 
-def build_animation_multiprobe(mp):
-    fig, axes, probe_axes, ax_pr = _mp_grid(mp)
-    arts = {}
-    for name, ax in probe_axes.items():
-        pp, qq = mp["paths"][name]
-        col = PROBE_COLORS.get(name, "#1f77b4")
-        ax.plot(pp[0], qq[0], "o", ms=10, mfc="white", mec=col, mew=2.0, zorder=5)
-        (line,) = ax.plot([], [], color=col, lw=2.0, zorder=4)
-        (pt,) = ax.plot([], [], "o", color=col, ms=11, mec="black", mew=1.1, zorder=6)
-        arts[name] = (line, pt)
+def build_animation_multiprobe(mps, probe_names):
+    fig, axes, probe_axes, ax_pr = _mp_grid(mps, probe_names)
+    arts = []   # (mp, {name: (line, pt)})
+    for mp in mps:
+        col = mp["color"]
+        per_probe = {}
+        for name, ax in probe_axes.items():
+            pp, qq = mp["paths"][name]
+            ax.plot(pp[0], qq[0], "o", ms=9, mfc="white", mec=col, mew=2.0, zorder=5)
+            (line,) = ax.plot([], [], color=col, lw=1.8, zorder=4)
+            (pt,) = ax.plot([], [], "o", color=col, ms=10, mec="black", mew=1.0, zorder=6)
+            per_probe[name] = (line, pt)
+        arts.append((mp, per_probe))
+
+    pr_arts = []
     if ax_pr is not None:
-        ax_pr.plot(mp["t_days"], mp["p_at_t"], color="0.75", lw=1.4)
-        (pr_line,) = ax_pr.plot([], [], color="#1f3b57", lw=2.0)
-        (pr_pt,) = ax_pr.plot([], [], "o", color="#1f3b57", ms=10, mec="white", mew=1.0)
-        pr_vline = ax_pr.axvline(mp["t_days"][0], color="0.4", ls=":", lw=1.2)
-        ax_pr.set_xlim(mp["t_days"].min(), mp["t_days"].max())
-        ax_pr.set_ylim(mp["p_at_t"].min() - 1, mp["p_at_t"].max() + 1)
+        for mp in mps:
+            ax_pr.plot(mp["t_days"], mp["p_at_t"], color=mp["color"], lw=1.0, alpha=0.30)
+            (prl,) = ax_pr.plot([], [], color=mp["color"], lw=2.0)
+            (prp,) = ax_pr.plot([], [], "o", color=mp["color"], ms=9, mec="white", mew=1.0)
+            pr_arts.append((mp, prl, prp))
+        t_max = max(mp["t_days"].max() for mp in mps)
+        ax_pr.set_xlim(0.0, t_max)
+        ax_pr.set_ylim(min(mp["p_at_t"].min() for mp in mps) - 1,
+                       max(mp["p_at_t"].max() for mp in mps) + 1)
         ax_pr.set_title("Cavern pressure", fontsize=15, fontweight="bold")
         ax_pr.set_xlabel("Time (days)", fontsize=12)
         ax_pr.set_ylabel("Cavern pressure (MPa)", fontsize=12)
         ax_pr.grid(True, alpha=0.25)
-    time_txt = fig.text(0.5, 0.935, "", ha="center", va="top", fontsize=14,
+
+    time_txt = fig.text(0.5, 0.915, "", ha="center", va="top", fontsize=14,
                         fontweight="bold", color="#222")
-    nt = len(mp["t_days"])
-    frames = np.linspace(0, nt - 1, min(nt, N_FRAMES_MAX)).astype(int)
+    n_frames = N_FRAMES_MAX
 
     def update(fi):
-        k = frames[fi]
+        prog = fi / (n_frames - 1)
         changed = [time_txt]
-        for name, (line, pt) in arts.items():
-            pp, qq = mp["paths"][name]
-            line.set_data(pp[:k+1], qq[:k+1])
-            pt.set_data([pp[k]], [qq[k]])
-            changed += [line, pt]
-        if ax_pr is not None:
-            pr_line.set_data(mp["t_days"][:k+1], mp["p_at_t"][:k+1])
-            pr_pt.set_data([mp["t_days"][k]], [mp["p_at_t"][k]])
-            pr_vline.set_xdata([mp["t_days"][k], mp["t_days"][k]])
-            changed += [pr_line, pr_pt, pr_vline]
-        time_txt.set_text(f"t = {mp['t_days'][k]:6.1f} days      "
-                          f"cavern pressure = {mp['p_at_t'][k]:4.1f} MPa")
+        for mp, per_probe in arts:
+            k = int(round(prog * (len(mp["t_days"]) - 1)))
+            for name, (line, pt) in per_probe.items():
+                pp, qq = mp["paths"][name]
+                line.set_data(pp[:k+1], qq[:k+1])
+                pt.set_data([pp[k]], [qq[k]])
+                changed += [line, pt]
+        for mp, prl, prp in pr_arts:
+            k = int(round(prog * (len(mp["t_days"]) - 1)))
+            prl.set_data(mp["t_days"][:k+1], mp["p_at_t"][:k+1])
+            prp.set_data([mp["t_days"][k]], [mp["p_at_t"][k]])
+            changed += [prl, prp]
+        k0 = int(round(prog * (len(mps[0]["t_days"]) - 1)))
+        time_txt.set_text(f"t = {mps[0]['t_days'][k0]:6.1f} days")
         return changed
 
-    fig.tight_layout(rect=[0, 0, 1, 0.90])
-    anim = animation.FuncAnimation(fig, update, frames=len(frames),
+    fig.tight_layout(rect=[0, 0, 1, 0.88])
+    anim = animation.FuncAnimation(fig, update, frames=n_frames,
                                    interval=1000 / FPS, blit=False)
     return fig, anim
 
@@ -560,16 +577,18 @@ def main():
             fig, anim = build_animation(cases, thumbs)
             _save_anim(fig, anim, f"stress_state_anim_{tag}")
 
-    # ---- Product 2: multi-probe (one case, one panel per probe) ----
+    # ---- Product 2: multi-probe (one panel per probe; cases overlaid) ----
     if MAKE_MULTIPROBE_STATIC or MAKE_MULTIPROBE_ANIM:
-        lbl, rel = MULTIPROBE_CASE
-        mp = load_case_multiprobe(lbl, rel, PROBES)
-        print(f"[MULTIPROBE] {lbl}  probes={PROBES}  nt={len(mp['t_days'])}")
-        mtag = lbl.lower().replace(" ", "").replace("-", "")
+        mps = [load_mp_case(lbl, rel, CASE_COLORS[i % len(CASE_COLORS)], PROBES)
+               for i, (lbl, rel) in enumerate(MULTIPROBE_CASES)]
+        for mp in mps:
+            print(f"[MULTIPROBE] {mp['label']:16s} probes={PROBES}  nt={len(mp['t_days'])}")
+        mtag = "_".join(mp["label"].lower().replace(" ", "").replace("-", "") for mp in mps)
         if MAKE_MULTIPROBE_STATIC:
-            plot_static_multiprobe(mp, os.path.join(OUT_DIR, f"stress_multiprobe_static_{mtag}.png"))
+            plot_static_multiprobe(mps, PROBES,
+                                   os.path.join(OUT_DIR, f"stress_multiprobe_static_{mtag}.png"))
         if MAKE_MULTIPROBE_ANIM:
-            fig, anim = build_animation_multiprobe(mp)
+            fig, anim = build_animation_multiprobe(mps, PROBES)
             _save_anim(fig, anim, f"stress_multiprobe_anim_{mtag}")
 
     print("[DONE]")
