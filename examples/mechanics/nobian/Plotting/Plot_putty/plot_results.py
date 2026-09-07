@@ -58,9 +58,9 @@ ROOT = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "..", "Simulation", "out
 
 SELECT = {
     "caverns": ["regular1200"],
-    "pressure": ["industry", "transport", "power_generation"],
-    "scenario": ["MD_B"],
-    "n_cycles": None,
+    "pressure": ["industry"],
+    "scenario": ["MD_B", "TUD2023_B"],
+    "n_cycles": 21,
     "operation_days": 365,
     "case_contains": None,
 }
@@ -90,11 +90,11 @@ SELECT = {
 #                         Linestyle = solid for 1,200,000 m³, dashed for 600,000 m³.
 #                         Label = "TUD2023_B (1,200,000 m³)" etc.
 
-PLOT_MODE = "compare_pressures"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
+PLOT_MODE = "compare_scenarios"    # "compare_shapes", "compare_scenarios", "compare_pressures", or "compare_sizes"
 
 FIGURES = {
-    "convergence": False,            # Figure 1: volume convergence
-    "stress_state": True,           # Figure 2: p-q stress paths
+    "convergence": True,            # Figure 1: volume convergence
+    "stress_state": False,           # Figure 2: p-q stress paths
     "fos": False,                    # Figure 3: FOS over time
     "fracture_propagation": False,   # Figure 4: dilatancy zone analysis
     "fos_summary": False,           # Figure 5: global min FOS + 4 pressure profiles

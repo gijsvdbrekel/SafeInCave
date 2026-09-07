@@ -55,8 +55,8 @@ OUTPUT_ROOT = os.path.normpath(os.path.join(
 # List several to overlay them; the animation shows each cavern side by side
 # (each with its own probe), and the p-q / pressure panels overlay all cases.
 CASES = [
-    ("Industry",  "case_leaching_linear_industry(21)_365days_SB_MD_regular1200", "mid"),
-    # ("Transport", "case_leaching_linear_transport(180)_365days_SB_MD_regular1200", "mid"),
+    ("Regular",  "case_leaching_linear_power_generation(20)_365days_SB_MD_regular1200", "threequarter"),
+    ("Fastleached", "case_leaching_linear_power_generation(20)_365days_SB_MD_fastleached1200", "threequarter"),
 ]
 
 MAKE_STATIC = True           # static p-q figure with start/end markers
@@ -73,8 +73,8 @@ MULTIPROBE_CASES = [
     # ("Regular",        "case_leaching_linear_industry(21)_365days_SB_MD_regular1200"),
 ]
 PROBES = ["top", "quarter", "mid", "threequarter", "bottom"]
-MAKE_MULTIPROBE_STATIC = True
-MAKE_MULTIPROBE_ANIM = True
+MAKE_MULTIPROBE_STATIC = False
+MAKE_MULTIPROBE_ANIM = False
 
 OUT_DIR = os.path.join(SCRIPT_DIR, "stress_state_anim")
 
@@ -87,7 +87,7 @@ MP4_DPI = 140
 SHOW_DILATANCY = ["devries_comp", "devries_ext"]
 
 # Per-case colours (used when several cases are overlaid).
-CASE_COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#17becf"]
+CASE_COLORS = ["#2ca02c", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#17becf"]
 
 # 3D cavern thumbnail (left panel of the animation).
 CAV_COLOR = "#cdd7e2"
